@@ -32,7 +32,8 @@ jobs:
       - name: Setup Android SDK
         run: |
           yes | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --licenses || true
-          $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager "platforms;android-36" "build-tools;36.0.0" "platform-tools" "ndk;27.0.12077973" "cmake;3.22.1"
+          # 🎯 关键改动：加上 --channel=3 强制下载 Android 37 预览版 SDK
+          $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --channel=3 "platforms;android-37" "build-tools;37.0.0" "platform-tools" "ndk;27.0.12077973" "cmake;3.22.1"
 
       - name: Setup Firebase Config
         run: |
@@ -59,21 +60,11 @@ jobs:
           EOF
 
       - name: Build with Gradle
-        continue-on-error: true
         env:
           GRADLE_OPTS: "-Dorg.gradle.jvmargs=-Xmx4g -XX:MaxMetaspaceSize=1g -Dfile.encoding=UTF-8"
         run: |
           chmod +x ./gradlew
-          ./gradlew assembleDebug --stacktrace
-
-      - name: Find and Check APK
-        run: |
-          echo "开始寻找 APK..."
-          find app/build/outputs/apk/debug -name "*.apk"
-          if [ ! -f app/build/outputs/apk/debug/*.apk ]; then
-            echo "🔴 极其遗憾：没有找到 APK，说明 OOM 发生在真正的编译阶段，而不是结束阶段。"
-            exit 1
-          fi
+          ./gradlew assembleDebug --no-daemon --stacktrace
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
