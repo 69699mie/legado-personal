@@ -7,16 +7,13 @@ on:
 
 jobs:
   build:
-    # 明确指出使用最稳定的 ubuntu-22.04，避开 ubuntu-latest 迁移的未知风险
     runs-on: ubuntu-22.04
 
     steps:
       - name: Checkout Repository
-        # 升级到最新版，兼容 Node 24
         uses: actions/checkout@v4
 
       - name: Set up JDK 21
-        # 升级到 v5，彻底解决警告
         uses: actions/setup-java@v5
         with:
           java-version: '21'
@@ -62,13 +59,23 @@ jobs:
           EOF
 
       - name: Build with Gradle
+        # 加入容错，即使底层因为 OOM 崩溃，也继续往下走
+        continue-on-error: true
         env:
-          # 限制 JVM 内存，降低 OOM 风险
-          GRADLE_OPTS: "-Dorg.gradle.jvmargs=-Xmx3g -XX:MaxMetaspaceSize=512m -Dfile.encoding=UTF-8"
+          GRADLE_OPTS: "-Dorg.gradle.jvmargs=-Xmx4g -XX:MaxMetaspaceSize=1g -Dfile.encoding=UTF-8"
         run: |
           chmod +x ./gradlew
-          # 加上 --info，这样如果在手机上向上翻找，能更容易看到编译错误的一手细节
-          ./gradlew assembleDebug --no-daemon --stacktrace --info
+          # 移除了 --no-daemon，让 JVM 有机会在进程结束后自然释放
+          ./gradlew assembleDebug --stacktrace
+
+      - name: Find and Check APK
+        run: |
+          echo "开始寻找 APK..."
+          find app/build/outputs/apk/debug -name "*.apk"
+          if [ ! -f app/build/outputs/apk/debug/*.apk ]; then
+            echo "🔴 极其遗憾：没有找到 APK，说明 OOM 发生在真正的编译阶段，而不是结束阶段。"
+            exit 1
+          fi
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
