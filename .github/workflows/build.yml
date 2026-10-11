@@ -32,9 +32,9 @@ jobs:
       - name: Setup Android SDK
         run: |
           yes | $ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager --licenses > /dev/null 2>&1 || true
-          # 💡 关键修复：安装正确的 Android 37 预览版包名 (android-37.0)
+          # 精确安装 API 37 预览版（包名带 .0）
           $ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager "platforms;android-37.0" "build-tools;37.0.0" "platform-tools" "ndk;27.0.12077973" "cmake;3.22.1"
-          # 💡 关键修复：创建路径符号链接，欺骗 Gradle 去正确的目录找 SDK
+          # 建立软链接，让 Gradle 找到 android-37
           ln -sfn $ANDROID_SDK_ROOT/platforms/android-37.0 $ANDROID_SDK_ROOT/platforms/android-37 || true
 
       - name: Setup Firebase Config
