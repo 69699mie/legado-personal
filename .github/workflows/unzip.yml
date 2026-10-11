@@ -11,8 +11,8 @@ jobs:
         run: |
           unzip -o source.zip
           rm -f source.zip
-          rm -rf .github/workflows/auto-release.yml
-          rm -rf .github/workflows/release.yml
+          # 严谨剔除：删除原项目所有的工作流文件，只保留我们自己的 build.yml
+          find .github/workflows -type f ! -name 'build.yml' -delete
           git config --global user.name "GitHub Actions"
           git config --global user.email "actions@github.com"
           git add .
