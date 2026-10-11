@@ -1,8 +1,6 @@
 name: Build Personal APK
 
 on:
-  push:
-    branches: [ main ]
   workflow_dispatch:
 
 jobs:
@@ -19,55 +17,41 @@ jobs:
           java-version: '21'
           distribution: 'temurin'
 
-      - name: Setup Gradle Cache
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.gradle/caches
-            ~/.gradle/wrapper
-          key: ${{ runner.os }}-gradle-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties') }}
-          restore-keys: |
-            ${{ runner.os }}-gradle-
-
       - name: Setup Android SDK
         run: |
           yes | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --licenses || true
-          # 🎯 关键改动：加上 --channel=3 强制下载 Android 37 预览版 SDK
           $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --channel=3 "platforms;android-37" "build-tools;37.0.0" "platform-tools" "ndk;27.0.12077973" "cmake;3.22.1"
+
+      - name: Console Check SDK Version
+        run: |
+          echo "===== 当前云端可用的 Android Platforms ====="
+          ls -la $ANDROID_HOME/platforms || echo "platforms 目录不存在"
+          echo "===== 尝试寻找 android-37 ====="
+          find $ANDROID_HOME -name "android-37" || echo "彻底找不到 android-37"
 
       - name: Setup Firebase Config
         run: |
           cat <<EOF > app/google-services.json
           {
-            "project_info": {
-              "project_number": "000000000000",
-              "project_id": "placeholder"
-            },
-            "client": [
-              {
-                "client_info": {
-                  "mobilesdk_app_id": "1:000000000000:android:0000000000000000",
-                  "android_client_info": {
-                    "package_name": "io.legato.kazusa.debug"
-                  }
-                },
-                "oauth_client": [],
-                "api_key": [{"current_key": "placeholder"}]
-              }
-            ],
+            "project_info": { "project_number": "000000000000", "project_id": "placeholder" },
+            "client": [ { "client_info": { "mobilesdk_app_id": "1:000000000000:android:0000000000000000", "android_client_info": { "package_name": "io.legato.kazusa.debug" } }, "oauth_client": [], "api_key": [{"current_key": "placeholder"}] } ],
             "configuration_version": "1"
           }
           EOF
 
       - name: Build with Gradle
-        env:
-          GRADLE_OPTS: "-Dorg.gradle.jvmargs=-Xmx4g -XX:MaxMetaspaceSize=1g -Dfile.encoding=UTF-8"
+        # 取消容错，让错误直接暴露
         run: |
           chmod +x ./gradlew
-          ./gradlew assembleDebug --no-daemon --stacktrace
+          # 将完整日志重定向到 build.log 文件
+          ./gradlew assembleDebug --no-daemon --stacktrace 2>&1 | tee build.log
 
-      - name: Upload APK
+      - name: Upload Build Log & APK
+        if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: my-legado-debug
-          path: app/build/outputs/apk/debug/*.apk
+          name: build-log-and-apk
+          # 同时上传完整日志和APK（如果有）
+          path: |
+            build.log
+            app/build/outputs/apk/debug/*.apk
