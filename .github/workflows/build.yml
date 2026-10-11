@@ -31,9 +31,11 @@ jobs:
 
       - name: Setup Android SDK
         run: |
-          yes | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --licenses || true
-          # 强制安装 Android 36，彻底避开缺失的 37
-          $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager "platforms;android-36" "build-tools;36.0.0" "platform-tools" "ndk;27.0.12077973" "cmake;3.22.1"
+          yes | $ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager --licenses > /dev/null 2>&1 || true
+          # 💡 关键修复：安装正确的 Android 37 预览版包名 (android-37.0)
+          $ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager "platforms;android-37.0" "build-tools;37.0.0" "platform-tools" "ndk;27.0.12077973" "cmake;3.22.1"
+          # 💡 关键修复：创建路径符号链接，欺骗 Gradle 去正确的目录找 SDK
+          ln -sfn $ANDROID_SDK_ROOT/platforms/android-37.0 $ANDROID_SDK_ROOT/platforms/android-37 || true
 
       - name: Setup Firebase Config
         run: |
@@ -64,7 +66,6 @@ jobs:
           GRADLE_OPTS: "-Dorg.gradle.jvmargs=-Xmx4g -XX:MaxMetaspaceSize=1g -Dfile.encoding=UTF-8"
         run: |
           chmod +x ./gradlew
-          # 加上 --stacktrace，如果失败能看到具体报错
           ./gradlew assembleDebug --no-daemon --stacktrace
 
       - name: Upload APK
