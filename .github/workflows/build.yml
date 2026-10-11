@@ -32,9 +32,7 @@ jobs:
       - name: Setup Android SDK
         run: |
           yes | $ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager --licenses > /dev/null 2>&1 || true
-          # 精确安装 API 37 预览版（包名带 .0）
           $ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager "platforms;android-37.0" "build-tools;37.0.0" "platform-tools" "ndk;27.0.12077973" "cmake;3.22.1"
-          # 建立软链接，让 Gradle 找到 android-37
           ln -sfn $ANDROID_SDK_ROOT/platforms/android-37.0 $ANDROID_SDK_ROOT/platforms/android-37 || true
 
       - name: Setup Firebase Config
@@ -72,4 +70,5 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: my-legado-debug
-          path: app/build/outputs/apk/debug/*.apk
+          # 💡 关键修复：使用通配符 ** 兼容 productFlavors 导致的路径变化
+          path: app/build/outputs/apk/**/*.apk
