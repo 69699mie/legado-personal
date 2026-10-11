@@ -32,7 +32,7 @@ val enableAbiSplits = providers.gradleProperty("enableAbiSplits")
     .getOrElse(true)
 
 android {
-    compileSdk = 37
+    compileSdk = 36
     namespace = "io.legado.app"
 
     signingConfigs {
@@ -53,7 +53,7 @@ android {
     defaultConfig {
         applicationId = "io.legato.kazusa"
         minSdk = 26
-        targetSdk = 37
+        targetSdk = 36
         versionCode = System.getenv("COMMIT_NUMBER")?.toInt()?.let { 10000 + it } ?: 32640
         versionName = System.getenv("APP_VERSION_NAME") ?: projectVersionName
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
