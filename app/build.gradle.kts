@@ -143,8 +143,10 @@ android {
     }
 
     packaging {
-        resources.excludes.add("META-INF/*")
-    }
+    resources.excludes.add("META-INF/*")
+    resources.excludes.add("META-INF/versions/9/OSGI-INF/MANIFEST.MF")
+    resources.pickFirsts.add("META-INF/versions/9/OSGI-INF/MANIFEST.MF")
+}
 
     sourceSets {
         getByName("androidTest").assets.directories.add("$projectDir/schemas")
