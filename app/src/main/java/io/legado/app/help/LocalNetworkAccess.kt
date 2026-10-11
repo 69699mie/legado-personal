@@ -31,7 +31,7 @@ object LocalNetworkAccess {
     fun isGranted(context: Context, sdkInt: Int = Build.VERSION.SDK_INT): Boolean =
         !isRequired(sdkInt) || ContextCompat.checkSelfPermission(
             context,
-            Manifest.permission.ACCESS_LOCAL_NETWORK
+            android.permission.ACCESS_LOCAL_NETWORK
         ) == PackageManager.PERMISSION_GRANTED
 }
 
