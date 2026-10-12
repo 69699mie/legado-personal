@@ -22,6 +22,7 @@ object AppUpdateGitHub : AppUpdate.AppUpdateInterface {
 
     private val otherSettingsGateway get() = org.koin.core.context.GlobalContext.get().get<io.legado.app.domain.gateway.OtherSettingsGateway>()
 
+    // 💡 已修改为你自己的仓库地址
     private const val repoPath = "69699mie/legado-personal"
     private const val githubApiBaseUrl = "https://api.github.com/repos/$repoPath/releases"
     private const val updateManifestBaseUrl =
@@ -181,35 +182,9 @@ object AppUpdateGitHub : AppUpdate.AppUpdateInterface {
         header("X-GitHub-Api-Version", "2026-03-10")
     }
 
+    // 💡 已修改：直接返回“已是最新版本”，防止私密仓库 API 访问报错弹窗
     override fun check(scope: CoroutineScope): Coroutine<AppUpdate.UpdateInfo> {
         return Coroutine.async(scope) {
-            val currentVersion = AppConst.appInfo.versionName
-            val variant = checkVariant
-            val releases = getLatestRelease(variant)
-
-            val filtered = if (variant == AppVariant.ALL) {
-                releases
-            } else {
-                releases.filter { it.appVariant == variant }
-            }
-
-            val latest = filtered.firstOrNull { r ->
-                try {
-                    r.versionName.versionCompare(currentVersion) > 0
-                } catch (_: Exception) {
-                    false
-                }
-            }
-
-            if (latest != null) {
-                return@async AppUpdate.UpdateInfo(
-                    latest.versionName,
-                    latest.note,
-                    latest.downloadUrl,
-                    latest.name
-                )
-            }
-
             throw NoStackTraceException("已是最新版本")
         }.timeout(10000)
     }
