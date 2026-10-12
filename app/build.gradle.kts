@@ -52,7 +52,7 @@ android {
         minSdk = 26
         targetSdk = 37
         versionCode = 1
-        versionName = "1.0.0-personal"
+        versionName = "1.0.0" // 去掉 _personal 后缀
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
         buildConfigField("String", "Cronet_Version", "\"${project.findProperty("CronetVersion")}\"")
@@ -81,10 +81,10 @@ android {
 
     buildTypes {
         getByName("release") {
-            signingConfig = signingConfigs.getByName("myConfig") // 使用你的固定签名
+            signingConfig = signingConfigs.getByName("myConfig")
             manifestPlaceholders["app_name"] = "@string/app_name"
-            isMinifyEnabled = true
-            isShrinkResources = true
+            isMinifyEnabled = true // 保留代码混淆，体积小、速度快
+            isShrinkResources = false // 💡 关闭资源压缩！这是提速和避免 OOM 的关键
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro",
@@ -99,10 +99,9 @@ android {
             versionNameSuffix = "-noR8"
         }
         getByName("debug") {
-            // 💡 已删除 applicationIdSuffix = ".debug"，包名保持纯 com.mie.reading，无 .D 后缀
-            signingConfig = signingConfigs.getByName("myConfig") // 使用固定签名，以后直接覆盖安装
+            signingConfig = signingConfigs.getByName("myConfig")
             manifestPlaceholders["app_name"] = "@string/app_name"
-            versionNameSuffix = "_debug" // 仅保留版本号后缀，桌面图标不会有后缀
+            versionNameSuffix = "_debug"
             isMinifyEnabled = false
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
