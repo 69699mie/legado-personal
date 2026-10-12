@@ -9,7 +9,7 @@ jobs:
   build:
     runs-on: ubuntu-22.04
     permissions:
-      contents: write  # 💡 新增：赋予创建 Release 的写入权限，修复 403 错误
+      contents: write
 
     steps:
       - name: Checkout Repository
@@ -66,12 +66,13 @@ jobs:
           GRADLE_OPTS: "-Dorg.gradle.jvmargs=-Xmx4g -XX:MaxMetaspaceSize=1g -Dfile.encoding=UTF-8"
         run: |
           chmod +x ./gradlew
-          ./gradlew assembleRelease --no-daemon --stacktrace
+          # 💡 关键修改：使用 noR8 变体，避免 R8 混淆导致的极度耗时和 OOM
+          ./gradlew assembleNoR8 --no-daemon --stacktrace
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: my-legado-debug
+          name: my-legado-release
           path: app/build/outputs/apk/**/*.apk
 
       - name: Create Release
