@@ -32,6 +32,7 @@ jobs:
       - name: Setup Android SDK
         run: |
           yes | $ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager --licenses > /dev/null 2>&1 || true
+          # 💡 精准安装 Android 37.0 预览版，并建立软链接防路径解析报错
           $ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager "platforms;android-37.0" "build-tools;37.0.0" "platform-tools" "ndk;27.0.12077973" "cmake;3.22.1"
           ln -sfn $ANDROID_SDK_ROOT/platforms/android-37.0 $ANDROID_SDK_ROOT/platforms/android-37 || true
 
@@ -70,4 +71,5 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: my-legado-debug
+          # 💡 关键修复：使用通配符 ** 兼容 productFlavors 导致的路径变化
           path: app/build/outputs/apk/**/*.apk
