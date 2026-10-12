@@ -54,6 +54,7 @@ import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clipToBounds
+import androidx.compose.ui.draw.scale
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.geometry.isSpecified
@@ -874,7 +875,7 @@ private fun WebtoonMangaList(
                     settings = state.settings,
                     onIntent = onIntent,
                     imageLoader = imageLoader,
-                    modifier = Modifier.fillMaxWidth(fraction),
+                    modifier = Modifier.fillMaxWidth(fraction).scale(1.01f), // 已修改：加入 scale(1.01f) 覆盖黑线
                     paged = false,
                 )
             }
@@ -1265,7 +1266,7 @@ private fun VerticalMangaPager(
         modifier = Modifier.fillMaxSize(),
     ) { page ->
         state.pages.getOrNull(page)?.let {
-            MangaReaderItem(it, state.settings, onIntent, imageLoader, Modifier.fillMaxSize().scale(1.01f), true)
+            MangaReaderItem(it, state.settings, onIntent, imageLoader, Modifier.fillMaxSize(), true)
         }
     }
 }
