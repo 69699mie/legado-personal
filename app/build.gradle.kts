@@ -31,29 +31,25 @@ val enableAbiSplits = providers.gradleProperty("enableAbiSplits")
     .getOrElse(true)
 
 android {
-    // 💡 恢复为 37
     compileSdk = 37
     namespace = "io.legado.app"
 
     signingConfigs {
-        if (project.hasProperty("RELEASE_STORE_FILE")) {
-            create("myConfig") {
-                storeFile = file(project.property("RELEASE_STORE_FILE") as String)
-                storePassword = project.property("RELEASE_STORE_PASSWORD") as String
-                keyAlias = project.property("RELEASE_KEY_ALIAS") as String
-                keyPassword = project.property("RELEASE_KEY_PASSWORD") as String
-                enableV1Signing = true
-                enableV2Signing = true
-                enableV3Signing = true
-                enableV4Signing = true
-            }
+        create("myConfig") {
+            storeFile = file("../keystore/mykey.jks")
+            storePassword = "123456"
+            keyAlias = "key0"
+            keyPassword = "123456"
+            enableV1Signing = true
+            enableV2Signing = true
+            enableV3Signing = true
+            enableV4Signing = true
         }
     }
 
     defaultConfig {
-        applicationId = "io.legato.kazusa"
+        applicationId = "com.mie.reading" // 💡 专属包名
         minSdk = 26
-        // 💡 恢复为 37
         targetSdk = 37
         versionCode = 1
         versionName = "1.0.0-personal"
@@ -85,9 +81,7 @@ android {
 
     buildTypes {
         getByName("release") {
-            if (project.hasProperty("RELEASE_STORE_FILE")) {
-                signingConfig = signingConfigs.getByName("myConfig")
-            }
+            signingConfig = signingConfigs.getByName("myConfig") // 💡 固定签名
             manifestPlaceholders["app_name"] = "@string/app_name"
             isMinifyEnabled = true
             isShrinkResources = true
@@ -106,9 +100,7 @@ android {
         }
         getByName("debug") {
             applicationIdSuffix = ".debug"
-            if (project.hasProperty("RELEASE_STORE_FILE")) {
-                signingConfig = signingConfigs.getByName("myConfig")
-            }
+            signingConfig = signingConfigs.getByName("myConfig") // 💡 Debug 也用固定签名，以后直接覆盖安装
             manifestPlaceholders["app_name"] = "@string/app_name"
             versionNameSuffix = "_debug"
             isMinifyEnabled = false
