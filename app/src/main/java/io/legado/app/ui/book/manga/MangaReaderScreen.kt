@@ -860,7 +860,7 @@ private fun WebtoonMangaList(
                 .fillMaxHeight()
                 .graphicsLayer(translationX = pan.x),
             horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy((-1).dp),
+            verticalArrangement = Arrangement.spacedBy((-0.5).dp),
         ) {
             items(
                 count = state.pages.size,
