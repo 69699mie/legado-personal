@@ -95,7 +95,7 @@ fun MyRouteScreen(
         viewModel.effects.collectLatest { effect ->
             when (effect) {
                 MyEffect.RequestLocalNetworkPermission -> localNetworkPermissionLauncher.launch(
-                    Manifest.permission.ACCESS_LOCAL_NETWORK
+                    "android.permission.ACCESS_LOCAL_NETWORK"
                 )
             }
         }
