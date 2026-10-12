@@ -63,11 +63,11 @@ jobs:
 
       - name: Build with Gradle
         env:
-          GRADLE_OPTS: "-Dorg.gradle.jvmargs=-Xmx4g -XX:MaxMetaspaceSize=1g -Dfile.encoding=UTF-8"
+          # 💡 关键：增加到 6g 内存，给 R8 留足空间，避免 OOM，同时使用真正的 Release 构建
+          GRADLE_OPTS: "-Dorg.gradle.jvmargs=-Xmx6g -XX:MaxMetaspaceSize=1g -Dfile.encoding=UTF-8"
         run: |
           chmod +x ./gradlew
-          # 💡 关键修改：使用 noR8 变体，避免 R8 混淆导致的极度耗时和 OOM
-          ./gradlew assembleNoR8 --no-daemon --stacktrace
+          ./gradlew assembleRelease --no-daemon --stacktrace
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
