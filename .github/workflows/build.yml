@@ -8,6 +8,8 @@ on:
 jobs:
   build:
     runs-on: ubuntu-22.04
+    permissions:
+      contents: write  # 💡 新增：赋予创建 Release 的写入权限，修复 403 错误
 
     steps:
       - name: Checkout Repository
