@@ -182,9 +182,9 @@ object AppUpdateGitHub : AppUpdate.AppUpdateInterface {
         header("X-GitHub-Api-Version", "2026-03-10")
     }
 
-    // 💡 已修改：直接返回“已是最新版本”，防止私密仓库 API 访问报错弹窗
+    // 💡 已修复：显式声明泛型 <AppUpdate.UpdateInfo>，避免 Kotlin 推断为 Nothing 导致编译报错
     override fun check(scope: CoroutineScope): Coroutine<AppUpdate.UpdateInfo> {
-        return Coroutine.async(scope) {
+        return Coroutine.async<AppUpdate.UpdateInfo>(scope) {
             throw NoStackTraceException("已是最新版本")
         }.timeout(10000)
     }
