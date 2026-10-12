@@ -48,7 +48,7 @@ android {
     }
 
     defaultConfig {
-        applicationId = "com.mie.reading" // 💡 专属包名
+        applicationId = "com.mie.reading" // 专属包名，不再和官方版冲突
         minSdk = 26
         targetSdk = 37
         versionCode = 1
@@ -81,7 +81,7 @@ android {
 
     buildTypes {
         getByName("release") {
-            signingConfig = signingConfigs.getByName("myConfig") // 💡 固定签名
+            signingConfig = signingConfigs.getByName("myConfig") // 使用你的固定签名
             manifestPlaceholders["app_name"] = "@string/app_name"
             isMinifyEnabled = true
             isShrinkResources = true
@@ -99,10 +99,10 @@ android {
             versionNameSuffix = "-noR8"
         }
         getByName("debug") {
-            applicationIdSuffix = ".debug"
-            signingConfig = signingConfigs.getByName("myConfig") // 💡 Debug 也用固定签名，以后直接覆盖安装
+            // 💡 已删除 applicationIdSuffix = ".debug"，包名保持纯 com.mie.reading，无 .D 后缀
+            signingConfig = signingConfigs.getByName("myConfig") // 使用固定签名，以后直接覆盖安装
             manifestPlaceholders["app_name"] = "@string/app_name"
-            versionNameSuffix = "_debug"
+            versionNameSuffix = "_debug" // 仅保留版本号后缀，桌面图标不会有后缀
             isMinifyEnabled = false
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
