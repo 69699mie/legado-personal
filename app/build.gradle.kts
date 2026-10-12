@@ -14,7 +14,6 @@ plugins {
 
 apply(from = "download.gradle")
 
-
 val versionPropsFile = file("version.properties")
 val versionProps = Properties().apply {
     if (versionPropsFile.exists()) {
@@ -32,6 +31,7 @@ val enableAbiSplits = providers.gradleProperty("enableAbiSplits")
     .getOrElse(true)
 
 android {
+    // 💡 恢复为 37
     compileSdk = 37
     namespace = "io.legado.app"
 
@@ -53,9 +53,10 @@ android {
     defaultConfig {
         applicationId = "io.legato.kazusa"
         minSdk = 26
+        // 💡 恢复为 37
         targetSdk = 37
-        versionCode = System.getenv("COMMIT_NUMBER")?.toInt()?.let { 10000 + it } ?: 32640
-        versionName = System.getenv("APP_VERSION_NAME") ?: projectVersionName
+        versionCode = 1
+        versionName = "1.0.0-personal"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
         buildConfigField("String", "Cronet_Version", "\"${project.findProperty("CronetVersion")}\"")
@@ -143,10 +144,10 @@ android {
     }
 
     packaging {
-    resources.excludes.add("META-INF/*")
-    resources.excludes.add("META-INF/versions/9/OSGI-INF/MANIFEST.MF")
-    resources.pickFirsts.add("META-INF/versions/9/OSGI-INF/MANIFEST.MF")
-}
+        resources.excludes.add("META-INF/*")
+        resources.excludes.add("META-INF/versions/9/OSGI-INF/MANIFEST.MF")
+        resources.pickFirsts.add("META-INF/versions/9/OSGI-INF/MANIFEST.MF")
+    }
 
     sourceSets {
         getByName("androidTest").assets.directories.add("$projectDir/schemas")
@@ -155,18 +156,11 @@ android {
     lint {
         baseline = file("lint-baseline.xml")
         checkDependencies = true
-        // UnusedResources 在基线里占 1223/1621 条、12218 行（全文件的 75%），几乎全是
-        // 跟随上游时留下的资源；release 本来就开了精确资源压缩，它们不会进 APK。
-        // 关掉它让基线只剩真正值得盯的那部分，新增问题照样报红。
         disable += "UnusedResources"
     }
 
     testOptions {
         unitTests {
-            // 阅读器核心在构造期就读字符串资源（TextPageFactory 的 keepSwipeTip、
-            // TextPage 的默认 text/title、ReadView 的无障碍动作名）。不打开这个，
-            // Robolectric 下取任何 R.string 都是 Resources$NotFoundException，
-            // 整条阅读器测试线（Track D·D1c）就起不来。
             isIncludeAndroidResources = true
         }
     }
@@ -257,9 +251,7 @@ dependencies {
     implementation(libs.markwon.ext.tables)
     implementation(libs.markwon.html)
     implementation(libs.quick.chinese.transfer.core)
-    // 书源 JS 通过 Packages.cn.hutool.* 调用，保留在 classpath（应用代码不依赖，见 AGENTS.md）
     implementation(libs.hutool.crypto)
-    //noinspection GradleDependency
     implementation(platform(libs.firebase.bom))
     implementation(libs.firebase.analytics)
     implementation(libs.firebase.perf)
@@ -291,7 +283,6 @@ dependencies {
     implementation(libs.androidx.compose.ui.viewbinding)
     implementation(libs.androidx.navigation3.runtime)
     implementation(libs.androidx.navigation3.ui)
-    // 显式保持 navigationevent 1.2 系列，保留已分离输入的预测式返回崩溃修复。
     implementation(libs.androidx.navigationevent)
     implementation(libs.androidx.navigationevent.compose)
     implementation(libs.androidx.compose.adaptive)
@@ -320,10 +311,6 @@ dependencies {
     implementation(libs.timber)
 }
 
-// 每个测试类独占一个 JVM，并且不并行 fork。Robolectric + Compose 动画这一批用例靠推进主线程
-// shadow looper 判定长按阈值与预测式返回的时序：前一个类留下的调度队列会让后一个类推不到阈值；
-// 多个 fork 并发抢 CPU 时，动画协程赶不上断言（`progress` 停在起始值、`running=false`），
-// 同一套代码会在不同批次的类上随机报错。隔离与串行是这类用例成立的前提。
 tasks.withType<Test>().configureEach {
     forkEvery = 1
     maxParallelForks = 1
