@@ -41,6 +41,15 @@
         android:supportsRtl="true"
         android:theme="@style/Base.AppTheme"
         tools:ignore="AllowBackup,GoogleAppIndexingWarning,UnusedAttribute">
+
+        <!-- 💡 强制禁用 Firebase 数据收集，解决假 API Key 导致 App 崩溃 -->
+        <meta-data
+            android:name="firebase_analytics_collection_enabled"
+            android:value="false" />
+        <meta-data
+            android:name="firebase_performance_collection_enabled"
+            android:value="false" />
+
         <!-- Allows adb/Perfetto to inspect release-like reader startup without exposing it to apps. -->
         <profileable
             android:shell="true"
