@@ -130,7 +130,7 @@ fun AiProviderEditScreen(
                 AiProviderEditEffect.NavigateBack -> onBackClick()
                 AiProviderEditEffect.NavigateBackAfterDelete -> onBackClick()
                 AiProviderEditEffect.RequestLocalNetworkPermission ->
-                    localNetworkPermissionLauncher.launch(Manifest.permission.ACCESS_LOCAL_NETWORK)
+                    localNetworkPermissionLauncher.launch("android.permission.ACCESS_LOCAL_NETWORK")
             }
         }
     }
