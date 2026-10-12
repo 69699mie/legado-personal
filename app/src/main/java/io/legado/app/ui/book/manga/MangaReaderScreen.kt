@@ -1265,7 +1265,7 @@ private fun VerticalMangaPager(
         modifier = Modifier.fillMaxSize(),
     ) { page ->
         state.pages.getOrNull(page)?.let {
-            MangaReaderItem(it, state.settings, onIntent, imageLoader, Modifier.fillMaxSize(), true)
+            MangaReaderItem(it, state.settings, onIntent, imageLoader, Modifier.fillMaxSize().scale(1.01f), true)
         }
     }
 }
