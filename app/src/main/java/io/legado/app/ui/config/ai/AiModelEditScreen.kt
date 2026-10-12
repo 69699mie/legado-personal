@@ -119,7 +119,7 @@ fun AiModelEditScreen(
                 is AiModelEditEffect.ShowMessage -> snackbarHostState.showSnackbar(effect.message)
                 AiModelEditEffect.NavigateBack -> onBackClick()
                 AiModelEditEffect.RequestLocalNetworkPermission ->
-                    localNetworkPermissionLauncher.launch(Manifest.permission.ACCESS_LOCAL_NETWORK)
+                    localNetworkPermissionLauncher.launch("android.permission.ACCESS_LOCAL_NETWORK")
             }
         }
     }
