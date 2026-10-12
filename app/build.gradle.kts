@@ -48,11 +48,11 @@ android {
     }
 
     defaultConfig {
-        applicationId = "com.mie.reading" // 专属包名，不再和官方版冲突
+        applicationId = "com.mie.reading" 
         minSdk = 26
         targetSdk = 37
         versionCode = 1
-        versionName = "1.0.0" // 去掉 _personal 后缀
+        versionName = "1.0.0" 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
         buildConfigField("String", "Cronet_Version", "\"${project.findProperty("CronetVersion")}\"")
@@ -83,8 +83,8 @@ android {
         getByName("release") {
             signingConfig = signingConfigs.getByName("myConfig")
             manifestPlaceholders["app_name"] = "@string/app_name"
-            isMinifyEnabled = true // 保留代码混淆，体积小、速度快
-            isShrinkResources = false // 💡 关闭资源压缩！这是提速和避免 OOM 的关键
+            isMinifyEnabled = true 
+            isShrinkResources = false // 关闭资源压缩，减少构建时间
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro",
@@ -113,10 +113,10 @@ android {
 
     splits {
         abi {
-            isEnable = enableAbiSplits
+            isEnable = true
             reset()
-            include("armeabi-v7a", "arm64-v8a")
-            isUniversalApk = true
+            include("arm64-v8a") // 💡 只编译 arm64-v8a
+            isUniversalApk = false // 💡 不生成通用包，提速
         }
     }
 
