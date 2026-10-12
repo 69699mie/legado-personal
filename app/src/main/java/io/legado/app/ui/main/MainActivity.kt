@@ -417,7 +417,7 @@ open class MainActivity : BaseComposeActivity(), AudioPlay.CallBack {
         if (LocalNetworkAccess.isGranted(this)) {
             WebService.startForeground(this)
         } else {
-            webServiceLocalNetworkPermissionLauncher.launch(Manifest.permission.ACCESS_LOCAL_NETWORK)
+            webServiceLocalNetworkPermissionLauncher.launch("android.permission.ACCESS_LOCAL_NETWORK")
         }
     }
 
@@ -433,7 +433,7 @@ open class MainActivity : BaseComposeActivity(), AudioPlay.CallBack {
     private fun requestLocalNetworkPermissionIfBlocked() {
         if (!LocalNetworkBlockedNotifier.consumePermissionRequest()) return
         if (LocalNetworkAccess.isGranted(this)) return
-        localNetworkRequestPermissionLauncher.launch(Manifest.permission.ACCESS_LOCAL_NETWORK)
+        localNetworkRequestPermissionLauncher.launch("android.permission.ACCESS_LOCAL_NETWORK")
     }
 
     override fun onNewIntent(intent: Intent) {
