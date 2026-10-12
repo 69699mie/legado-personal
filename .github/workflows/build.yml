@@ -39,8 +39,22 @@ jobs:
         run: |
           cat <<EOF > app/google-services.json
           {
-            "project_info": { "project_number": "000000000000", "project_id": "placeholder" },
-            "client": [ { "client_info": { "mobilesdk_app_id": "1:000000000000:android:0000000000000000", "android_client_info": { "package_name": "com.mie.reading.debug" } }, "oauth_client": [], "api_key": [{"current_key": "AIzaSyA1B2C3D4E5F6G7H8I9J0K1L2M3N4O5P6Q7"}] } ],
+            "project_info": {
+              "project_number": "000000000000",
+              "project_id": "placeholder"
+            },
+            "client": [
+              {
+                "client_info": {
+                  "mobilesdk_app_id": "1:000000000000:android:0000000000000000",
+                  "android_client_info": {
+                    "package_name": "com.mie.reading"
+                  }
+                },
+                "oauth_client": [],
+                "api_key": [{"current_key": "AIzaSyA1B2C3D4E5F6G7H8I9J0K1L2M3N4O5P6Q7"}]
+              }
+            ],
             "configuration_version": "1"
           }
           EOF
