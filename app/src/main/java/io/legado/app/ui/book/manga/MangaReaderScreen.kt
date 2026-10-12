@@ -54,7 +54,6 @@ import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clipToBounds
-import androidx.compose.ui.draw.scale
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.geometry.isSpecified
@@ -875,7 +874,7 @@ private fun WebtoonMangaList(
                     settings = state.settings,
                     onIntent = onIntent,
                     imageLoader = imageLoader,
-                    modifier = Modifier.fillMaxWidth(fraction).scale(1.01f), // 已修改：加入 scale(1.01f) 覆盖黑线
+                    modifier = Modifier.fillMaxWidth(fraction),
                     paged = false,
                 )
             }
