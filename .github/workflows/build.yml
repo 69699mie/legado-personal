@@ -52,7 +52,7 @@ jobs:
                   }
                 },
                 "oauth_client": [],
-                "api_key": [{"current_key": "placeholder"}]
+                "api_key": [{"current_key": "AIzaSyDummyKeyForCrashFix12345"}]
               }
             ],
             "configuration_version": "1"
@@ -70,5 +70,4 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: my-legado-debug
-          # 💡 关键修复：使用通配符 ** 兼容 productFlavors 导致的路径变化
           path: app/build/outputs/apk/**/*.apk
