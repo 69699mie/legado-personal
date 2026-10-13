@@ -1,7 +1,7 @@
 name: Build Personal APK
 
 on:
-  workflow_dispatch: # 删除了 push，只有手动触发才构建
+  workflow_dispatch: # 手动触发，删除了 push
 
 jobs:
   build:
@@ -50,7 +50,8 @@ jobs:
           GRADLE_OPTS: "-Dorg.gradle.jvmargs=-Xmx6g -XX:MaxMetaspaceSize=1g -Dfile.encoding=UTF-8"
         run: |
           chmod +x ./gradlew
-          ./gradlew assembleRelease --no-daemon --stacktrace
+          # 💡 传入构建次数，用于生成版本号
+          ./gradlew assembleRelease --no-daemon --stacktrace -PappVersionCode=${{ github.run_number }}
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
