@@ -51,8 +51,10 @@ android {
         applicationId = "com.mie.reading"
         minSdk = 26
         targetSdk = 37
-        versionCode = 1
-        versionName = "1.0.0"
+        // 💡 修复版本号：从 Gradle 属性读取构建次数
+        val buildNumber = (project.findProperty("appVersionCode") as? String)?.toIntOrNull() ?: 0
+        versionCode = buildNumber.coerceAtLeast(1)
+        versionName = "1.0.$buildNumber"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
         buildConfigField("String", "Cronet_Version", "\"${project.findProperty("CronetVersion")}\"")
@@ -83,8 +85,8 @@ android {
         getByName("release") {
             signingConfig = signingConfigs.getByName("myConfig")
             manifestPlaceholders["app_name"] = "@string/app_name"
-            isMinifyEnabled = true // 保留 R8 混淆，确保启动快和体积小
-            isShrinkResources = true // 保留资源压缩
+            isMinifyEnabled = true
+            isShrinkResources = true
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro",
@@ -115,7 +117,7 @@ android {
         abi {
             isEnable = true
             reset()
-            include("arm64-v8a") // 只编译 arm64-v8a，减少构建耗时
+            include("arm64-v8a")
             isUniversalApk = false
         }
     }
