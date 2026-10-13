@@ -51,11 +51,11 @@ android {
         applicationId = "com.mie.reading"
         minSdk = 26
         targetSdk = 37
-        // 💡 读取构建时传入的日期版本，若未传入则回退默认值
-        val dateVersionName = project.findProperty("appVersionName") as? String ?: "1.0.0"
-        val dateVersionCode = project.findProperty("appVersionCode") as? String ?: "1"
-        versionName = dateVersionName
-        versionCode = dateVersionCode.toIntOrNull() ?: 1
+        // 💡 从 Gradle 属性读取版本，未传入则回退
+        val versionNameFromArg = project.findProperty("appVersionName") as? String ?: "1.0"
+        val versionCodeFromArg = project.findProperty("appVersionCode") as? String ?: "1"
+        versionName = versionNameFromArg
+        versionCode = versionCodeFromArg.toIntOrNull() ?: 1
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
         buildConfigField("String", "Cronet_Version", "\"${project.findProperty("CronetVersion")}\"")
