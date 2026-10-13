@@ -1,5 +1,10 @@
 package io.legado.app.ui.book.manga
 
+import android.content.BroadcastReceiver
+import android.content.Context
+import android.content.Intent
+import android.content.IntentFilter
+import android.os.BatteryManager
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.SizeTransform
 import androidx.compose.animation.fadeIn
@@ -51,7 +56,11 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.ReadOnlyComposable
+import androidx.compose.runtime.State
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -60,6 +69,7 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shadow
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.clearAndSetSemantics
@@ -91,6 +101,10 @@ import io.legado.app.ui.widget.components.reader.readerMenuLiquidGlassAvailable
 import io.legado.app.ui.widget.components.reader.readerMenuSurfaceBrush
 import io.legado.app.ui.widget.components.text.AnimatedText
 import io.legado.app.ui.widget.components.text.AppText
+import kotlinx.coroutines.delay
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 
 private val MangaMenuSurfaceColor: Color
     @Composable
@@ -109,6 +123,57 @@ private val MangaFooterTextShadow = Shadow(
     offset = Offset(1.5f, 1.5f),
     blurRadius = 3f,
 )
+
+@Composable
+internal fun BoxScope.MangaHeader(state: MangaReaderUiState) {
+    val settings = state.settings
+    // 复用页脚的隐藏开关：隐藏页脚时也隐藏页眉。菜单展开时自动隐藏（因为菜单顶栏已经展示了书籍信息）。
+    if (settings.hideFooter || state.menuVisible) return
+
+    val timeState = rememberCurrentTime()
+    val batteryState = rememberBatteryLevel()
+
+    AnimatedText(
+        text = "${timeState.value}  ${batteryState.value}%",
+        color = MangaFooterContentColor,
+        style = LegadoTheme.typography.labelSmall.copy(shadow = MangaFooterTextShadow),
+        modifier = Modifier
+            .align(Alignment.TopEnd)
+            .windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Top))
+            .padding(16.dp)
+    )
+}
+
+@Composable
+private fun rememberCurrentTime(): State<String> {
+    val timeState = remember { mutableStateOf("") }
+    LaunchedEffect(Unit) {
+        val formatter = SimpleDateFormat("HH:mm", Locale.getDefault())
+        while (true) {
+            timeState.value = formatter.format(Date())
+            delay(60_000L) // 每分钟更新一次
+        }
+    }
+    return timeState
+}
+
+@Composable
+private fun rememberBatteryLevel(): State<Int> {
+    val context = LocalContext.current
+    val batteryLevel = remember { mutableStateOf(0) }
+    DisposableEffect(context) {
+        val receiver = object : BroadcastReceiver() {
+            override fun onReceive(context: Context, intent: Intent) {
+                val level = intent.getIntExtra(BatteryManager.EXTRA_LEVEL, -1)
+                val scale = intent.getIntExtra(BatteryManager.EXTRA_SCALE, -1)
+                batteryLevel.value = (level * 100 / scale.toFloat()).toInt()
+            }
+        }
+        context.registerReceiver(receiver, IntentFilter(Intent.ACTION_BATTERY_CHANGED))
+        onDispose { context.unregisterReceiver(receiver) }
+    }
+    return batteryLevel
+}
 
 @Composable
 internal fun BoxScope.MangaFooter(state: MangaReaderUiState) {
