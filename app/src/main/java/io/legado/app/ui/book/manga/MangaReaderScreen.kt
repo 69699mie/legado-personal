@@ -57,7 +57,6 @@ import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
-import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.geometry.isSpecified
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
@@ -870,6 +869,10 @@ private fun WebtoonMangaList(
                 key = { state.pages[it].key },
                 contentType = { state.pages[it]::class },
             ) { index ->
+                // 💡 在 Composable 上下文中提前读取顶部色条的颜色
+                val pageKey = state.pages[index].key
+                val topColor = LocalMangaBackgroundColors.current[pageKey]?.top
+                    ?: state.settings.backgroundColor
                 MangaReaderItem(
                     item = state.pages[index],
                     settings = state.settings,
@@ -877,16 +880,16 @@ private fun WebtoonMangaList(
                     imageLoader = imageLoader,
                     modifier = Modifier
                         .fillMaxWidth(fraction)
-                        // 💡 方案 B 核心：在每一项顶部绘制像素级色条，覆盖缝隙且不切字
+                        // 💡 方案 B 核心：在每一项顶部绘制像素级色条，物理覆盖缝隙且不切字
                         .drawWithContent {
                             drawContent()
-                            val pageKey = state.pages[index].key
-                            val topColor = LocalMangaBackgroundColors.current[pageKey]?.top
-                                ?: state.settings.backgroundColor
                             drawRect(
                                 color = topColor,
                                 topLeft = Offset(0f, 0f),
-                                size = Size(size.width, 2.dp.toPx())
+                                size = androidx.compose.ui.geometry.Size(
+                                    width = size.width,
+                                    height = 2.dp.toPx(),
+                                )
                             )
                         },
                     paged = false,
