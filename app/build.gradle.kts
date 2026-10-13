@@ -48,11 +48,11 @@ android {
     }
 
     defaultConfig {
-        applicationId = "com.mie.reading" 
+        applicationId = "com.mie.reading"
         minSdk = 26
         targetSdk = 37
         versionCode = 1
-        versionName = "1.0.0" 
+        versionName = "1.0.0"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
         buildConfigField("String", "Cronet_Version", "\"${project.findProperty("CronetVersion")}\"")
@@ -83,8 +83,8 @@ android {
         getByName("release") {
             signingConfig = signingConfigs.getByName("myConfig")
             manifestPlaceholders["app_name"] = "@string/app_name"
-            isMinifyEnabled = true 
-            isShrinkResources = false // 关闭资源压缩，减少构建时间
+            isMinifyEnabled = true // 保留 R8 混淆，确保启动快和体积小
+            isShrinkResources = true // 保留资源压缩
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro",
@@ -115,8 +115,8 @@ android {
         abi {
             isEnable = true
             reset()
-            include("arm64-v8a") // 💡 只编译 arm64-v8a
-            isUniversalApk = false // 💡 不生成通用包，提速
+            include("arm64-v8a") // 只编译 arm64-v8a，减少构建耗时
+            isUniversalApk = false
         }
     }
 
