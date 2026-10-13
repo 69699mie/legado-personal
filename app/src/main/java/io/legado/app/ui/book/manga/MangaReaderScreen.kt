@@ -860,8 +860,8 @@ private fun WebtoonMangaList(
                 .fillMaxHeight()
                 .graphicsLayer(translationX = pan.x),
             horizontalAlignment = Alignment.CenterHorizontally,
-            // 💡 改回 0.dp，使用放大裁剪来去除黑线
-            verticalArrangement = Arrangement.spacedBy(0.dp),
+            // 💡 最终方案：-0.2.dp 负间距，消除黑线且切字最不明显
+            verticalArrangement = Arrangement.spacedBy((-0.2).dp),
         ) {
             items(
                 count = state.pages.size,
@@ -873,14 +873,7 @@ private fun WebtoonMangaList(
                     settings = state.settings,
                     onIntent = onIntent,
                     imageLoader = imageLoader,
-                    modifier = Modifier
-                        .fillMaxWidth(fraction)
-                        // 💡 治本方案：物理放大 2% 并裁剪，彻底切除黑边且不切字
-                        .graphicsLayer {
-                            scaleX = 1.02f
-                            scaleY = 1.02f
-                            clip = true
-                        },
+                    modifier = Modifier.fillMaxWidth(fraction),
                     paged = false,
                 )
             }
