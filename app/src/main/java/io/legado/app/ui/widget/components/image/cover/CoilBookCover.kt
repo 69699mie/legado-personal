@@ -45,6 +45,7 @@ import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.boundsInRoot
 import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.Dp
@@ -112,6 +113,10 @@ fun BookCoverImage(
     val isNight = LegadoTheme.isDark
     val coverSettings = LocalAppUiConfiguration.current.cover
 
+    // 💡 方案 B：记录封面的真实绘制尺寸，用于隔离不同尺寸的内存缓存，避免首页小图污染书架高分辨率封面
+    var coverWidthPx by remember { mutableStateOf(0) }
+    var coverHeightPx by remember { mutableStateOf(0) }
+
     val useDefault = (!ignoreUseDefaultCover && coverSettings.useDefaultCover) ||
             path.isNullOrBlank() ||
             path == DefaultCoverPath
@@ -154,18 +159,24 @@ fun BookCoverImage(
                 (showLoadingPlaceholder && showLoadingDefault)
         )
     Box(
-        modifier = modifier.then(
-            with(sharedTransitionScope) {
-                if (this != null && animatedVisibilityScope != null && sharedCoverKey != null) {
-                    Modifier.sharedBounds(
-                        sharedContentState = rememberSharedContentState(sharedCoverKey),
-                        animatedVisibilityScope = animatedVisibilityScope,
-                    )
-                } else {
-                    Modifier
-                }
+        modifier = modifier
+            // 💡 方案 B：拿到封面真实像素尺寸，用于隔离内存缓存
+            .onSizeChanged {
+                coverWidthPx = it.width
+                coverHeightPx = it.height
             }
-        )
+            .then(
+                with(sharedTransitionScope) {
+                    if (this != null && animatedVisibilityScope != null && sharedCoverKey != null) {
+                        Modifier.sharedBounds(
+                            sharedContentState = rememberSharedContentState(sharedCoverKey),
+                            animatedVisibilityScope = animatedVisibilityScope,
+                        )
+                    } else {
+                        Modifier
+                    }
+                }
+            )
     ) {
         if (showCustomDefault) {
             AsyncImage(
@@ -207,7 +218,14 @@ fun BookCoverImage(
                         sharedCoverKey = sharedCoverKey,
                         explicitKey = memoryCacheKey,
                         path = finalPath,
-                    ),
+                    )?.let { key ->
+                        // 💡 方案 B：缓存键追加真实尺寸，杜绝首页 56dp 小图污染书架页高清封面
+                        if (coverWidthPx > 0 && coverHeightPx > 0) {
+                            "${key}_${coverWidthPx}x${coverHeightPx}"
+                        } else {
+                            key
+                        }
+                    },
                     bookUrl = bookUrl,
                     preferCache = preferCache,
                     configure = requestBuilder,
