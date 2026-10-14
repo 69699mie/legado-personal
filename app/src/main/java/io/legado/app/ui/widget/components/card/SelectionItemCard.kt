@@ -153,8 +153,7 @@ fun SelectionItemCardContent(
 
     Row(
         modifier = Modifier
-            .fillMaxWidth()
-            .animateContentSize(),
+            .fillMaxWidth(),
         verticalAlignment = Alignment.CenterVertically
     ) {
         AnimatedVisibility(
