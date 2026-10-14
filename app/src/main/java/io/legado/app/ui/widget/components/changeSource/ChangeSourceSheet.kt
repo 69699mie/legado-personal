@@ -464,11 +464,14 @@ fun ChangeSourceSheet(
         confirmText = stringResource(android.R.string.ok),
         onConfirm = { searchBook ->
             mismatchBook = null
-            if (canAddAsNew) {
-                actionBook = searchBook
-            } else {
-                performAction(searchBook, true)
-            }
+            // 💡 修复：先移除当前弹窗，延迟 100ms 给 Compose 回收 LayoutNode 的时间，再执行下一步，避免 RectList 崩溃
+            android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
+                if (canAddAsNew) {
+                    actionBook = searchBook
+                } else {
+                    performAction(searchBook, true)
+                }
+            }, 100L)
         },
         dismissText = stringResource(android.R.string.cancel),
         onDismiss = { mismatchBook = null }
@@ -479,9 +482,22 @@ fun ChangeSourceSheet(
             onDismissRequest = { actionBook = null },
             title = stringResource(R.string.change_source_option_title),
             dismissText = stringResource(R.string.add_as_new_book),
-            onDismiss = { actionBook?.let { performAction(it, false) } },
+            onDismiss = {
+                val book = actionBook
+                actionBook = null
+                // 💡 修复：显式清空 actionBook，并延迟触发，防止与 loadingAction 弹窗同时争夺布局树
+                android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
+                    book?.let { performAction(it, false) }
+                }, 100L)
+            },
             confirmText = stringResource(R.string.replace_current_book),
-            onConfirm = { performAction(it, true) }
+            onConfirm = { searchBook ->
+                actionBook = null
+                // 💡 修复：显式清空 actionBook，并延迟触发，防止与 loadingAction 弹窗同时争夺布局树
+                android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
+                    performAction(searchBook, true)
+                }, 100L)
+            }
         )
     }
     BookshelfConflictSheet(
