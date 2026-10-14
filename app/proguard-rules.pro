@@ -146,3 +146,6 @@
 -dontwarn java.lang.management.**
 -dontwarn io.ktor.util.debug.IntellijIdeaDebugDetector
 -keep,allowobfuscation class io.ktor.util.debug.** { *; }
+# 保留 Coil 3 通过 ServiceLoader 注册的所有解码器，防止 R8 full-mode 剥离
+-keep class * extends coil3.util.DecoderServiceLoaderTarget { *; }
+-keep class * extends coil3.util.FetcherServiceLoaderTarget { *; }
