@@ -1,5 +1,6 @@
 package io.legado.app.ui.widget.components.image.cover
 
+import android.graphics.Bitmap
 import android.graphics.Paint
 import android.graphics.Typeface
 import android.text.Layout
@@ -61,23 +62,12 @@ import io.legado.app.model.BookCover as BookCoverModel
 
 private const val SharedCoverRadiusCacheMaxSize = 256
 
-/** 用户在换封面页选的“默认封面”，与空地址一样表示这本书没有真实封面。 */
 internal const val DefaultCoverPath = "use_default_cover"
 private val sharedCoverRadiusCache = mutableStateMapOf<String, Dp>()
 
-/**
- * 这本书是否有真实封面地址可加载。
- *
- * 与 [usesDefaultBookCover] 的区别：这里只看地址本身，不读 Compose 配置，
- * 因此预热这类非组合场景也能复用同一判定。
- */
 internal fun isDefaultCoverPath(path: String?): Boolean =
     path.isNullOrBlank() || path == DefaultCoverPath
 
-/**
- * 封面在源页面的圆角缓存读取入口：封面离开源页面（Visible→Visible 定格）时写入，
- * 阅读端 sharedBounds 的起始圆角由它提供，保证转场两端圆角衔接连续。
- */
 internal fun sharedCoverSourceRadius(sharedCoverKey: String?): Dp? =
     sharedCoverKey?.let { sharedCoverRadiusCache[it] }
 
@@ -95,7 +85,6 @@ fun BookCoverImage(
     modifier: Modifier = Modifier,
     sourceOrigin: String? = null,
     memoryCacheKey: String? = null,
-    // 本书 bookUrl（别名缓存键）与书架本地优先标志，透传给 buildCoverImageRequest。
     bookUrl: String? = null,
     preferCache: Boolean = false,
     ignoreUseDefaultCover: Boolean = false,
@@ -155,7 +144,6 @@ fun BookCoverImage(
                 (showLoadingPlaceholder && showLoadingDefault)
         )
 
-    // 💡 关键修复：用 BoxWithConstraints 同步获取尺寸，避免 onSizeChanged 在共享元素动画中频繁触发导致 Coil 取消请求
     BoxWithConstraints(
         modifier = modifier.then(
             with(sharedTransitionScope) {
@@ -215,7 +203,6 @@ fun BookCoverImage(
                         explicitKey = memoryCacheKey,
                         path = finalPath,
                     )?.let { key ->
-                        // 💡 缓存键追加真实尺寸，杜绝首页 56dp 小图污染书架页高清封面
                         if (coverWidthPx > 0 && coverHeightPx > 0) {
                             "${key}_${coverWidthPx}x${coverHeightPx}"
                         } else {
@@ -226,8 +213,8 @@ fun BookCoverImage(
                     preferCache = preferCache,
                     configure = {
                         requestBuilder()
-                        // 💡 终极修复：强制禁用硬件位图，解决部分 WebP 在硬件解码路径下加载失败的问题
-                        allowHardware(false)
+                        // 💡 Coil3：强制软件解码路径（ARGB_8888 会禁用硬件位图）
+                        bitmapConfig(Bitmap.Config.ARGB_8888)
                     },
                 ),
                 contentDescription = null,
@@ -255,7 +242,6 @@ fun BookCoverImage(
     }
 }
 
-// 改成BookCover
 @OptIn(ExperimentalSharedTransitionApi::class)
 @Composable
 fun CoilBookCover(
@@ -265,7 +251,6 @@ fun CoilBookCover(
     radius: Dp = 4.dp,
     modifier: Modifier = Modifier.width(64.dp),
     sourceOrigin: String? = null,
-    // 本书 bookUrl + 书架本地优先标志，透传给 BookCoverImage
     bookUrl: String? = null,
     preferCache: Boolean = false,
     onLoadFinish: (() -> Unit)? = null,
@@ -275,19 +260,7 @@ fun CoilBookCover(
     sharedTransitionScope: SharedTransitionScope? = null,
     animatedVisibilityScope: AnimatedVisibilityScope? = null,
     sharedCoverKey: String? = null,
-    /**
-     * 内容模糊半径，作用于封面图与占位文字这些**共享元素内部的子节点**。
-     *
-     * 之所以要传进来而不是让调用方在外面套 `Modifier.blur`：共享元素转场时，
-     * overlay 只会搬运 sharedBounds 节点自己的内容，加在祖先上的模糊会被落下，
-     * 表现就是"动画一开始模糊突然没了"。
-     */
     contentBlur: Dp = 0.dp,
-    /**
-     * 盖在封面之上的叠加层（遮罩、点阵、锁标…），渲染在共享节点**内部**。
-     *
-     * 放成兄弟节点的话转场时不会被 overlay 带走，会出现"装饰停在原地、只有封面在飞"。
-     */
     overlayContent: (@Composable BoxScope.() -> Unit)? = null,
     badgeText: String? = null,
     showBadgeDot: Boolean = false,
@@ -416,8 +389,6 @@ fun CoilBookCover(
                     !isOnlineCoverLoaded
                 )
         ) {
-            // 占位文字（默认封面上的书名/作者）也一起模糊：
-            // 它露的是真实字符串，锁定态不能比正常态更清晰
             Box(
                 modifier = Modifier
                     .fillMaxSize()
@@ -431,16 +402,10 @@ fun CoilBookCover(
             }
         }
 
-        // 遮罩/点阵/锁标等叠加层渲染在共享节点内部，转场时会随封面一起移动
         overlayContent?.invoke(this)
     }
 }
 
-
-/**
- * 转场两端的圆角：起点用源页面缓存下来的圆角，终点用本节点的 [radius]，
- * 期间随转场进度插值，避免两端圆角不一致时跳变。脱敏封面复用同一实现。
- */
 @OptIn(ExperimentalSharedTransitionApi::class)
 @Composable
 internal fun rememberSharedCoverTransitionRadius(
@@ -482,10 +447,6 @@ internal fun rememberSharedCoverTransitionRadius(
     return animatedRadiusValue.dp
 }
 
-/**
- * Determine if text is primarily Latin-script.
- * Returns true if more than 30% of characters are Latin letters.
- */
 private fun isLatinBasedText(text: String?): Boolean {
     if (text.isNullOrBlank()) return false
     val latinRatio = text.count { it in 'A'..'Z' || it in 'a'..'z' }.toFloat() / text.length
@@ -514,11 +475,8 @@ private fun CoverTextOverlay(
     val shadowColor =
         if (isNight) coverSettings.shadowColorDark else coverSettings.shadowColor
     val configIsHorizontal = coverSettings.infoOrientation == "1"
-    // If text contains Latin letters, force horizontal layout
     val isHorizontal = configIsHorizontal || isLatinBasedText(name)
 
-    // Paints, StaticLayout and per-character positions are built in the cache block so they are
-    // rebuilt only when the size or the settings above change, not on every draw pass.
     Spacer(
         modifier = Modifier
             .fillMaxSize()
