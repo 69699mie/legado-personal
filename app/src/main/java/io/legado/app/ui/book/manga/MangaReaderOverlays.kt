@@ -115,7 +115,6 @@ private val MangaMenuButtonColor: Color
     @ReadOnlyComposable
     get() = LegadoTheme.colorScheme.surfaceContainerLow
 
-// 保留液态玻璃的模糊取样，同时用较高表面覆盖避免高对比度漫画页清晰穿透。
 private const val MangaMenuGlassAlpha = 0.7f
 private val MangaFooterContentColor = Color.White
 private val MangaFooterTextShadow = Shadow(
