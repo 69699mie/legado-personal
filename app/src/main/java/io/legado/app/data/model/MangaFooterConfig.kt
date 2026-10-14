@@ -13,4 +13,6 @@ data class MangaFooterConfig(
     var footerOrientation: Int = 0,
     var hideFooter: Boolean = false,
     var hideChapterName: Boolean = false,
+    // 💡 新增：控制页脚右下角是否显示时间和电量
+    var hideTimeBattery: Boolean = false,
 )
