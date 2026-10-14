@@ -70,7 +70,7 @@ jobs:
 
       - name: Build with Gradle
         env:
-          GRADLE_OPTS: "-Dorg.gradle.jvmargs=-Xmx6g -XX:MaxMetaspaceSize=1g -Dfile.encoding=UTF-8"
+          GRADLE_OPTS: "-Dorg.gradle.jvmargs=-Xmx4g -XX:MaxMetaspaceSize=512m -Dfile.encoding=UTF-8"
         run: |
           chmod +x ./gradlew
           ./gradlew assembleRelease --no-daemon --stacktrace \
