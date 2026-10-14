@@ -224,7 +224,11 @@ fun BookCoverImage(
                     },
                     bookUrl = bookUrl,
                     preferCache = preferCache,
-                    configure = requestBuilder,
+                    configure = {
+                        requestBuilder()
+                        // 💡 终极修复：强制禁用硬件位图，解决部分 WebP 在硬件解码路径下加载失败的问题
+                        allowHardware(false)
+                    },
                 ),
                 contentDescription = null,
                 imageLoader = koinInject(),
