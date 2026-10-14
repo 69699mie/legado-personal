@@ -860,6 +860,7 @@ private fun RecentBookCard(
                             author = book.author,
                             path = book.coverPath,
                             sourceOrigin = book.origin,
+                            bookUrl = book.bookUrl, // 💡 修复：补全 bookUrl，保证书源头信息与缓存别名可用
                             modifier = Modifier
                                 .width(56.dp)
                                 .aspectRatio(5f / 7f),
@@ -1037,6 +1038,7 @@ private fun RecentHistoryBookCard(
             author = book.author,
             path = book.coverPath,
             sourceOrigin = book.origin,
+            bookUrl = book.bookUrl, // 💡 修复：补全 bookUrl
             modifier = Modifier.fillMaxSize(),
             coverModifier = Modifier.fillMaxSize(),
         )
