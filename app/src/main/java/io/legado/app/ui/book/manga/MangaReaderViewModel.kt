@@ -105,8 +105,6 @@ class MangaReaderViewModel(
             }
         }
         viewModelScope.launch {
-            // 下载进度由 OkHttp 层上报（okHttpClientManga），按“原始图片地址”投递，
-            // 这里只做 URL -> 页面状态的映射，不参与图片请求本身。
             ProgressManager.progress.collect { event ->
                 applyPageProgress(event.url, event.percentage)
             }
@@ -262,7 +260,6 @@ class MangaReaderViewModel(
             MangaReaderIntent.ToggleAutoRead -> _uiState.update {
                 it.copy(
                     autoReadEnabled = !it.autoReadEnabled,
-                    // 自动阅读设置页内切换保持菜单展开，便于继续调速度/关闭；工具行切换则收起
                     menuVisible = it.settingsCategory == MangaReaderSettingsCategory.AUTO_READ,
                 )
             }
@@ -337,8 +334,6 @@ class MangaReaderViewModel(
     }
 
     private fun initialize(intent: MangaReaderIntent.Initialize) {
-        // Nav3 can recreate the route composition after a child page. This entry's VM
-        // already owns the session, including a pending chapter result or open command.
         if (initializationRequest == intent) return
         initializationRequest = intent
         showLoading()
@@ -398,8 +393,6 @@ class MangaReaderViewModel(
                 } }
                 .onFailure { error ->
                     val message = error.localizedMessage?.takeIf(String::isNotBlank)
-                    // 加载型 action（先 showLoading()）失败时复位加载态并展示整屏错误，
-                    // 避免永久转圈；其余副作用 action 仍只弹 toast
                     if (_uiState.value.isLoading) {
                         showError(message.orEmpty(), failureMessageRes)
                     } else if (message != null) {
@@ -414,9 +407,6 @@ class MangaReaderViewModel(
     fun refreshContent() = refreshContent(readerSession.state.value)
 
     private fun refreshContent(session: MangaSessionState) {
-        // openChapter() updates the target placeholder before its ordered session command runs.
-        // Ignore any old-chapter emissions in that hand-off window; rendering them would make the
-        // reader flash and jump back, and their viewport callback could persist the wrong page.
         if (!acceptsMangaSessionForExplicitNavigation(
                 pendingExplicitChapterIndex = pendingExplicitChapterIndex,
                 sessionChapterIndex = session.chapterIndex,
@@ -432,8 +422,6 @@ class MangaReaderViewModel(
         val current = session.currentChapter
         if (current !is MangaChapterState.Ready) {
             if (pendingExplicitChapterIndex == session.chapterIndex) {
-                // 显式跳章失败后立即放开门闩：否则目标页一直不可见时，
-                // 之后对该章的目录/上一章点击会被 openChapter 静默吞掉。
                 if (current is MangaChapterState.Failed) pendingExplicitChapterIndex = null
                 showExplicitChapterPlaceholder(
                     chapterIndex = session.chapterIndex,
@@ -554,8 +542,6 @@ class MangaReaderViewModel(
             )
             }
         }
-        // 「隐藏章节首尾提示」开启时不再插入 ChapterTransition 过渡页：相邻章节已就绪则
-        // 无缝衔接，未就绪则列表自然终止，待其加载完成后再补齐。
         val hideEdgePrompts = latestMangaSettings.hideTitle
         fun makePreviousItems(chapter: MangaChapterState): List<MangaReaderItemUi> {
             val prevItems = if (chapter is MangaChapterState.Ready) {
@@ -597,9 +583,6 @@ class MangaReaderViewModel(
                 pendingExplicitChapterIndex = pendingExplicitChapterIndex,
                 targetChapterIndex = session.chapterIndex,
             )
-            // 锚点按 (章节, 页码) 定位，不依赖含图片 URL 的 item key：URL/页数变化导致 key
-            // 失效后不再回退到旧裸索引（否则会把阅读器滚到错章并触发连环误切），而是按
-            // 会话当前页码重算安全位置并主动复位。
             val oldCurrentItem = oldState.pages.getOrNull(oldState.currentItemIndex)
             val anchoredIndex = if (shouldPosition) null else oldCurrentItem?.let { anchor ->
                 if (anchor is MangaReaderItemUi.Page) {
@@ -610,8 +593,6 @@ class MangaReaderViewModel(
                     }.takeIf { it >= 0 }
                 } else null
             }
-            // 旧 key 仍存在于新列表时 LazyColumn/Pager 能按 key 保住滚动位置；key 失效
-            // （如图片 URL 变化）时必须主动复位到锚点，否则列表停在旧偏移上会串到邻章。
             val keyPreserved =
                 oldCurrentItem?.let { old -> items.any { it.key == old.key } } == true
             val targetIndex = anchoredIndex ?: safePosition
@@ -657,10 +638,6 @@ class MangaReaderViewModel(
                 )
             }
             if (positionChanged && pendingExplicitChapterIndex != session.chapterIndex) {
-                // The session already owns this restored page. Notify it for adjacent-chapter
-                // loading without pretending the LazyColumn has reached the target: doing the
-                // latter clears scrollRequest and lets its stale page-0 callback overwrite the
-                // persisted progress before the restoration scroll runs.
                 executeSession(
                     MangaSessionCommand.VisiblePageChanged(
                         session.chapterIndex,
@@ -731,8 +708,6 @@ class MangaReaderViewModel(
     }
 
     private fun executeSession(command: MangaSessionCommand) {
-        // The session uses an ordered command channel. Enqueue immediately so a visible-page
-        // promotion is always processed before the progress update that follows it.
         viewModelScope.launch(start = CoroutineStart.UNDISPATCHED) { readerSession.execute(command) }
     }
 
@@ -884,9 +859,6 @@ class MangaReaderViewModel(
                 it.copy(reverseVolumeKeyPage = enabled)
             }
             MangaReaderSettingKey.HIDE_MANGA_TITLE -> {
-                // atomicUpdate 同步更新 overlay，写后 currentSettings 即为新值；显式同步
-                // latestMangaSettings 再重排，避免 settings 流收集器与 refreshContent 竞态
-                // 导致过渡页开关不生效。
                 viewModelScope.launch(start = CoroutineStart.UNDISPATCHED) {
                     mangaSettingsGateway.update { it.copy(hideTitle = enabled) }
                     latestMangaSettings = mangaSettingsGateway.currentSettings
@@ -918,6 +890,8 @@ class MangaReaderViewModel(
             MangaReaderSettingKey.HIDE_CHAPTER_LABEL,
             MangaReaderSettingKey.HIDE_PROGRESS,
             MangaReaderSettingKey.HIDE_PROGRESS_LABEL,
+            // 💡 新增：时间电量开关也归入页脚设置分组
+            MangaReaderSettingKey.HIDE_TIME_BATTERY,
             MangaReaderSettingKey.FOOTER_ALIGNMENT -> updateFooterSetting(key, value)
             MangaReaderSettingKey.MENU_TOP_BAR_LIQUID_GLASS -> updateMangaPreference {
                 it.copy(menuTopBarLiquidGlass = enabled)
@@ -993,6 +967,8 @@ class MangaReaderViewModel(
                 MangaReaderSettingKey.HIDE_CHAPTER_LABEL -> config.hideChapterLabel = enabled
                 MangaReaderSettingKey.HIDE_PROGRESS -> config.hideProgressRatio = enabled
                 MangaReaderSettingKey.HIDE_PROGRESS_LABEL -> config.hideProgressRatioLabel = enabled
+                // 💡 新增：时间电量开关持久化到 MangaFooterConfig
+                MangaReaderSettingKey.HIDE_TIME_BATTERY -> config.hideTimeBattery = enabled
                 MangaReaderSettingKey.FOOTER_ALIGNMENT -> config.footerOrientation = value
                 else -> Unit
             }
@@ -1007,9 +983,6 @@ class MangaReaderViewModel(
             pendingExplicitChapterIndex == chapterIndex
         ) return
         pendingExplicitChapterIndex = chapterIndex
-        // A gesture/animation belonging to the old window no longer owns presentation. Its
-        // completion callback may be disposed when the placeholder replaces the page list, so do
-        // not let a stale `true` defer the target chapter indefinitely.
         pagerScrollInProgress = false
         deferredReadySession = null
         refreshContentJob?.cancel()
@@ -1183,8 +1156,6 @@ class MangaReaderViewModel(
                     it.chapterIndex == readerSession.state.value.chapterIndex && it.pageIndex == pageIndex
         }
         if (target >= 0) {
-            // A slider emits a continuous stream of targets. Animating every target cancels the
-            // prior pager animation mid-frame, which can leave a horizontal spread between pages.
             _uiState.update { it.copy(scrollRequest = MangaScrollRequest(System.nanoTime(), target, false)) }
         }
     }
@@ -1201,8 +1172,6 @@ class MangaReaderViewModel(
         if (state.isLoading) return
         val item = state.pages.getOrNull(itemIndex)
         if (item !is MangaReaderItemUi.Page) {
-            // 过渡页/边缘项：只维护可见区间并清掉指向它的 scrollRequest（防御性兜底，
-            // PageStep 已保证目标为真实页；此处保证 seek/遗留请求落在过渡页时不卡死）。
             visibleItemRange = firstItemIndex.coerceAtMost(lastItemIndex)..
                     lastItemIndex.coerceAtLeast(firstItemIndex)
             if (state.scrollRequest?.itemIndex == itemIndex) {
@@ -1211,9 +1180,6 @@ class MangaReaderViewModel(
             return
         }
         val requestedItemIndex = state.scrollRequest?.itemIndex
-        // LazyColumn first reports its retained/pre-scroll viewport. During a restore that page is
-        // commonly page 0, and accepting it overwrites the persisted target before scrollToItem
-        // reaches it. Only the requested item may complete a pending programmatic navigation.
         if (!acceptsMangaVisibleItem(requestedItemIndex, itemIndex)) return
         if (pendingExplicitChapterIndex != null &&
             item.chapterIndex != readerSession.state.value.chapterIndex
@@ -1262,18 +1228,10 @@ class MangaReaderViewModel(
         }
     }
 
-    /**
-     * 置为 Loading，但保留已有百分比：同图的多个展示请求 onStart 会先后到达，
-     * 直接塞 [MangaPageLoadState.Loading] 会把已经走到的进度清回“不确定”。
-     */
     private fun markPageLoading(requestId: MangaPageRequestId, force: Boolean = false) {
         updatePageLoadState(requestId, MangaPageLoadState.Loading(), force)
     }
 
-    /**
-     * 预取页也在并发下载，进度事件最高可达每秒上百条。只有当前页附近的百分比才会被看到，
-     * 因此窗口外的条目直接跳过，避免为了一个看不见的数字重建整份 UiState（进而重组阅读页）。
-     */
     private fun applyPageProgress(imageUrl: String, percentage: Int) {
         _uiState.update { state ->
             val anchor = mangaImagePrefetchIndex(
@@ -1403,6 +1361,8 @@ class MangaReaderViewModel(
         hideChapterLabel = footer.hideChapterLabel,
         hideProgress = footer.hideProgressRatio,
         hideProgressLabel = footer.hideProgressRatioLabel,
+        // 💡 新增：从 MangaFooterConfig 读取时间电量开关
+        hideTimeBattery = footer.hideTimeBattery,
         footerAlignment = footer.footerOrientation,
         menuTopBarLiquidGlass = settings.menuTopBarLiquidGlass,
         menuBottomBarLiquidGlass = settings.menuBottomBarLiquidGlass,
