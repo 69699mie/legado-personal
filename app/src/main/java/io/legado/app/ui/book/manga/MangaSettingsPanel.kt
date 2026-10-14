@@ -372,4 +372,480 @@ private fun ReaderSettingsContent(
                 R.string.manga_reader_scale_original,
                 R.string.manga_reader_scale_smart,
             ),
-            MangaReader
+            MangaReaderSettingKey.PAGE_SCALE_TYPE,
+            onIntent,
+        )
+        if (isHorizontalPaged) {
+            SettingDropdown(
+                stringResource(R.string.manga_reader_zoom_start),
+                settings.zoomStartPosition,
+                arrayOf(
+                    R.string.manga_reader_position_automatic,
+                    R.string.manga_reader_position_left,
+                    R.string.manga_reader_position_right,
+                    R.string.manga_reader_position_center,
+                ),
+                MangaReaderSettingKey.ZOOM_START_POSITION,
+                onIntent,
+            )
+            if (settings.doublePageMode != MangaDoublePageMode.OFF) {
+                SettingSwitch(
+                    stringResource(R.string.manga_reader_double_page_cover_single),
+                    settings.doublePageCoverSingle,
+                ) {
+                    onIntent(
+                        MangaReaderIntent.UpdateSetting(
+                            MangaReaderSettingKey.DOUBLE_PAGE_COVER_SINGLE,
+                            it.intValue,
+                        )
+                    )
+                }
+                SettingSwitch(
+                    stringResource(R.string.manga_reader_double_page_invert),
+                    settings.doublePageInvert,
+                ) {
+                    onIntent(
+                        MangaReaderIntent.UpdateSetting(
+                            MangaReaderSettingKey.DOUBLE_PAGE_INVERT,
+                            it.intValue,
+                        )
+                    )
+                }
+                SettingSwitch(
+                    stringResource(R.string.manga_reader_double_page_shift),
+                    settings.doublePageShift,
+                ) {
+                    onIntent(
+                        MangaReaderIntent.UpdateSetting(
+                            MangaReaderSettingKey.DOUBLE_PAGE_SHIFT,
+                            it.intValue,
+                        )
+                    )
+                }
+            }
+        }
+        SettingDropdown(
+            stringResource(R.string.manga_reader_wide_page),
+            settings.widePageMode,
+            arrayOf(
+                R.string.manga_reader_wide_normal,
+                R.string.manga_reader_wide_fit_width,
+                R.string.manga_reader_wide_rotate,
+                R.string.manga_reader_wide_split,
+            ),
+            MangaReaderSettingKey.WIDE_PAGE_MODE,
+            onIntent,
+        )
+        if (isHorizontalPaged) {
+            SettingDropdown(
+                stringResource(R.string.manga_reader_double_page),
+                settings.doublePageMode,
+                arrayOf(
+                    R.string.manga_reader_mode_off,
+                    R.string.manga_reader_mode_landscape,
+                    R.string.manga_reader_mode_always,
+                ),
+                MangaReaderSettingKey.DOUBLE_PAGE_MODE,
+                onIntent,
+            )
+        }
+    }
+    SettingSwitch(
+        stringResource(R.string.manga_reader_preload_chapter),
+        settings.preDownloadCount > 0,
+    ) {
+        onIntent(
+            MangaReaderIntent.UpdateSetting(
+                MangaReaderSettingKey.PRE_DOWNLOAD,
+                if (it) 10 else 0
+            )
+        )
+    }
+    SettingSwitch(
+        stringResource(R.string.manga_reader_auto_offline_cache),
+        settings.autoOfflineCache,
+    ) {
+        onIntent(
+            MangaReaderIntent.UpdateSetting(
+                MangaReaderSettingKey.AUTO_OFFLINE_CACHE,
+                it.intValue,
+            )
+        )
+    }
+    if (settings.autoOfflineCache) {
+        SettingSlider(
+            stringResource(R.string.manga_reader_auto_cache_following_chapters),
+            settings.chapterPrefetchCount,
+            0..3,
+        ) {
+            onIntent(MangaReaderIntent.UpdateSetting(MangaReaderSettingKey.CHAPTER_PREFETCH, it))
+        }
+    }
+    SettingSwitch(stringResource(R.string.manga_reader_pinch_zoom), !settings.disableScale) {
+        onIntent(
+            MangaReaderIntent.UpdateSetting(
+                MangaReaderSettingKey.DISABLE_SCALE,
+                (!it).intValue
+            )
+        )
+    }
+    SettingSwitch(stringResource(R.string.manga_reader_tap_turn), !settings.disableClickScroll) {
+        onIntent(
+            MangaReaderIntent.UpdateSetting(
+                MangaReaderSettingKey.DISABLE_CLICK_SCROLL,
+                (!it).intValue
+            )
+        )
+    }
+    SettingSwitch(
+        stringResource(R.string.manga_reader_scroll_animation),
+        !settings.disableScrollAnimation
+    ) {
+        onIntent(
+            MangaReaderIntent.UpdateSetting(
+                MangaReaderSettingKey.DISABLE_SCROLL_ANIMATION,
+                (!it).intValue
+            )
+        )
+    }
+    SettingSwitch(stringResource(R.string.manga_reader_image_fade), !settings.disableCrossFade) {
+        onIntent(
+            MangaReaderIntent.UpdateSetting(
+                MangaReaderSettingKey.DISABLE_CROSS_FADE,
+                (!it).intValue
+            )
+        )
+    }
+    SettingSwitch(
+        stringResource(R.string.manga_reader_long_press_save),
+        settings.longPressEnabled
+    ) {
+        onIntent(MangaReaderIntent.UpdateSetting(MangaReaderSettingKey.LONG_PRESS, it.intValue))
+    }
+    SettingSwitch(stringResource(R.string.manga_reader_volume_page), settings.volumeKeyPage) {
+        onIntent(
+            MangaReaderIntent.UpdateSetting(
+                MangaReaderSettingKey.VOLUME_KEY_PAGE,
+                it.intValue
+            )
+        )
+    }
+    SettingSwitch(
+        stringResource(R.string.manga_reader_reverse_volume),
+        settings.reverseVolumeKeyPage
+    ) {
+        onIntent(
+            MangaReaderIntent.UpdateSetting(
+                MangaReaderSettingKey.REVERSE_VOLUME_KEY_PAGE,
+                it.intValue
+            )
+        )
+    }
+    SettingSwitch(stringResource(R.string.manga_reader_hide_edge_prompt), settings.hideMangaTitle) {
+        onIntent(
+            MangaReaderIntent.UpdateSetting(
+                MangaReaderSettingKey.HIDE_MANGA_TITLE,
+                it.intValue
+            )
+        )
+    }
+}
+
+@Composable
+private fun FooterSettingsContent(
+    settings: MangaReaderSettings,
+    onIntent: (MangaReaderIntent) -> Unit,
+) {
+    SettingSwitch(
+        stringResource(R.string.manga_reader_hide_footer),
+        settings.hideFooter
+    ) { updateBoolean(onIntent, MangaReaderSettingKey.HIDE_FOOTER, it) }
+    SettingSwitch(
+        stringResource(R.string.manga_reader_hide_chapter_name),
+        settings.hideChapterName
+    ) { updateBoolean(onIntent, MangaReaderSettingKey.HIDE_CHAPTER_NAME, it) }
+    SettingSwitch(
+        stringResource(R.string.manga_reader_hide_page_number),
+        settings.hidePageNumber
+    ) { updateBoolean(onIntent, MangaReaderSettingKey.HIDE_PAGE_NUMBER, it) }
+    SettingSwitch(
+        stringResource(R.string.manga_reader_hide_page_label),
+        settings.hidePageNumberLabel
+    ) { updateBoolean(onIntent, MangaReaderSettingKey.HIDE_PAGE_NUMBER_LABEL, it) }
+    SettingSwitch(
+        stringResource(R.string.manga_reader_hide_chapter_progress),
+        settings.hideChapter
+    ) { updateBoolean(onIntent, MangaReaderSettingKey.HIDE_CHAPTER, it) }
+    SettingSwitch(
+        stringResource(R.string.manga_reader_hide_chapter_label),
+        settings.hideChapterLabel
+    ) { updateBoolean(onIntent, MangaReaderSettingKey.HIDE_CHAPTER_LABEL, it) }
+    SettingSwitch(
+        stringResource(R.string.manga_reader_hide_total_progress),
+        settings.hideProgress
+    ) { updateBoolean(onIntent, MangaReaderSettingKey.HIDE_PROGRESS, it) }
+    SettingSwitch(
+        stringResource(R.string.manga_reader_hide_progress_label),
+        settings.hideProgressLabel
+    ) { updateBoolean(onIntent, MangaReaderSettingKey.HIDE_PROGRESS_LABEL, it) }
+    // 💡 新增：隐藏时间与电量开关
+    SettingSwitch(
+        stringResource(R.string.manga_reader_hide_time_battery),
+        settings.hideTimeBattery
+    ) { updateBoolean(onIntent, MangaReaderSettingKey.HIDE_TIME_BATTERY, it) }
+    TinyDropdownSettingItem(
+        title = stringResource(R.string.manga_reader_footer_alignment),
+        selectedValue = settings.footerAlignment.toString(),
+        displayEntries = arrayOf(
+            stringResource(R.string.manga_reader_left_align),
+            stringResource(R.string.manga_reader_center_align),
+        ),
+        entryValues = arrayOf("0", "1"),
+        onValueChange = {
+            updateInt(onIntent, MangaReaderSettingKey.FOOTER_ALIGNMENT, it.toInt())
+        },
+    )
+}
+
+@Composable
+private fun MenuSettingsContent(
+    settings: MangaReaderSettings,
+    onPickSeedColor: () -> Unit,
+    onIntent: (MangaReaderIntent) -> Unit,
+) {
+    SettingDropdown(
+        label = stringResource(R.string.read_menu_color_source),
+        value = settings.menuColorSource,
+        entryLabels = arrayOf(
+            R.string.manga_reader_menu_color_background,
+            R.string.manga_reader_menu_color_page,
+            R.string.manga_reader_menu_color_system,
+            R.string.manga_reader_menu_color_custom,
+        ),
+        key = MangaReaderSettingKey.MENU_COLOR_SOURCE,
+        onIntent = onIntent,
+    )
+    if (settings.menuColorSource == 3) {
+        TinyColorSettingItem(
+            title = stringResource(R.string.seed_color),
+            colorValue = settings.menuSeedColor.toArgb(),
+            onClick = onPickSeedColor,
+        )
+    }
+    val paletteEntries = stringArrayResource(R.array.paletteStyle)
+    val paletteValues = stringArrayResource(R.array.paletteStyle_value)
+    TinyDropdownSettingItem(
+        title = stringResource(R.string.palette_style),
+        selectedValue = settings.menuPaletteStyle,
+        displayEntries = paletteEntries,
+        entryValues = paletteValues,
+        onValueChange = { onIntent(MangaReaderIntent.UpdateMenuPaletteStyle(it)) },
+    )
+    TinySwitchSettingItem(
+        title = stringResource(R.string.manga_reader_menu_top_bar_liquid_glass),
+        description = stringResource(R.string.manga_reader_menu_top_bar_liquid_glass_summary),
+        checked = settings.menuTopBarLiquidGlass,
+        onCheckedChange = {
+            updateBoolean(onIntent, MangaReaderSettingKey.MENU_TOP_BAR_LIQUID_GLASS, it)
+        },
+    )
+    TinySwitchSettingItem(
+        title = stringResource(R.string.manga_reader_menu_bottom_bar_liquid_glass),
+        description = stringResource(R.string.manga_reader_menu_bottom_bar_liquid_glass_summary),
+        checked = settings.menuBottomBarLiquidGlass,
+        onCheckedChange = {
+            updateBoolean(onIntent, MangaReaderSettingKey.MENU_BOTTOM_BAR_LIQUID_GLASS, it)
+        },
+    )
+    TinySwitchSettingItem(
+        title = stringResource(R.string.manga_reader_menu_bottom_bar_floating),
+        checked = settings.menuBottomBarFloating,
+        onCheckedChange = {
+            updateBoolean(onIntent, MangaReaderSettingKey.MENU_BOTTOM_BAR_FLOATING, it)
+        },
+    )
+    TinySwitchSettingItem(
+        title = stringResource(R.string.manga_reader_menu_bottom_bar_blur),
+        description = stringResource(R.string.manga_reader_menu_bottom_bar_blur_summary),
+        checked = settings.menuBottomBarBlur,
+        onCheckedChange = {
+            updateBoolean(onIntent, MangaReaderSettingKey.MENU_BOTTOM_BAR_BLUR, it)
+        },
+    )
+    TinySwitchSettingItem(
+        title = stringResource(R.string.manga_reader_menu_top_bar_compact),
+        description = stringResource(R.string.manga_reader_menu_top_bar_compact_summary),
+        checked = settings.menuTopBarCompact,
+        onCheckedChange = {
+            updateBoolean(onIntent, MangaReaderSettingKey.MENU_TOP_BAR_COMPACT, it)
+        },
+    )
+}
+
+@Composable
+private fun FilterSettingsContent(
+    settings: MangaReaderSettings,
+    onPickBackground: () -> Unit,
+    onPickFilter: () -> Unit,
+    onIntent: (MangaReaderIntent) -> Unit,
+) {
+    SettingSwitch(
+        stringResource(R.string.manga_reader_auto_background),
+        settings.autoBackground,
+    ) { updateBoolean(onIntent, MangaReaderSettingKey.AUTO_BACKGROUND, it) }
+    SettingSwitch(
+        stringResource(R.string.manga_reader_grayscale),
+        settings.enableGray
+    ) { updateBoolean(onIntent, MangaReaderSettingKey.ENABLE_GRAY, it) }
+    SettingSwitch(stringResource(R.string.manga_reader_eink), settings.enableEInk) {
+        updateBoolean(
+            onIntent,
+            MangaReaderSettingKey.ENABLE_EINK,
+            it
+        )
+    }
+    SettingSlider(
+        stringResource(R.string.manga_reader_eink_threshold),
+        settings.eInkThreshold,
+        0..255
+    ) {
+        onIntent(MangaReaderIntent.UpdateSetting(MangaReaderSettingKey.EINK_THRESHOLD, it))
+    }
+    if (!settings.autoBackground) {
+        TinyColorSettingItem(
+            title = stringResource(R.string.background_color),
+            colorValue = settings.backgroundColor.toArgb(),
+            onClick = onPickBackground,
+        )
+    }
+    TinyColorSettingItem(
+        title = stringResource(R.string.manga_reader_display_filter),
+        colorValue = Color(
+            red = 255 - settings.filterRed,
+            green = 255 - settings.filterGreen,
+            blue = 255 - settings.filterBlue,
+        ).toArgb(),
+        onClick = onPickFilter,
+    )
+    SettingSlider(
+        stringResource(R.string.manga_reader_filter_alpha),
+        settings.filterAlpha,
+        0..255
+    ) { updateInt(onIntent, MangaReaderSettingKey.FILTER_ALPHA, it) }
+    SettingSwitch(
+        stringResource(R.string.manga_reader_system_brightness),
+        settings.autoBrightness
+    ) { updateBoolean(onIntent, MangaReaderSettingKey.AUTO_BRIGHTNESS, it) }
+    if (!settings.autoBrightness) {
+        SettingSlider(
+            stringResource(R.string.manga_reader_screen_brightness),
+            settings.brightness,
+            0..255
+        ) {
+            updateInt(onIntent, MangaReaderSettingKey.BRIGHTNESS, it)
+        }
+    }
+}
+
+@Composable
+private fun AutoReadSettingsContent(
+    state: MangaReaderUiState,
+    onIntent: (MangaReaderIntent) -> Unit,
+) {
+    SettingSwitch(stringResource(R.string.manga_reader_enable_auto_read), state.autoReadEnabled) {
+        onIntent(MangaReaderIntent.ToggleAutoRead)
+    }
+    SettingSlider(
+        stringResource(R.string.manga_reader_auto_speed),
+        state.settings.autoReadSpeed,
+        1..15
+    ) {
+        onIntent(MangaReaderIntent.UpdateSetting(MangaReaderSettingKey.AUTO_READ_SPEED, it))
+    }
+}
+
+@Composable
+private fun ClickActionsSettingsContent(
+    settings: MangaReaderSettings,
+    onIntent: (MangaReaderIntent) -> Unit,
+) {
+    val labels = mapOf(
+        -1 to stringResource(R.string.non_action),
+        0 to stringResource(R.string.manga_reader_menu),
+        1 to stringResource(R.string.manga_reader_next_page),
+        2 to stringResource(R.string.manga_reader_previous_page),
+        3 to stringResource(R.string.next_chapter),
+        4 to stringResource(R.string.previous_chapter),
+    )
+    repeat(3) { row ->
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) {
+            repeat(3) { column ->
+                val index = row * 3 + column
+                val action = settings.clickActions.getOrElse(index) { 0 }
+                TextButton(onClick = {
+                    val next = nextMangaClickAction(action)
+                    onIntent(MangaReaderIntent.UpdateClickAction(index, next))
+                }) { Text(labels[action].orEmpty()) }
+            }
+        }
+    }
+    Text(
+        stringResource(R.string.manga_reader_click_cycle_hint),
+        style = MaterialTheme.typography.bodySmall
+    )
+}
+
+private val Boolean.intValue: Int get() = if (this) 1 else 0
+
+private fun updateBoolean(
+    onIntent: (MangaReaderIntent) -> Unit,
+    key: MangaReaderSettingKey,
+    value: Boolean,
+) = onIntent(MangaReaderIntent.UpdateSetting(key, value.intValue))
+
+private fun updateInt(
+    onIntent: (MangaReaderIntent) -> Unit,
+    key: MangaReaderSettingKey,
+    value: Int,
+) = onIntent(MangaReaderIntent.UpdateSetting(key, value))
+
+@Composable
+private fun SettingDropdown(
+    label: String,
+    value: Int,
+    entryLabels: Array<Int>,
+    key: MangaReaderSettingKey,
+    onIntent: (MangaReaderIntent) -> Unit,
+) {
+    TinyDropdownSettingItem(
+        title = label,
+        selectedValue = value.toString(),
+        displayEntries = entryLabels.map { stringResource(it) }.toTypedArray(),
+        entryValues = entryLabels.indices.map(Int::toString).toTypedArray(),
+        onValueChange = { updateInt(onIntent, key, it.toInt()) },
+    )
+}
+
+@Composable
+private fun SettingSwitch(label: String, checked: Boolean, onCheckedChange: (Boolean) -> Unit) {
+    TinySwitchSettingItem(
+        title = label,
+        checked = checked,
+        onCheckedChange = onCheckedChange,
+    )
+}
+
+@Composable
+private fun SettingSlider(
+    label: String,
+    value: Int,
+    range: IntRange,
+    onValueChange: (Int) -> Unit
+) {
+    TinySliderSettingItem(
+        title = label,
+        value = value.toFloat().coerceIn(range.first.toFloat(), range.last.toFloat()),
+        valueRange = range.first.toFloat()..range.last.toFloat(),
+        onValueChange = { onValueChange(it.toInt()) },
+    )
+}
