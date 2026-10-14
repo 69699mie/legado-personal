@@ -125,65 +125,9 @@ private val MangaFooterTextShadow = Shadow(
 )
 
 @Composable
-internal fun BoxScope.MangaHeader(state: MangaReaderUiState) {
-    val settings = state.settings
-    // 复用页脚的隐藏开关：隐藏页脚时也隐藏页眉。菜单展开时自动隐藏（因为菜单顶栏已经展示了书籍信息）。
-    if (settings.hideFooter || state.menuVisible) return
-
-    val timeState = rememberCurrentTime()
-    val batteryState = rememberBatteryLevel()
-
-    AnimatedText(
-        text = "${timeState.value}  ${batteryState.value}%",
-        color = MangaFooterContentColor,
-        style = LegadoTheme.typography.labelSmall.copy(shadow = MangaFooterTextShadow),
-        modifier = Modifier
-            .align(Alignment.TopEnd)
-            .windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Top))
-            .padding(16.dp)
-    )
-}
-
-@Composable
-private fun rememberCurrentTime(): State<String> {
-    val timeState = remember { mutableStateOf("") }
-    LaunchedEffect(Unit) {
-        val formatter = SimpleDateFormat("HH:mm", Locale.getDefault())
-        while (true) {
-            timeState.value = formatter.format(Date())
-            delay(60_000L) // 每分钟更新一次
-        }
-    }
-    return timeState
-}
-
-@Composable
-private fun rememberBatteryLevel(): State<Int> {
-    val context = LocalContext.current
-    val batteryLevel = remember { mutableStateOf(0) }
-    DisposableEffect(context) {
-        val receiver = object : BroadcastReceiver() {
-            override fun onReceive(context: Context, intent: Intent) {
-                val level = intent.getIntExtra(BatteryManager.EXTRA_LEVEL, -1)
-                val scale = intent.getIntExtra(BatteryManager.EXTRA_SCALE, -1)
-                batteryLevel.value = (level * 100 / scale.toFloat()).toInt()
-            }
-        }
-        context.registerReceiver(receiver, IntentFilter(Intent.ACTION_BATTERY_CHANGED))
-        onDispose { context.unregisterReceiver(receiver) }
-    }
-    return batteryLevel
-}
-
-@Composable
 internal fun BoxScope.MangaFooter(state: MangaReaderUiState) {
     val settings = state.settings
     if (settings.hideFooter) return
-    val alignment = when (settings.footerAlignment) {
-        1 -> Alignment.BottomCenter
-        2 -> Alignment.BottomEnd
-        else -> Alignment.BottomStart
-    }
     val page = state.pages.getOrNull(state.footerItemIndex ?: state.currentItemIndex)
             as? MangaReaderItemUi.Page ?: return
     val progress = if (page.chapterCount <= 0 || page.pageCount <= 0) 0.0 else {
@@ -207,15 +151,72 @@ internal fun BoxScope.MangaFooter(state: MangaReaderUiState) {
             append("%.1f%%".format((progress * 100).coerceAtMost(100.0)))
         }
     }.trim()
-    AnimatedText(
-        text = text,
-        color = MangaFooterContentColor,
-        style = LegadoTheme.typography.labelSmall.copy(shadow = MangaFooterTextShadow),
+
+    // 💡 时间和电量：通过 settings.hideTimeBattery 独立控制
+    val showTimeBattery = !settings.hideTimeBattery
+    val timeState = if (showTimeBattery) rememberCurrentTime() else null
+    val batteryState = if (showTimeBattery) rememberBatteryLevel() else null
+    val rightText = if (showTimeBattery && timeState != null && batteryState != null) {
+        "${timeState.value}  ${batteryState.value}%"
+    } else null
+
+    // 💡 使用 Row + SpaceBetween 实现左下角和右下角水平对齐
+    Row(
         modifier = Modifier
-            .align(alignment)
+            .fillMaxWidth()
             .navigationBarsPadding()
-            .padding(all = 16.dp),
-    )
+            .padding(all = 16.dp)
+            .align(Alignment.BottomStart),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.Bottom,
+    ) {
+        AnimatedText(
+            text = text,
+            color = MangaFooterContentColor,
+            style = LegadoTheme.typography.labelSmall.copy(shadow = MangaFooterTextShadow),
+            modifier = Modifier.weight(1f, fill = false),
+        )
+        if (rightText != null) {
+            AnimatedText(
+                text = rightText,
+                color = MangaFooterContentColor,
+                style = LegadoTheme.typography.labelSmall.copy(shadow = MangaFooterTextShadow),
+            )
+        }
+    }
+}
+
+@Composable
+private fun rememberCurrentTime(): State<String> {
+    val timeState = remember { mutableStateOf("") }
+    LaunchedEffect(Unit) {
+        val formatter = SimpleDateFormat("HH:mm", Locale.getDefault())
+        while (true) {
+            timeState.value = formatter.format(Date())
+            delay(60_000L)
+        }
+    }
+    return timeState
+}
+
+@Composable
+private fun rememberBatteryLevel(): State<Int> {
+    val context = LocalContext.current
+    val batteryLevel = remember { mutableStateOf(0) }
+    DisposableEffect(context) {
+        val receiver = object : BroadcastReceiver() {
+            override fun onReceive(context: Context, intent: Intent) {
+                val level = intent.getIntExtra(BatteryManager.EXTRA_LEVEL, -1)
+                val scale = intent.getIntExtra(BatteryManager.EXTRA_SCALE, -1)
+                if (scale > 0) {
+                    batteryLevel.value = (level * 100 / scale.toFloat()).toInt()
+                }
+            }
+        }
+        context.registerReceiver(receiver, IntentFilter(Intent.ACTION_BATTERY_CHANGED))
+        onDispose { context.unregisterReceiver(receiver) }
+    }
+    return batteryLevel
 }
 
 @Composable
@@ -279,7 +280,6 @@ private fun MangaMenuTopBar(
 ) {
     val topBarGlass = state.settings.menuTopBarLiquidGlass && readerMenuLiquidGlassAvailable(backdrop)
     val compact = state.settings.menuTopBarCompact
-    // 顶栏始终透明无表面背景，只显示胶囊与按钮（悬浮于漫画内容上）
     Column(
         modifier = Modifier
             .fillMaxWidth()
@@ -313,7 +313,6 @@ private fun MangaMenuTopBar(
                     onIntent(MangaReaderIntent.OpenSourceActions)
                 }
             } else {
-                // 未精简时把换源/刷新/更多合并为胶囊，对齐阅读界面「合并顶栏按钮」的样式
                 MangaMenuMergedActions(
                     onIntent = onIntent,
                     glassEnabled = topBarGlass,
@@ -385,9 +384,6 @@ private fun RowScope.MangaTitleCapsule(
         }
     }
 }
-
-// ========== Merged Top Bar Actions ==========
-// 未精简顶栏时把换源/刷新/更多合并为一个胶囊，参考阅读界面「合并顶栏按钮」的样式。
 
 @Composable
 private fun MangaMenuMergedActions(
@@ -493,16 +489,13 @@ private fun MangaMenuBottomBar(
     readingPageDescription: String,
     hazeState: HazeState? = null,
 ) {
-    // 悬浮底栏玻璃化表面；贴边底栏只玻璃化操作控件，和文章阅读菜单保持一致。
     val glass = state.settings.menuBottomBarLiquidGlass && readerMenuLiquidGlassAvailable(backdrop)
     val floating = state.settings.menuBottomBarFloating
     val configOpen = state.settingsCategory != null
-    // 文章阅读菜单在展开时禁用渐进样式，并以实心毛玻璃承载设置内容。
     val blur = (state.settings.menuBottomBarBlur || (!floating && glass && configOpen)) &&
             hazeState != null
     val glassOnBar = floating && glass
     val glassOnControls = !floating && glass
-    // 悬浮展开用实心（不透明），非悬浮展开降低表面不透明度露出背后漫画内容
     val surfaceAlpha = when {
         floating && configOpen -> 85
         configOpen -> 55
@@ -539,7 +532,6 @@ private fun MangaMenuBottomBar(
             )
             .then(
                 when {
-                    // 液态玻璃只用于悬浮底栏表面
                     glassOnBar -> Modifier.readerMenuLiquidGlass(
                         backdrop = backdrop,
                         shape = shape,
@@ -554,7 +546,6 @@ private fun MangaMenuBottomBar(
                         useLens = true,
                     )
 
-                    // 模糊开关开启时用毛玻璃，非悬浮时渐进渐变；先按形状裁剪保留圆角
                     blur -> Modifier
                         .clip(shape)
                         .readerMenuHazeEffect(
@@ -567,7 +558,6 @@ private fun MangaMenuBottomBar(
                             surfaceAlpha = surfaceAlpha,
                         )
 
-                    // 非悬浮底栏使用自下而上的渐变背景
                     !floating -> Modifier
                         .clip(shape)
                         .background(
