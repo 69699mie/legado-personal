@@ -3606,6 +3606,7 @@
     <string name="manga_reader_hide_chapter_label">Hide chapter label</string>
     <string name="manga_reader_hide_total_progress">Hide total progress</string>
     <string name="manga_reader_hide_progress_label">Hide progress label</string>
+<string name="manga_reader_hide_time_battery">Hide Time &amp; Battery</string>
     <string name="manga_reader_footer_alignment">Footer alignment</string>
     <string name="manga_reader_left_align">Left aligned</string>
     <string name="manga_reader_center_align">Centered</string>
