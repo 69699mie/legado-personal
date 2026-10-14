@@ -12,6 +12,7 @@ import kotlinx.coroutines.flow.map
 class HomeDashboardRepository(
     private val readRecordDao: ReadRecordDao,
     private val localPreferencesRepository: SettingsRepository,
+    private val bookRepository: BookRepository, // 💡 新增：注入 BookRepository 用于兜底查询
 ) : HomeDashboardGateway {
 
     override fun observeTotalReadBooks(): Flow<Int> =
@@ -26,16 +27,34 @@ class HomeDashboardRepository(
     override fun observeRecentBooks(limit: Int): Flow<List<HomeReadingBook>> =
         readRecordDao.observeRecentHomeBooks(limit).map { rows ->
             rows.map { row ->
+                // 💡 修复：SQL LEFT JOIN 依赖 bookName 和 bookAuthor，如果换源/改名会导致关联失败。
+                // 此时 bookUrl、coverUrl、customCoverUrl 会全为 null，使用 BookRepository 按名字作者兜底查询。
+                val needsFallback = row.bookUrl.isNullOrEmpty() && 
+                                   row.customCoverUrl.isNullOrEmpty() && 
+                                   row.coverUrl.isNullOrEmpty()
+                                   
+                val fallbackBook = if (needsFallback) {
+                    bookRepository.getBook(row.recordName, row.recordAuthor)
+                } else {
+                    null
+                }
+
+                // 优先使用 SQL 查出的封面，如果为空则使用兜底查出的本地封面或网络封面
+                val finalCoverPath = when {
+                    !row.customCoverUrl.isNullOrEmpty() -> row.customCoverUrl
+                    !row.coverUrl.isNullOrEmpty() -> row.coverUrl
+                    fallbackBook != null -> fallbackBook.getDisplayCover()
+                    else -> null
+                }
+
+                val finalBookUrl = row.bookUrl ?: fallbackBook?.bookUrl
+
                 HomeReadingBook(
-                    bookUrl = row.bookUrl,
+                    bookUrl = finalBookUrl,
                     name = row.recordName,
                     author = row.recordAuthor,
-                    origin = row.origin,
-                    coverPath = if (row.customCoverUrl.isNullOrEmpty()) {
-                        row.coverUrl
-                    } else {
-                        row.customCoverUrl
-                    },
+                    origin = row.origin ?: fallbackBook?.origin,
+                    coverPath = finalCoverPath,
                     chapterTitle = row.chapterTitle,
                     chapterProgress = if (
                         row.totalChapterNum != null &&
