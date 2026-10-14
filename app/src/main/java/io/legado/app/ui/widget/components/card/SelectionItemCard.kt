@@ -3,7 +3,6 @@ package io.legado.app.ui.widget.components.card
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateColorAsState
-import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.tween
@@ -153,7 +152,7 @@ fun SelectionItemCardContent(
 
     Row(
         modifier = Modifier
-            .fillMaxWidth(),
+            .fillMaxWidth(), // 💡 修复：移除 animateContentSize，防止滑动时动画协程持有已销毁的 LayoutNode 导致 RectList 崩溃
         verticalAlignment = Alignment.CenterVertically
     ) {
         AnimatedVisibility(
