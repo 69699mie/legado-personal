@@ -12,7 +12,7 @@ import kotlinx.coroutines.flow.map
 class HomeDashboardRepository(
     private val readRecordDao: ReadRecordDao,
     private val localPreferencesRepository: SettingsRepository,
-    private val bookRepository: BookRepository, // 💡 新增：注入 BookRepository 用于兜底查询
+    private val bookRepository: BookRepository, // 💡 新增：注入 BookRepository 用于兜底查询（回退时删除此行及下方的兜底逻辑）
 ) : HomeDashboardGateway {
 
     override fun observeTotalReadBooks(): Flow<Int> =
