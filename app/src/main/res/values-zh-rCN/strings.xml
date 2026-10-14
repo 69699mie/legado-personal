@@ -3602,6 +3602,7 @@
     <string name="manga_reader_hide_chapter_label">隐藏章节标签</string>
     <string name="manga_reader_hide_total_progress">隐藏总进度</string>
     <string name="manga_reader_hide_progress_label">隐藏总进度标签</string>
+<string name="manga_reader_hide_time_battery">隐藏时间与电量</string>
     <string name="manga_reader_footer_alignment">页脚对齐</string>
     <string name="manga_reader_left_align">左对齐</string>
     <string name="manga_reader_center_align">居中</string>
