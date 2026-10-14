@@ -279,7 +279,6 @@ fun MangaReaderScreen(
                 }
             }
 
-            MangaHeader(state)
             MangaFooter(state)
             MangaReaderMenu(
                 state = state,
