@@ -189,10 +189,13 @@ fun ChangeSourceSheet(
             onSuccess = { toc, source ->
                 if (replace) {
                     loadingAction = false
-                    onReplace(source, book, toc, settings.migrationOptions())
+                    // 💡 修复：先让 Sheet 消失，再延迟触发数据更新，避免节点回收时动画竞争崩溃
                     if (!dismissBeforeLoading) {
                         onDismissRequest()
                     }
+                    android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
+                        onReplace(source, book, toc, settings.migrationOptions())
+                    }, 150L)
                 } else if (onReplaceConflict != null) {
                     viewModel.findShelfConflict(book) { conflict ->
                         loadingAction = false
