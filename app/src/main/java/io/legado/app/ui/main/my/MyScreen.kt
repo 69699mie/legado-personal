@@ -24,8 +24,6 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ExitToApp
-import androidx.compose.material.icons.filled.AutoAwesome
-import androidx.compose.material.icons.filled.Bookmark
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.Folder
@@ -47,7 +45,6 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import io.legado.app.R
-import io.legado.app.ui.book.bookmark.AllBookmarkActivity
 import io.legado.app.ui.file.FileManageActivity
 import io.legado.app.ui.theme.adaptiveContentPadding
 import io.legado.app.ui.widget.components.AppScaffold
@@ -167,11 +164,12 @@ fun MyScreen(
             SplicedColumnGroup(
                 title = stringResource(R.string.other)
             ) {
-                ClickableSettingItem(
-                    title = stringResource(R.string.ai_chat),
-                    imageVector = Icons.Default.AutoAwesome,
-                    onClick = onNavigateToChat
-                )
+                // 💡 已按需隐藏：「AI 对话」
+                // ClickableSettingItem(
+                //     title = stringResource(R.string.ai_chat),
+                //     imageVector = Icons.Default.AutoAwesome,
+                //     onClick = onNavigateToChat
+                // )
                 ClickableSettingItem(
                     title = stringResource(R.string.setting),
                     imageVector = Icons.Default.Settings,
@@ -179,13 +177,14 @@ fun MyScreen(
                         onOpenSettings()
                     }
                 )
-                ClickableSettingItem(
-                    title = stringResource(R.string.bookmark),
-                    imageVector = Icons.Default.Bookmark,
-                    onClick = {
-                        onNavigate(PrefClickEvent.StartActivity(AllBookmarkActivity::class.java))
-                    }
-                )
+                // 💡 已按需隐藏：「书签」
+                // ClickableSettingItem(
+                //     title = stringResource(R.string.bookmark),
+                //     imageVector = Icons.Default.Bookmark,
+                //     onClick = {
+                //         onNavigate(PrefClickEvent.StartActivity(AllBookmarkActivity::class.java))
+                //     }
+                // )
                 ClickableSettingItem(
                     title = stringResource(R.string.read_record),
                     imageVector = Icons.Default.History,
