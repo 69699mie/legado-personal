@@ -64,15 +64,17 @@ fun ConfigNavScreen(
                         title = stringResource(R.string.other_setting),
                         onClick = onNavigateToOther
                     )
-                    ClickableSettingItem(
-                        title = stringResource(R.string.read_config),
-                        onClick = onNavigateToRead
-                    )
-                    ClickableSettingItem(
-                        title = stringResource(R.string.aloud_config),
-                        description = stringResource(R.string.multi_role_rule_summary),
-                        onClick = onNavigateToReadAloud
-                    )
+                    // 💡 漫画专用 App：「阅读界面」入口隐藏（小说文本阅读配置）
+                    // ClickableSettingItem(
+                    //     title = stringResource(R.string.read_config),
+                    //     onClick = onNavigateToRead
+                    // )
+                    // 💡 漫画专用 App：「朗读设置」入口隐藏（小说 TTS 朗读）
+                    // ClickableSettingItem(
+                    //     title = stringResource(R.string.aloud_config),
+                    //     description = stringResource(R.string.multi_role_rule_summary),
+                    //     onClick = onNavigateToReadAloud
+                    // )
                     ClickableSettingItem(
                         title = stringResource(R.string.cover_config),
                         onClick = onNavigateToCover
@@ -89,10 +91,11 @@ fun ConfigNavScreen(
                         title = stringResource(R.string.ai_config),
                         onClick = onNavigateToAi
                     )
-                    ClickableSettingItem(
-                        title = stringResource(R.string.translation_config),
-                        onClick = onNavigateToTranslation
-                    )
+                    // 💡 漫画专用 App：「翻译设置」入口隐藏（小说翻译）
+                    // ClickableSettingItem(
+                    //     title = stringResource(R.string.translation_config),
+                    //     onClick = onNavigateToTranslation
+                    // )
                     ClickableSettingItem(
                         title = stringResource(R.string.privacy),
                         onClick = onNavigateToPrivate
