@@ -78,7 +78,6 @@ sealed interface MangaReaderItemUi {
         val fullScreen: Boolean = false,
     ) : MangaReaderItemUi
 
-    /** A deliberate boundary between chapters; it is never a page from another chapter. */
     @Stable
     data class ChapterTransition(
         override val key: String,
@@ -96,10 +95,6 @@ sealed interface MangaReaderItemUi {
 sealed interface MangaPageLoadState {
     data object Queued : MangaPageLoadState
 
-    /**
-     * @param progress 下载百分比 0..100；服务端未返回 Content-Length 时为 null，
-     * 此时 UI 退回不确定进度（只转圈，不显示数字）。
-     */
     data class Loading(val progress: Int? = null) : MangaPageLoadState
 
     data object Ready : MangaPageLoadState
@@ -154,13 +149,14 @@ data class MangaReaderSettings(
     val hideChapterLabel: Boolean = false,
     val hideProgress: Boolean = false,
     val hideProgressLabel: Boolean = false,
-    // 💡 控制页脚右下角是否显示时间和电量
     val hideTimeBattery: Boolean = false,
     val footerAlignment: Int = 0,
-    // 💡 页脚水平偏移（dp，-400..400，正值向右）
+    // 💡 页脚（章节信息部分）偏移
     val footerOffsetX: Int = 0,
-    // 💡 页脚垂直偏移（dp，0..800，正值向上；0 = 紧贴屏幕底边）
     val footerOffsetY: Int = 0,
+    // 💡 时间电量独立偏移
+    val timeBatteryOffsetX: Int = 0,
+    val timeBatteryOffsetY: Int = 0,
     val menuTopBarLiquidGlass: Boolean = false,
     val menuBottomBarLiquidGlass: Boolean = false,
     val menuBottomBarFloating: Boolean = true,
@@ -262,7 +258,6 @@ sealed interface MangaReaderIntent {
         val itemIndex: Int,
         val firstItemIndex: Int = itemIndex,
         val lastItemIndex: Int = itemIndex,
-        /** Adjacent chapters may be precomposed; only promote after the current chapter leaves view. */
         val currentChapterVisible: Boolean,
         val navigationId: Long,
     ) : MangaReaderIntent
@@ -351,9 +346,12 @@ enum class MangaReaderSettingKey {
     HIDE_PROGRESS_LABEL,
     HIDE_TIME_BATTERY,
     FOOTER_ALIGNMENT,
-    // 💡 页脚偏移
+    // 💡 页脚（章节信息部分）偏移
     FOOTER_OFFSET_X,
     FOOTER_OFFSET_Y,
+    // 💡 时间电量独立偏移
+    TIME_BATTERY_OFFSET_X,
+    TIME_BATTERY_OFFSET_Y,
     MENU_TOP_BAR_LIQUID_GLASS,
     MENU_BOTTOM_BAR_LIQUID_GLASS,
     MENU_BOTTOM_BAR_FLOATING,
@@ -387,7 +385,6 @@ sealed interface MangaReaderEffect {
     data class CopyImage(val filePath: String) : MangaReaderEffect
 }
 
-/** 加载回调必须同时匹配书籍、页面与重试代次。 */
 @Stable
 data class MangaPageRequestId(val bookUrl: String, val key: String, val retryRevision: Int)
 
