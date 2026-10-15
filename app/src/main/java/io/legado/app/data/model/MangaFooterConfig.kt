@@ -13,10 +13,12 @@ data class MangaFooterConfig(
     var footerOrientation: Int = 0,
     var hideFooter: Boolean = false,
     var hideChapterName: Boolean = false,
-    // 💡 控制页脚右下角是否显示时间和电量
     var hideTimeBattery: Boolean = false,
-    // 💡 页脚水平偏移（dp，-400..400，正值向右）
+    // 💡 页脚（章节信息部分）偏移（dp，正值向右）
     var footerOffsetXDp: Int = 0,
-    // 💡 页脚垂直偏移（dp，0..800，正值向上；0 = 紧贴屏幕底边）
+    // 💡 页脚（章节信息部分）偏移（dp，正值向上；0 = 贴底）
     var footerOffsetYDp: Int = 0,
+    // 💡 时间电量的独立偏移
+    var timeBatteryOffsetXDp: Int = 0,
+    var timeBatteryOffsetYDp: Int = 0,
 )
