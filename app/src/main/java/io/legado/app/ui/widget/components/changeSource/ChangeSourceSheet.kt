@@ -10,7 +10,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.FilterList
 import androidx.compose.material.icons.filled.MoreVert
@@ -25,6 +25,7 @@ import androidx.compose.runtime.Stable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -66,7 +67,9 @@ import io.legado.app.ui.widget.components.progressIndicator.AppCircularProgressI
 import io.legado.app.ui.widget.components.progressIndicator.AppLinearProgressIndicator
 import io.legado.app.ui.widget.components.text.AppText
 import io.legado.app.utils.toastOnUi
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.launch
 import org.koin.androidx.compose.koinViewModel
 
 @Stable
@@ -105,6 +108,7 @@ fun ChangeSourceSheet(
     viewModel: ChangeBookSourceComposeViewModel = koinViewModel(key = "source-${oldBook.bookUrl}"),
 ) {
     val context = LocalContext.current
+    val scope = rememberCoroutineScope() // 💡 用于在协程中安全地控制状态更新时序
     val lifecycleOwner = LocalLifecycleOwner.current
     val items by viewModel.searchDataFlow.collectAsStateWithLifecycle(initialValue = emptyList<SearchBook>())
     val isSearching by viewModel.isSearching.collectAsStateWithLifecycle()
@@ -187,42 +191,47 @@ fun ChangeSourceSheet(
         viewModel.getToc(
             book,
             onSuccess = { toc, source ->
-                if (replace) {
-                    loadingAction = false
-                    // 💡 修复：先让 Sheet 消失，再延迟触发数据更新，避免节点回收时动画竞争崩溃
-                    if (!dismissBeforeLoading) {
-                        onDismissRequest()
-                    }
-                    android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
-                        onReplace(source, book, toc, settings.migrationOptions())
-                    }, 150L)
-                } else if (onReplaceConflict != null) {
-                    viewModel.findShelfConflict(book) { conflict ->
-                        loadingAction = false
-                        if (conflict == null) {
-                            onAddAsNew(book, toc)
-                            context.toastOnUi(bookAddedToShelfText)
+                scope.launch {
+                    if (replace) {
+                        if (!dismissBeforeLoading) {
+                            loadingAction = false
+                            delay(100L)
+                            onDismissRequest()
+                            delay(200L)
+                            onReplace(source, book, toc, settings.migrationOptions())
                         } else {
-                            shelfConflict = PendingShelfConflict(
-                                conflict = conflict,
-                                source = source,
-                                newBook = book,
-                                toc = toc,
-                            )
+                            onReplace(source, book, toc, settings.migrationOptions())
                         }
+                    } else if (onReplaceConflict != null) {
+                        viewModel.findShelfConflict(book) { conflict ->
+                            loadingAction = false
+                            if (conflict == null) {
+                                onAddAsNew(book, toc)
+                                context.toastOnUi(bookAddedToShelfText)
+                            } else {
+                                shelfConflict = PendingShelfConflict(
+                                    conflict = conflict,
+                                    source = source,
+                                    newBook = book,
+                                    toc = toc,
+                                )
+                            }
+                            actionBook = null
+                        }
+                    } else {
+                        loadingAction = false
+                        onAddAsNew(book, toc)
+                        context.toastOnUi(bookAddedToShelfText)
                         actionBook = null
                     }
-                } else {
-                    loadingAction = false
-                    onAddAsNew(book, toc)
-                    context.toastOnUi(bookAddedToShelfText)
-                    actionBook = null
                 }
             },
             onError = {
-                loadingAction = false
-                AppLog.put("${if (replace) "换源" else "添加书籍"}获取目录出错\n${it.localizedMessage}", it, true)
-                context.toastOnUi(if (replace) "换源失败" else "添加书籍失败")
+                scope.launch {
+                    loadingAction = false
+                    AppLog.put("${if (replace) "换源" else "添加书籍"}获取目录出错\n${it.localizedMessage}", it, true)
+                    context.toastOnUi(if (replace) "换源失败" else "添加书籍失败")
+                }
             }
         )
     }
@@ -347,7 +356,7 @@ fun ChangeSourceSheet(
                 modifier = Modifier.fillMaxWidth(),
                 verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                items(items, key = { it.bookUrl + it.origin }) { item ->
+                itemsIndexed(items, key = { index, item -> "${item.bookUrl}_${item.origin}_$index" }) { index, item ->
                     val bookScore by remember(item.origin, item.name, item.author) {
                         viewModel.bookScoreFlow(item)
                     }.collectAsStateWithLifecycle()
@@ -464,14 +473,14 @@ fun ChangeSourceSheet(
         confirmText = stringResource(android.R.string.ok),
         onConfirm = { searchBook ->
             mismatchBook = null
-            // 💡 修复：先移除当前弹窗，延迟 100ms 给 Compose 回收 LayoutNode 的时间，再执行下一步，避免 RectList 崩溃
-            android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
+            scope.launch {
+                delay(100L)
                 if (canAddAsNew) {
                     actionBook = searchBook
                 } else {
                     performAction(searchBook, true)
                 }
-            }, 100L)
+            }
         },
         dismissText = stringResource(android.R.string.cancel),
         onDismiss = { mismatchBook = null }
@@ -485,18 +494,18 @@ fun ChangeSourceSheet(
             onDismiss = {
                 val book = actionBook
                 actionBook = null
-                // 💡 修复：显式清空 actionBook，并延迟触发，防止与 loadingAction 弹窗同时争夺布局树
-                android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
+                scope.launch {
+                    delay(100L)
                     book?.let { performAction(it, false) }
-                }, 100L)
+                }
             },
             confirmText = stringResource(R.string.replace_current_book),
             onConfirm = { searchBook ->
                 actionBook = null
-                // 💡 修复：显式清空 actionBook，并延迟触发，防止与 loadingAction 弹窗同时争夺布局树
-                android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
+                scope.launch {
+                    delay(100L)
                     performAction(searchBook, true)
-                }, 100L)
+                }
             }
         )
     }
@@ -504,7 +513,6 @@ fun ChangeSourceSheet(
         conflict = shelfConflict?.conflict,
         onDismissRequest = { shelfConflict = null },
         onOpenExistingBook = { summary ->
-            // 先收起冲突 Sheet 再跳转，否则返回本页时它会重新显示并吃掉一次返回键。
             shelfConflict = null
             context.startActivity(
                 MainActivity.createBookInfoIntent(
@@ -521,8 +529,6 @@ fun ChangeSourceSheet(
             val pending = shelfConflict
             shelfConflict = null
             if (pending != null) {
-                // 共存也必须兑现 Sheet 上勾选的数据项，否则同一个交互在换源入口与其它入口
-                // 语义不一致。这里只按选项把已有作品的字段复制到新书，不碰阅读记录。
                 viewModel.loadShelfBook(existingBookUrl) { existingBook ->
                     existingBook?.copyMigratableFieldsTo(pending.newBook, options)
                     onAddAsNew(pending.newBook, pending.toc)
