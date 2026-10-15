@@ -1004,7 +1004,7 @@
     <string name="show_discovery">顯示發現</string>
     <string name="show_home">顯示首頁</string>
     <string name="main_navigation_settings">首頁與導覽</string>
-    <string name="main_navigation_settings_summary">設定首頁、發現、訂閱、預設主頁和導航欄圖示</string>
+    <string name="main_navigation_settings_summary">設定首頁、發現、預設主頁和導航欄圖示</string>
     <string name="navigation_order">導覽順序</string>
     <string name="style">樣式</string>
     <string name="group_style">分組樣式</string>
