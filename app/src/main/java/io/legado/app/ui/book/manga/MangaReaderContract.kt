@@ -157,6 +157,13 @@ data class MangaReaderSettings(
     // 💡 时间电量独立偏移
     val timeBatteryOffsetX: Int = 0,
     val timeBatteryOffsetY: Int = 0,
+    // 💡 画质与性能
+    val contrast: Int = 0,
+    val highQualityDecode: Boolean = false,
+    val sharpenEnabled: Boolean = false,
+    val sharpenStrength: Int = 50,
+    val prefetchAdaptive: Boolean = false,
+    val prefetchPrioritizeCurrent: Boolean = true,
     val menuTopBarLiquidGlass: Boolean = false,
     val menuBottomBarLiquidGlass: Boolean = false,
     val menuBottomBarFloating: Boolean = true,
@@ -352,6 +359,13 @@ enum class MangaReaderSettingKey {
     // 💡 时间电量独立偏移
     TIME_BATTERY_OFFSET_X,
     TIME_BATTERY_OFFSET_Y,
+    // 💡 画质与性能
+    FILTER_CONTRAST,
+    MANGA_HIGH_QUALITY_DECODE,
+    MANGA_SHARPEN_ENABLED,
+    MANGA_SHARPEN_STRENGTH,
+    MANGA_PREFETCH_ADAPTIVE,
+    MANGA_PREFETCH_PRIORITIZE_CURRENT,
     MENU_TOP_BAR_LIQUID_GLASS,
     MENU_BOTTOM_BAR_LIQUID_GLASS,
     MENU_BOTTOM_BAR_FLOATING,
