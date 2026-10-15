@@ -114,6 +114,7 @@ import io.legado.app.ui.widget.components.alert.AppAlertDialog
 import io.legado.app.ui.widget.components.button.series.MediumOutlinedButton
 import io.legado.app.ui.widget.components.changeSource.ChangeSourceSheet
 import io.legado.app.ui.widget.components.progressIndicator.AppCircularProgressIndicator
+import io.legado.app.utils.isWifiConnect
 import kotlinx.collections.immutable.toImmutableList
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -381,6 +382,7 @@ private fun MangaChapterImagePrefetch(
         sidePaddingPercent = state.settings.sidePaddingPercent,
         pageScaleType = state.settings.pageScaleType,
         widePageMode = state.settings.widePageMode,
+        highQuality = state.settings.highQualityDecode,
     )
     val pagePrefetchRevision = state.pages.filterIsInstance<MangaReaderItemUi.Page>()
         .map { it.key to it.retryRevision }
@@ -404,11 +406,25 @@ private fun MangaChapterImagePrefetch(
         prefetchItemIndex,
         pagePrefetchRevision,
         state.settings.preDownloadCount,
+        state.settings.prefetchAdaptive,
+        state.settings.prefetchPrioritizeCurrent,
         state.chapterIndex
     ) {
-        val pages = if (state.settings.preDownloadCount <= 0) emptyMap() else
+        // 💡 预加载自适应：移动网络下把数量减半；WiFi/以太网保持用户设定
+        val effectivePreDownload = if (state.settings.prefetchAdaptive && !context.isWifiConnect) {
+            state.settings.preDownloadCount / 2
+        } else {
+            state.settings.preDownloadCount
+        }
+        val rawPages = if (effectivePreDownload <= 0) emptyList() else
             mangaChapterPrefetchPages(state.pages, prefetchItemIndex, state.chapterIndex)
-                .associateBy { it.key to it.retryRevision }
+        // 💡 预加载优先级：按「距离当前页远近」重排，让当前页附近的图先准备好
+        val orderedPages = if (state.settings.prefetchPrioritizeCurrent) {
+            prioritizePrefetchByDistance(rawPages, prefetchItemIndex, state.pages)
+        } else {
+            rawPages
+        }
+        val pages = orderedPages.associateBy { it.key to it.retryRevision }
         prefetch.update(pages.keys.toList()) { key ->
             val page = pages.getValue(key)
             val owner = MangaImageFileOwner()
@@ -428,6 +444,25 @@ private fun MangaChapterImagePrefetch(
                 owner.close()
             }
         }
+    }
+}
+
+/**
+ * 把预加载列表按「距离锚点的绝对距离」升序重排。
+ *
+ * 锚点是 state.pages 里的下标；预加载项的 key 与 state.pages 项 key 一致，
+ * 因此可以精确算出距离。
+ */
+private fun prioritizePrefetchByDistance(
+    pages: List<MangaReaderItemUi.Page>,
+    anchor: Int,
+    allItems: List<MangaReaderItemUi>,
+): List<MangaReaderItemUi.Page> {
+    if (pages.isEmpty()) return pages
+    val keyToIndex = allItems.withIndex().associate { (i, item) -> item.key to i }
+    return pages.sortedBy { page ->
+        val pos = keyToIndex[page.key] ?: Int.MAX_VALUE
+        kotlin.math.abs(pos - anchor)
     }
 }
 
@@ -1427,6 +1462,7 @@ private fun MangaPageImage(
         sidePaddingPercent = settings.sidePaddingPercent,
         pageScaleType = settings.pageScaleType,
         widePageMode = settings.widePageMode,
+        highQuality = settings.highQualityDecode,
     )
     val webtoonSizeModifier = if (paged) Modifier else {
         aspectRatios[page.key]?.takeIf { it > 0f }?.let { Modifier.aspectRatio(it) }
@@ -1738,6 +1774,7 @@ private fun mangaPageDecodeSize(
     sidePaddingPercent: Int,
     pageScaleType: Int,
     widePageMode: Int,
+    highQuality: Boolean,
 ): Size {
     val density = LocalDensity.current
     val configuration = LocalConfiguration.current
@@ -1752,6 +1789,7 @@ private fun mangaPageDecodeSize(
         sidePaddingPercent = sidePaddingPercent,
         pageScaleType = pageScaleType,
         widePageMode = widePageMode,
+        highQuality = highQuality,
     )
 }
 
@@ -1761,6 +1799,7 @@ internal fun mangaPageDecodeSize(
     sidePaddingPercent: Int,
     pageScaleType: Int,
     widePageMode: Int,
+    highQuality: Boolean = false,
 ): Size {
     // ContentScale.None 必须保留原图固有尺寸。
     if (paged && pageScaleType == MangaPageScaleType.ORIGINAL) return Size.ORIGINAL
@@ -1768,8 +1807,12 @@ internal fun mangaPageDecodeSize(
     val height = viewport.height.coerceAtLeast(1)
     val rotated = paged && widePageMode == MangaWidePageMode.ROTATE_TO_FIT
     // 宽图才旋转，但预取时尚无宽高比；取两种方向的上界，避免加载后重发请求。
-    val targetWidth = if (rotated) maxOf(width, height) else width
-    val targetHeight = if (rotated) maxOf(width, height) else height
+    val baseWidth = if (rotated) maxOf(width, height) else width
+    val baseHeight = if (rotated) maxOf(width, height) else height
+    // 💡 高清解码：目标尺寸放大 1.5 倍，展示时由 Compose 缩小 → 保留更多原始细节。
+    val hqScale = if (highQuality) 1.5f else 1f
+    val targetWidth = (baseWidth * hqScale).roundToInt().coerceAtLeast(1)
+    val targetHeight = (baseHeight * hqScale).roundToInt().coerceAtLeast(1)
     if (paged && pageScaleType == MangaPageScaleType.FIT_HEIGHT) {
         // 宽图的 FIT_WIDTH 优先于普通页缩放。未知宽高比时同时满足两条显示路径。
         if (widePageMode == MangaWidePageMode.FIT_WIDTH) {
@@ -1827,7 +1870,16 @@ private fun MangaReaderItemUi.Page.imageRequest(
                     settings.scrollMode == MangaScrollMode.WEBTOON_WITH_GAP
         }
         .apply {
-            if (settings.enableEInk) transformations(MangaEInkTransformation(settings.eInkThreshold))
+            // 💡 画质与性能：E-Ink 二值化与锐化互斥，E-Ink 优先
+            when {
+                settings.enableEInk -> transformations(
+                    MangaEInkTransformation(settings.eInkThreshold)
+                )
+
+                settings.sharpenEnabled -> transformations(
+                    MangaSharpenTransformation(settings.sharpenStrength)
+                )
+            }
             crossfade(!settings.disableCrossFade)
         }
         .listener(onStart = { _ -> onStart() }, onError = { _, result ->
@@ -2008,10 +2060,24 @@ private fun mangaColorFilter(settings: MangaReaderSettings): ColorFilter? =
 internal fun mangaColorMatrix(settings: MangaReaderSettings): ColorMatrix? {
     val grayscale = settings.enableGray && !settings.enableEInk
     if (!grayscale && settings.filterRed == 0 && settings.filterGreen == 0 &&
-        settings.filterBlue == 0 && settings.filterAlpha == 0
+        settings.filterBlue == 0 && settings.filterAlpha == 0 && settings.contrast == 0
     ) return null
     val matrix = ColorMatrix()
     if (grayscale) matrix.setToSaturation(0f)
+    // 💡 画质与性能：对比度 -100..100 映射到 c ∈ [0, 2]
+    if (settings.contrast != 0) {
+        val c = 1f + settings.contrast / 100f
+        val t = (1f - c) * 128f
+        val contrastMatrix = ColorMatrix(
+            floatArrayOf(
+                c, 0f, 0f, 0f, t,
+                0f, c, 0f, 0f, t,
+                0f, 0f, c, 0f, t,
+                0f, 0f, 0f, 1f, 0f,
+            )
+        )
+        matrix.postConcat(contrastMatrix)
+    }
     val scales = floatArrayOf(
         (255 - settings.filterRed) / 255f,
         (255 - settings.filterGreen) / 255f,
