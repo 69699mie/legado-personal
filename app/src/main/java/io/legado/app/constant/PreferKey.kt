@@ -312,6 +312,12 @@ object PreferKey {
     const val mangaClickActionBR = "mangaClickActionBottomRight"
     const val mangaLongClick = "mangaLongClick"
     const val mangaBackground = "mangaBackground"
+    // 画质与性能
+    const val mangaHighQualityDecode = "mangaHighQualityDecode"
+    const val mangaSharpenEnabled = "mangaSharpenEnabled"
+    const val mangaSharpenStrength = "mangaSharpenStrength"
+    const val mangaPrefetchAdaptive = "mangaPrefetchAdaptive"
+    const val mangaPrefetchPrioritizeCurrent = "mangaPrefetchPrioritizeCurrent"
     const val mangaAutoBackground = "mangaAutoBackground"
     const val mangaPageScaleType = "mangaPageScaleType"
     const val mangaZoomStartPosition = "mangaZoomStartPosition"
