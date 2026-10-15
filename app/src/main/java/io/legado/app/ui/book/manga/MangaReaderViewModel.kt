@@ -880,6 +880,8 @@ class MangaReaderViewModel(
             MangaReaderSettingKey.FILTER_GREEN,
             MangaReaderSettingKey.FILTER_BLUE,
             MangaReaderSettingKey.FILTER_ALPHA,
+            // 💡 画质与性能：对比度归入颜色分支
+            MangaReaderSettingKey.FILTER_CONTRAST,
             MangaReaderSettingKey.AUTO_BRIGHTNESS,
             MangaReaderSettingKey.BRIGHTNESS -> updateColorSetting(key, value)
             MangaReaderSettingKey.HIDE_FOOTER,
@@ -920,6 +922,22 @@ class MangaReaderViewModel(
             MangaReaderSettingKey.MENU_SEED_COLOR -> updateMangaPreference {
                 it.copy(menuSeedColor = value)
             }
+            // 💡 画质与性能：5 个独立分支
+            MangaReaderSettingKey.MANGA_HIGH_QUALITY_DECODE -> updateMangaPreference {
+                it.copy(highQualityDecode = enabled)
+            }
+            MangaReaderSettingKey.MANGA_SHARPEN_ENABLED -> updateMangaPreference {
+                it.copy(sharpenEnabled = enabled)
+            }
+            MangaReaderSettingKey.MANGA_SHARPEN_STRENGTH -> updateMangaPreference {
+                it.copy(sharpenStrength = value)
+            }
+            MangaReaderSettingKey.MANGA_PREFETCH_ADAPTIVE -> updateMangaPreference {
+                it.copy(prefetchAdaptive = enabled)
+            }
+            MangaReaderSettingKey.MANGA_PREFETCH_PRIORITIZE_CURRENT -> updateMangaPreference {
+                it.copy(prefetchPrioritizeCurrent = enabled)
+            }
         }
     }
 
@@ -945,6 +963,8 @@ class MangaReaderViewModel(
                 MangaReaderSettingKey.FILTER_GREEN -> config.g = value
                 MangaReaderSettingKey.FILTER_BLUE -> config.b = value
                 MangaReaderSettingKey.FILTER_ALPHA -> config.a = value
+                // 💡 画质与性能：对比度
+                MangaReaderSettingKey.FILTER_CONTRAST -> config.contrast = value
                 MangaReaderSettingKey.AUTO_BRIGHTNESS -> config.autoBrightness = value != 0
                 MangaReaderSettingKey.BRIGHTNESS -> config.l = value
                 else -> Unit
@@ -1380,6 +1400,13 @@ class MangaReaderViewModel(
         // 💡 时间电量独立偏移
         timeBatteryOffsetX = footer.timeBatteryOffsetXDp,
         timeBatteryOffsetY = footer.timeBatteryOffsetYDp,
+        // 💡 画质与性能
+        contrast = colorFilter.contrast,
+        highQualityDecode = settings.highQualityDecode,
+        sharpenEnabled = settings.sharpenEnabled,
+        sharpenStrength = settings.sharpenStrength,
+        prefetchAdaptive = settings.prefetchAdaptive,
+        prefetchPrioritizeCurrent = settings.prefetchPrioritizeCurrent,
         menuTopBarLiquidGlass = settings.menuTopBarLiquidGlass,
         menuBottomBarLiquidGlass = settings.menuBottomBarLiquidGlass,
         menuBottomBarFloating = settings.menuBottomBarFloating,
