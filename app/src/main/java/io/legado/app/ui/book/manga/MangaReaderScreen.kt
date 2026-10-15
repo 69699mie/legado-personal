@@ -2076,7 +2076,7 @@ internal fun mangaColorMatrix(settings: MangaReaderSettings): ColorMatrix? {
                 0f, 0f, 0f, 1f, 0f,
             )
         )
-        matrix.postConcat(contrastMatrix)
+        matrix *= contrastMatrix
     }
     val scales = floatArrayOf(
         (255 - settings.filterRed) / 255f,
