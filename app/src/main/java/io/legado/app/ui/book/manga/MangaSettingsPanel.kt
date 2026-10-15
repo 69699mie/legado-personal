@@ -588,7 +588,6 @@ private fun FooterSettingsContent(
         stringResource(R.string.manga_reader_hide_progress_label),
         settings.hideProgressLabel
     ) { updateBoolean(onIntent, MangaReaderSettingKey.HIDE_PROGRESS_LABEL, it) }
-    // 💡 新增：隐藏时间与电量开关
     SettingSwitch(
         stringResource(R.string.manga_reader_hide_time_battery),
         settings.hideTimeBattery
@@ -605,6 +604,22 @@ private fun FooterSettingsContent(
             updateInt(onIntent, MangaReaderSettingKey.FOOTER_ALIGNMENT, it.toInt())
         },
     )
+    // 💡 页脚水平偏移（-400..400 dp，正值向右）
+    SettingSlider(
+        label = "页脚水平偏移（dp，正值向右）",
+        value = settings.footerOffsetX,
+        range = -400..400,
+    ) {
+        updateInt(onIntent, MangaReaderSettingKey.FOOTER_OFFSET_X, it)
+    }
+    // 💡 页脚垂直偏移（0..800 dp，正值向上；0 = 紧贴屏幕底边）
+    SettingSlider(
+        label = "页脚垂直偏移（dp，正值向上，0=贴底）",
+        value = settings.footerOffsetY,
+        range = 0..800,
+    ) {
+        updateInt(onIntent, MangaReaderSettingKey.FOOTER_OFFSET_Y, it)
+    }
 }
 
 @Composable
