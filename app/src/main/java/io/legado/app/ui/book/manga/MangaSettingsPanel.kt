@@ -604,21 +604,35 @@ private fun FooterSettingsContent(
             updateInt(onIntent, MangaReaderSettingKey.FOOTER_ALIGNMENT, it.toInt())
         },
     )
-    // 💡 页脚水平偏移（-400..400 dp，正值向右）
+    // 💡 页脚（章节信息部分）偏移
     SettingSlider(
-        label = "页脚水平偏移（dp，正值向右）",
+        label = "页脚水平偏移",
         value = settings.footerOffsetX,
         range = -400..400,
     ) {
         updateInt(onIntent, MangaReaderSettingKey.FOOTER_OFFSET_X, it)
     }
-    // 💡 页脚垂直偏移（0..800 dp，正值向上；0 = 紧贴屏幕底边）
     SettingSlider(
-        label = "页脚垂直偏移（dp，正值向上，0=贴底）",
+        label = "页脚垂直偏移",
         value = settings.footerOffsetY,
         range = 0..800,
     ) {
         updateInt(onIntent, MangaReaderSettingKey.FOOTER_OFFSET_Y, it)
+    }
+    // 💡 时间电量独立偏移
+    SettingSlider(
+        label = "时间与电量水平偏移",
+        value = settings.timeBatteryOffsetX,
+        range = -400..400,
+    ) {
+        updateInt(onIntent, MangaReaderSettingKey.TIME_BATTERY_OFFSET_X, it)
+    }
+    SettingSlider(
+        label = "时间与电量垂直偏移",
+        value = settings.timeBatteryOffsetY,
+        range = 0..800,
+    ) {
+        updateInt(onIntent, MangaReaderSettingKey.TIME_BATTERY_OFFSET_Y, it)
     }
 }
 
