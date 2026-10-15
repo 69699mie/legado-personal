@@ -159,17 +159,17 @@ internal fun BoxScope.MangaFooter(state: MangaReaderUiState) {
         "${timeState.value}  ${batteryState.value}%"
     } else null
 
-    // 💡 页脚位置：X 正值向右，Y 正值向上（0 = 紧贴底部）
-    val offsetXDp = settings.footerOffsetX.dp
-    val offsetYDp = (-settings.footerOffsetY).dp
+    // 💡 章节信息与时间电量各自独立 offset
+    val chapterOffsetXDp = settings.footerOffsetX.dp
+    val chapterOffsetYDp = (-settings.footerOffsetY).dp
+    val timeOffsetXDp = settings.timeBatteryOffsetX.dp
+    val timeOffsetYDp = (-settings.timeBatteryOffsetY).dp
 
     Row(
         modifier = Modifier
             .fillMaxWidth()
             .navigationBarsPadding()
-            // 💡 移除底部内边距，仅保留左右，让垂直偏移 0 能真正贴底
             .padding(horizontal = 16.dp)
-            .offset(x = offsetXDp, y = offsetYDp)
             .align(Alignment.BottomStart),
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.Bottom,
@@ -178,13 +178,16 @@ internal fun BoxScope.MangaFooter(state: MangaReaderUiState) {
             text = text,
             color = MangaFooterContentColor,
             style = LegadoTheme.typography.labelSmall.copy(shadow = MangaFooterTextShadow),
-            modifier = Modifier.weight(1f, fill = false),
+            modifier = Modifier
+                .weight(1f, fill = false)
+                .offset(x = chapterOffsetXDp, y = chapterOffsetYDp),
         )
         if (rightText != null) {
             AnimatedText(
                 text = rightText,
                 color = MangaFooterContentColor,
                 style = LegadoTheme.typography.labelSmall.copy(shadow = MangaFooterTextShadow),
+                modifier = Modifier.offset(x = timeOffsetXDp, y = timeOffsetYDp),
             )
         }
     }
