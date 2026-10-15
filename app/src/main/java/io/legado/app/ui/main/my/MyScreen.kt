@@ -24,18 +24,14 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ExitToApp
-import androidx.compose.material.icons.automirrored.filled.LibraryBooks
-import androidx.compose.material.icons.automirrored.filled.Rule
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Bookmark
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Download
-import androidx.compose.material.icons.filled.FindReplace
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.OpenInBrowser
-import androidx.compose.material.icons.filled.Sell
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Source
 import androidx.compose.material.icons.filled.Web
@@ -52,8 +48,6 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import io.legado.app.R
 import io.legado.app.ui.book.bookmark.AllBookmarkActivity
-import io.legado.app.ui.book.toc.rule.TxtTocRuleActivity
-import io.legado.app.ui.dict.rule.DictRuleActivity
 import io.legado.app.ui.file.FileManageActivity
 import io.legado.app.ui.theme.adaptiveContentPadding
 import io.legado.app.ui.widget.components.AppScaffold
@@ -68,7 +62,7 @@ import org.koin.androidx.compose.koinViewModel
 
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalMaterial3ExpressiveApi::class)
-@SuppressLint("InlinedApi") // 仅 API 37+ 缺少权限时才发出该 effect，权限名常量会被内联
+@SuppressLint("InlinedApi")
 @Composable
 fun MyRouteScreen(
     viewModel: MyViewModel = koinViewModel(),
@@ -154,6 +148,7 @@ fun MyScreen(
                 )
             }
 
+            // 💡 漫画专用 App：规则分组只保留书源管理（漫画书源也在书源管理中管理）
             SplicedColumnGroup(
                 title = stringResource(R.string.rule_segment),
             ) {
@@ -166,38 +161,6 @@ fun MyScreen(
                             PrefClickEvent.OpenBookSourceManage
                         )
                     }
-                )
-                ClickableSettingItem(
-                    title = stringResource(R.string.replace_purify),
-                    imageVector = Icons.Default.FindReplace,
-                    onClick = {
-                        onNavigate(
-                            PrefClickEvent.OpenReplaceRules
-                        )
-                    }
-                )
-                ClickableSettingItem(
-                    title = stringResource(R.string.txt_toc_rule),
-                    imageVector = Icons.AutoMirrored.Filled.Rule,
-                    onClick = {
-                        onNavigate(
-                            PrefClickEvent.StartActivity(TxtTocRuleActivity::class.java)
-                        )
-                    }
-                )
-                ClickableSettingItem(
-                    title = stringResource(R.string.dict_rule),
-                    imageVector = Icons.AutoMirrored.Filled.LibraryBooks,
-                    onClick = {
-                        onNavigate(
-                            PrefClickEvent.StartActivity(DictRuleActivity::class.java)
-                        )
-                    }
-                )
-                ClickableSettingItem(
-                    title = stringResource(R.string.highlight_tag_config),
-                    imageVector = Icons.Default.Sell,
-                    onClick = { onNavigate(PrefClickEvent.OpenHighlightTagRule) }
                 )
             }
 
