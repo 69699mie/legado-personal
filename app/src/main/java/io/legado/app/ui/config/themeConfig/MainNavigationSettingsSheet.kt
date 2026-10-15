@@ -78,8 +78,15 @@ fun MainNavigationSettingsSheet(
         }
     }
 
-    val visibleItems = navigationItems.filter { isRouteVisible(it.route) }
-    val hiddenItems = navigationItems.filter { !isRouteVisible(it.route) }
+    // 💡 漫画专用 App：过滤掉「订阅」开关。
+    // 刻意不动 navigationItems：Rss 仍在内存列表与 onSetOrder 输出的顺序串里，
+    // 只是不渲染为开关。撤销这两行即可恢复。
+    val visibleItems = navigationItems.filter {
+        isRouteVisible(it.route) && it.route != MainDestination.Rss.route
+    }
+    val hiddenItems = navigationItems.filter {
+        !isRouteVisible(it.route) && it.route != MainDestination.Rss.route
+    }
     val selectedDefault = settings.defaultHomePage.takeIf { route ->
         visibleItems.any { it.route == route }
     } ?: MainDestination.Bookshelf.route
