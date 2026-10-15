@@ -1174,7 +1174,7 @@
     <string name="show_discovery">显示发现</string>
     <string name="show_home">显示首页</string>
     <string name="main_navigation_settings">首页与导航</string>
-    <string name="main_navigation_settings_summary">配置首页、发现、订阅、默认主页和导航栏图标</string>
+    <string name="main_navigation_settings_summary">配置首页、发现、默认主页和导航栏图标</string>
     <string name="navigation_order">导航顺序</string>
     <string name="style">样式</string>
     <string name="group_style">分组样式</string>
