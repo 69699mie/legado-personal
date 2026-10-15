@@ -9,8 +9,8 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.FilterList
 import androidx.compose.material.icons.filled.MoreVert
@@ -80,13 +80,6 @@ private data class PendingShelfConflict(
     val toc: List<BookChapter>,
 )
 
-/**
- * 换源 Sheet。
- *
- * @param oldBook 要换源的书。**调用方必须如实带上「未上架」标记**（[io.legado.app.constant.BookType.notShelf]）：
- *   未上架的书换源不存在「新增还是替换」的歧义，本组件据此跳过该询问。
- *   详情页这类从书源解析出来的 Book 不带该标记，需要由调用方按自己的在架状态补上。
- */
 @Composable
 fun ChangeSourceSheet(
     show: Boolean,
@@ -108,7 +101,7 @@ fun ChangeSourceSheet(
     viewModel: ChangeBookSourceComposeViewModel = koinViewModel(key = "source-${oldBook.bookUrl}"),
 ) {
     val context = LocalContext.current
-    val scope = rememberCoroutineScope() // 💡 用于在协程中安全地控制状态更新时序
+    val scope = rememberCoroutineScope()
     val lifecycleOwner = LocalLifecycleOwner.current
     val items by viewModel.searchDataFlow.collectAsStateWithLifecycle(initialValue = emptyList<SearchBook>())
     val isSearching by viewModel.isSearching.collectAsStateWithLifecycle()
@@ -131,7 +124,6 @@ fun ChangeSourceSheet(
     var showOptionsMenu by rememberSaveable { mutableStateOf(false) }
     var showFilterSheet by rememberSaveable { mutableStateOf(false) }
     val bookAddedToShelfText = stringResource(R.string.book_added_to_shelf)
-    // 不在书架的书换源，只是给这本还没上架的书换个源，不存在「新增还是替换」的歧义，直接替换即可。
     val canAddAsNew = allowAddAsNew && !oldBook.isNotShelf
 
     val editSourceResult =
@@ -245,8 +237,8 @@ fun ChangeSourceSheet(
                 Box {
                     MediumTonalButton(
                         onClick = { showOptionsMenu = true },
-                icon = Icons.Default.MoreVert,
-                contentDescription = stringResource(R.string.more_menu)
+                        icon = Icons.Default.MoreVert,
+                        contentDescription = stringResource(R.string.more_menu)
                     )
                     RoundDropdownMenu(
                         expanded = showOptionsMenu,
@@ -352,11 +344,13 @@ fun ChangeSourceSheet(
                 )
             }
         } else {
-            LazyColumn(
-                modifier = Modifier.fillMaxWidth(),
-                verticalArrangement = Arrangement.spacedBy(8.dp)
+            // ⚠️ 二分法临时验证：LazyColumn -> Column + verticalScroll
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .verticalScroll(rememberScrollState())
             ) {
-                itemsIndexed(items, key = { index, item -> "${item.bookUrl}_${item.origin}_$index" }) { index, item ->
+                items.forEachIndexed { index, item ->
                     val bookScore by remember(item.origin, item.name, item.author) {
                         viewModel.bookScoreFlow(item)
                     }.collectAsStateWithLifecycle()
@@ -459,6 +453,7 @@ fun ChangeSourceSheet(
                             )
                         }
                     )
+                    Spacer(modifier = Modifier.height(8.dp))
                 }
             }
         }
