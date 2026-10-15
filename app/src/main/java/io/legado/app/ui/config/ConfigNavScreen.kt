@@ -87,23 +87,26 @@ fun ConfigNavScreen(
                         title = stringResource(R.string.backup_restore),
                         onClick = onNavigateToBackup
                     )
-                    ClickableSettingItem(
-                        title = stringResource(R.string.ai_config),
-                        onClick = onNavigateToAi
-                    )
+                    // 💡 已按需隐藏：「AI 设置」
+                    // ClickableSettingItem(
+                    //     title = stringResource(R.string.ai_config),
+                    //     onClick = onNavigateToAi
+                    // )
                     // 💡 漫画专用 App：「翻译设置」入口隐藏（小说翻译）
                     // ClickableSettingItem(
                     //     title = stringResource(R.string.translation_config),
                     //     onClick = onNavigateToTranslation
                     // )
-                    ClickableSettingItem(
-                        title = stringResource(R.string.privacy),
-                        onClick = onNavigateToPrivate
-                    )
-                    ClickableSettingItem(
-                        title = stringResource(R.string.lab_setting),
-                        onClick = onNavigateToLab
-                    )
+                    // 💡 已按需隐藏：「隐私」
+                    // ClickableSettingItem(
+                    //     title = stringResource(R.string.privacy),
+                    //     onClick = onNavigateToPrivate
+                    // )
+                    // 💡 已按需隐藏：「实验室」
+                    // ClickableSettingItem(
+                    //     title = stringResource(R.string.lab_setting),
+                    //     onClick = onNavigateToLab
+                    // )
                 }
             }
         }
