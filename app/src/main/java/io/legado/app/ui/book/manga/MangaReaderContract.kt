@@ -157,6 +157,10 @@ data class MangaReaderSettings(
     // 💡 新增：控制页脚右下角是否显示时间和电量
     val hideTimeBattery: Boolean = false,
     val footerAlignment: Int = 0,
+    // 💡 页脚水平偏移（dp，-400..400，正值向右）
+    val footerOffsetX: Int = 0,
+    // 💡 页脚垂直偏移（dp，0..800，正值向上；0 = 紧贴屏幕底边）
+    val footerOffsetY: Int = 0,
     val menuTopBarLiquidGlass: Boolean = false,
     val menuBottomBarLiquidGlass: Boolean = false,
     val menuBottomBarFloating: Boolean = true,
