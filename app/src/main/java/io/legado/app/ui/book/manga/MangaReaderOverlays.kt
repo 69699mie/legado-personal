@@ -32,6 +32,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.only
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawing
@@ -151,7 +152,6 @@ internal fun BoxScope.MangaFooter(state: MangaReaderUiState) {
         }
     }.trim()
 
-    // 💡 时间和电量：通过 settings.hideTimeBattery 独立控制
     val showTimeBattery = !settings.hideTimeBattery
     val timeState = if (showTimeBattery) rememberCurrentTime() else null
     val batteryState = if (showTimeBattery) rememberBatteryLevel() else null
@@ -159,12 +159,17 @@ internal fun BoxScope.MangaFooter(state: MangaReaderUiState) {
         "${timeState.value}  ${batteryState.value}%"
     } else null
 
-    // 💡 使用 Row + SpaceBetween 实现左下角和右下角水平对齐
+    // 💡 页脚位置：X 正值向右，Y 正值向上（0 = 紧贴底部）
+    val offsetXDp = settings.footerOffsetX.dp
+    val offsetYDp = (-settings.footerOffsetY).dp
+
     Row(
         modifier = Modifier
             .fillMaxWidth()
             .navigationBarsPadding()
-            .padding(all = 16.dp)
+            // 💡 移除底部内边距，仅保留左右，让垂直偏移 0 能真正贴底
+            .padding(horizontal = 16.dp)
+            .offset(x = offsetXDp, y = offsetYDp)
             .align(Alignment.BottomStart),
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.Bottom,
