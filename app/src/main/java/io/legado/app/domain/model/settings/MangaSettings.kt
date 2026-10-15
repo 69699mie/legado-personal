@@ -47,6 +47,12 @@ data class MangaSettings(
     val clickActionBL: Int = 2,
     val clickActionBC: Int = 1,
     val clickActionBR: Int = 1,
+    // 画质与性能
+    val highQualityDecode: Boolean = false,
+    val sharpenEnabled: Boolean = false,
+    val sharpenStrength: Int = 50,
+    val prefetchAdaptive: Boolean = false,
+    val prefetchPrioritizeCurrent: Boolean = true,
 ) {
     fun hasMenuClickArea(): Boolean =
         clickActionTL * clickActionTC * clickActionTR *
