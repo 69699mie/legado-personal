@@ -549,6 +549,21 @@ private fun ReaderSettingsContent(
             )
         )
     }
+    // 💡 画质与性能：高清解码
+    SettingSwitch(
+        stringResource(R.string.manga_reader_high_quality_decode),
+        settings.highQualityDecode,
+    ) { updateBoolean(onIntent, MangaReaderSettingKey.MANGA_HIGH_QUALITY_DECODE, it) }
+    // 💡 画质与性能：预加载自适应
+    SettingSwitch(
+        stringResource(R.string.manga_reader_prefetch_adaptive),
+        settings.prefetchAdaptive,
+    ) { updateBoolean(onIntent, MangaReaderSettingKey.MANGA_PREFETCH_ADAPTIVE, it) }
+    // 💡 画质与性能：预加载优先级
+    SettingSwitch(
+        stringResource(R.string.manga_reader_prefetch_prioritize_current),
+        settings.prefetchPrioritizeCurrent,
+    ) { updateBoolean(onIntent, MangaReaderSettingKey.MANGA_PREFETCH_PRIORITIZE_CURRENT, it) }
 }
 
 @Composable
@@ -772,6 +787,28 @@ private fun FilterSettingsContent(
             0..255
         ) {
             updateInt(onIntent, MangaReaderSettingKey.BRIGHTNESS, it)
+        }
+    }
+    // 💡 画质与性能：对比度
+    SettingSlider(
+        label = stringResource(R.string.manga_reader_contrast),
+        value = settings.contrast,
+        range = -100..100,
+    ) {
+        updateInt(onIntent, MangaReaderSettingKey.FILTER_CONTRAST, it)
+    }
+    // 💡 画质与性能：边缘锐化 + 强度
+    SettingSwitch(
+        stringResource(R.string.manga_reader_sharpen),
+        settings.sharpenEnabled,
+    ) { updateBoolean(onIntent, MangaReaderSettingKey.MANGA_SHARPEN_ENABLED, it) }
+    if (settings.sharpenEnabled) {
+        SettingSlider(
+            label = stringResource(R.string.manga_reader_sharpen_strength),
+            value = settings.sharpenStrength,
+            range = 0..100,
+        ) {
+            updateInt(onIntent, MangaReaderSettingKey.MANGA_SHARPEN_STRENGTH, it)
         }
     }
 }
