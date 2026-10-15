@@ -77,6 +77,11 @@ internal fun MangaSettings.toPrefMap(): Map<String, Any?> = mapOf(
     PreferKey.mangaClickActionBL to clickActionBL,
     PreferKey.mangaClickActionBC to clickActionBC,
     PreferKey.mangaClickActionBR to clickActionBR,
+    PreferKey.mangaHighQualityDecode to highQualityDecode,
+    PreferKey.mangaSharpenEnabled to sharpenEnabled,
+    PreferKey.mangaSharpenStrength to sharpenStrength,
+    PreferKey.mangaPrefetchAdaptive to prefetchAdaptive,
+    PreferKey.mangaPrefetchPrioritizeCurrent to prefetchPrioritizeCurrent,
 )
 
 internal fun Preferences.toMangaSettings(): MangaSettings = MangaSettings(
@@ -127,4 +132,9 @@ internal fun Preferences.toMangaSettings(): MangaSettings = MangaSettings(
     clickActionBL = compatDsInt(PreferKey.mangaClickActionBL) ?: 2,
     clickActionBC = compatDsInt(PreferKey.mangaClickActionBC) ?: 1,
     clickActionBR = compatDsInt(PreferKey.mangaClickActionBR) ?: 1,
+    highQualityDecode = compatDsBoolean(PreferKey.mangaHighQualityDecode) ?: false,
+    sharpenEnabled = compatDsBoolean(PreferKey.mangaSharpenEnabled) ?: false,
+    sharpenStrength = compatDsInt(PreferKey.mangaSharpenStrength) ?: 50,
+    prefetchAdaptive = compatDsBoolean(PreferKey.mangaPrefetchAdaptive) ?: false,
+    prefetchPrioritizeCurrent = compatDsBoolean(PreferKey.mangaPrefetchPrioritizeCurrent) ?: true,
 )
