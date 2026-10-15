@@ -99,62 +99,8 @@ fun OtherConfigScreen(
                 )
             }
 
+            // 💡 漫画专用 App：阅读分组只保留漫画 UI 开关
             SplicedColumnGroup(title = stringResource(R.string.read)) {
-
-                ClickableSettingItem(
-                    title = stringResource(R.string.book_tree_uri_t),
-                    description = state.defaultBookTreeUri,
-                    onClick = { onIntent(OtherConfigIntent.ShowOverlay(OtherConfigOverlay.FilePicker)) }
-                )
-
-                SwitchSettingItem(
-                    title = stringResource(R.string.anti_alias),
-                    description = stringResource(R.string.pref_anti_alias_summary),
-                    checked = state.antiAlias,
-                    onCheckedChange = { onIntent(OtherConfigIntent.AntiAliasChanged(it)) }
-                )
-
-                SwitchSettingItem(
-                    title = stringResource(R.string.replace_enable_default_t),
-                    description = stringResource(R.string.replace_enable_default_s),
-                    checked = state.replaceEnableDefault,
-                    onCheckedChange = { onIntent(OtherConfigIntent.ReplaceEnableDefaultChanged(it)) }
-                )
-
-                SwitchSettingItem(
-                    title = stringResource(R.string.media_button_on_exit_title),
-                    description = stringResource(R.string.media_button_on_exit_summary),
-                    checked = state.mediaButtonOnExit,
-                    onCheckedChange = { onIntent(OtherConfigIntent.MediaButtonOnExitChanged(it)) }
-                )
-
-                SwitchSettingItem(
-                    title = stringResource(R.string.read_aloud_by_media_button_title),
-                    description = stringResource(R.string.read_aloud_by_media_button_summary),
-                    checked = state.readAloudByMediaButton,
-                    onCheckedChange = { onIntent(OtherConfigIntent.ReadAloudByMediaButtonChanged(it)) }
-                )
-
-                SwitchSettingItem(
-                    title = stringResource(R.string.ignore_audio_focus_title),
-                    description = stringResource(R.string.ignore_audio_focus_summary),
-                    checked = state.ignoreAudioFocus,
-                    onCheckedChange = { onIntent(OtherConfigIntent.IgnoreAudioFocusChanged(it)) }
-                )
-
-                SwitchSettingItem(
-                    title = stringResource(R.string.auto_clear_expired),
-                    description = stringResource(R.string.auto_clear_expired_summary),
-                    checked = state.autoClearExpired,
-                    onCheckedChange = { onIntent(OtherConfigIntent.AutoClearExpiredChanged(it)) }
-                )
-
-                SwitchSettingItem(
-                    title = stringResource(R.string.show_add_to_shelf_alert_title),
-                    description = stringResource(R.string.show_add_to_shelf_alert_summary),
-                    checked = state.showAddToShelfAlert,
-                    onCheckedChange = { onIntent(OtherConfigIntent.ShowAddToShelfAlertChanged(it)) }
-                )
 
                 SwitchSettingItem(
                     title = stringResource(R.string.show_manga_ui),
