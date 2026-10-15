@@ -54,7 +54,8 @@ interface BookDao {
             BookGroup.IdReadFinishedComplete -> flowReadFinishedComplete()
             else -> flowByUserGroup(groupId)
         }.map { list ->
-            list.filterNot { it.isNotShelf }
+            // 💡 漫画专用 App：只保留漫画类型（type & BookType.image > 0）
+            list.filterNot { it.isNotShelf || (it.type and BookType.image) == 0 }
         }
     }
 
@@ -76,7 +77,8 @@ interface BookDao {
             BookGroup.IdReadFinishedComplete -> flowBookShelfReadFinishedComplete()
             else -> flowBookShelfByUserGroup(groupId)
         }.map { list ->
-            list.filterNot { it.isNotShelf }
+            // 💡 漫画专用 App：只保留漫画类型
+            list.filterNot { it.isNotShelf || (it.type and BookType.image) == 0 }
         }
     }
 
@@ -702,10 +704,6 @@ interface BookDao {
     @Query("SELECT * FROM books WHERE bookUrl = :bookUrl")
     fun getBook(bookUrl: String): Book?
 
-    /**
-     * 按 bookUrl 批量取书，供跨分组多选解析选中实体（选中项可能不在当前分组列表里）。
-     * 调用方负责分批，避免单次绑定参数超过 SQLite 上限。
-     */
     @Query("SELECT * FROM books WHERE bookUrl IN (:bookUrls)")
     suspend fun getBooksByUrls(bookUrls: Set<String>): List<Book>
 
@@ -723,13 +721,6 @@ interface BookDao {
     )
     fun getCacheableBooks(bookUrls: Set<String>): List<CacheableBook>
 
-    /**
-     * 书架作品的轻量快照，供加入书架查重使用。
-     *
-     * 这是一次全表行扫描（未下架的作品），省掉的只是 `intro` / `variable` 等重字段，不是扫描行数。
-     * 规范化后的重名判定（全角半角、空白折叠）必须在 Kotlin 侧做，因此无法再用 `name` 等值条件
-     * 预筛；书架量级下这个代价可以接受，真要到需要预筛的规模，应先把规范化结果落成持久列。
-     */
     @Query(
         """
         SELECT bookUrl, name, author, coverUrl, customCoverUrl, origin, originName,
@@ -740,12 +731,6 @@ interface BookDao {
     )
     fun getShelfBookSummaries(): List<ShelfBookSummary>
 
-    /**
-     * books 表的轻量失效信号（含未上架的书）。
-     *
-     * 只用于让依赖「书架里有几本同名作品」的 Flow 能在书架增删、改名时重新计算，
-     * 调用方不关心具体数值。
-     */
     @Query("SELECT COUNT(*) FROM books")
     fun flowBookCount(): Flow<Int>
 
@@ -851,8 +836,6 @@ interface BookDao {
     @Query("delete from books where type & ${BookType.notShelf} > 0")
     fun deleteNotShelfBook()
 
-    // ── Group preview / count queries (DB-level, replaces in-memory buildGroupPreviewState) ──
-
     @Query("SELECT COUNT(*) FROM books WHERE $PUBLIC_BOOK_FILTER")
     fun flowAllBookShelfCount(): Flow<Int>
 
@@ -913,7 +896,8 @@ interface BookDao {
             BookGroup.IdReadFinishedComplete -> flowBookShelfReadFinishedCompletePreview()
             else -> flowBookShelfPreviewByUserGroup(groupId)
         }.map { list ->
-            list.filterNot { it.isNotShelf }
+            // 💡 漫画专用 App：只保留漫画类型
+            list.filterNot { it.isNotShelf || (it.type and BookType.image) == 0 }
         }
     }
 
@@ -1175,18 +1159,9 @@ interface BookDao {
     )
     fun flowBookShelfPreviewByUserGroup(groupId: Long): Flow<List<BookShelfItem>>
 
-    // ---------- 私密书籍标记 ----------
-    // 私密判定取并集：books.isPrivate = 1（单本标记）∪ 所属私密分组。
-    // 分组那一半由 PRIVATE_GROUP_MASK 在内存侧按位与得出，避免改动上面十几处投影。
-
     @Query("SELECT bookUrl FROM books WHERE isPrivate = 1")
     fun flowPrivateBookUrls(): Flow<List<String>>
 
-    /**
-     * 私密判定取并集：单本标记 ∪ 所属私密分组；顺带取回分组掩码供分组授权复用。
-     *
-     * 刻意**不挂起**：AI 工具是同步拼字符串返回的，等不了挂起调用；调用方负责不在主线程调用。
-     */
     @Query(
         """
         SELECT
