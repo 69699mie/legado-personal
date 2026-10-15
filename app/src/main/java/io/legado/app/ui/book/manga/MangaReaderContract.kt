@@ -154,7 +154,7 @@ data class MangaReaderSettings(
     val hideChapterLabel: Boolean = false,
     val hideProgress: Boolean = false,
     val hideProgressLabel: Boolean = false,
-    // 💡 新增：控制页脚右下角是否显示时间和电量
+    // 💡 控制页脚右下角是否显示时间和电量
     val hideTimeBattery: Boolean = false,
     val footerAlignment: Int = 0,
     // 💡 页脚水平偏移（dp，-400..400，正值向右）
@@ -351,6 +351,7 @@ enum class MangaReaderSettingKey {
     HIDE_PROGRESS_LABEL,
     HIDE_TIME_BATTERY,
     FOOTER_ALIGNMENT,
+    // 💡 页脚偏移
     FOOTER_OFFSET_X,
     FOOTER_OFFSET_Y,
     MENU_TOP_BAR_LIQUID_GLASS,
