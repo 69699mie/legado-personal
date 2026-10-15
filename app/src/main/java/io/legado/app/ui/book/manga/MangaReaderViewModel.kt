@@ -890,9 +890,12 @@ class MangaReaderViewModel(
             MangaReaderSettingKey.HIDE_CHAPTER_LABEL,
             MangaReaderSettingKey.HIDE_PROGRESS,
             MangaReaderSettingKey.HIDE_PROGRESS_LABEL,
-            // 💡 新增：时间电量开关也归入页脚设置分组
+            // 💡 时间电量开关也归入页脚设置分组
             MangaReaderSettingKey.HIDE_TIME_BATTERY,
-            MangaReaderSettingKey.FOOTER_ALIGNMENT -> updateFooterSetting(key, value)
+            MangaReaderSettingKey.FOOTER_ALIGNMENT,
+            // 💡 页脚偏移也归入页脚设置分组
+            MangaReaderSettingKey.FOOTER_OFFSET_X,
+            MangaReaderSettingKey.FOOTER_OFFSET_Y -> updateFooterSetting(key, value)
             MangaReaderSettingKey.MENU_TOP_BAR_LIQUID_GLASS -> updateMangaPreference {
                 it.copy(menuTopBarLiquidGlass = enabled)
             }
@@ -967,9 +970,11 @@ class MangaReaderViewModel(
                 MangaReaderSettingKey.HIDE_CHAPTER_LABEL -> config.hideChapterLabel = enabled
                 MangaReaderSettingKey.HIDE_PROGRESS -> config.hideProgressRatio = enabled
                 MangaReaderSettingKey.HIDE_PROGRESS_LABEL -> config.hideProgressRatioLabel = enabled
-                // 💡 新增：时间电量开关持久化到 MangaFooterConfig
                 MangaReaderSettingKey.HIDE_TIME_BATTERY -> config.hideTimeBattery = enabled
                 MangaReaderSettingKey.FOOTER_ALIGNMENT -> config.footerOrientation = value
+                // 💡 页脚偏移持久化到 MangaFooterConfig
+                MangaReaderSettingKey.FOOTER_OFFSET_X -> config.footerOffsetXDp = value
+                MangaReaderSettingKey.FOOTER_OFFSET_Y -> config.footerOffsetYDp = value
                 else -> Unit
             }
             settings.copy(footerConfig = GSON.toJson(config))
@@ -1361,9 +1366,11 @@ class MangaReaderViewModel(
         hideChapterLabel = footer.hideChapterLabel,
         hideProgress = footer.hideProgressRatio,
         hideProgressLabel = footer.hideProgressRatioLabel,
-        // 💡 新增：从 MangaFooterConfig 读取时间电量开关
         hideTimeBattery = footer.hideTimeBattery,
         footerAlignment = footer.footerOrientation,
+        // 💡 从 MangaFooterConfig 读取页脚偏移
+        footerOffsetX = footer.footerOffsetXDp,
+        footerOffsetY = footer.footerOffsetYDp,
         menuTopBarLiquidGlass = settings.menuTopBarLiquidGlass,
         menuBottomBarLiquidGlass = settings.menuBottomBarLiquidGlass,
         menuBottomBarFloating = settings.menuBottomBarFloating,
