@@ -893,9 +893,12 @@ class MangaReaderViewModel(
             // 💡 时间电量开关也归入页脚设置分组
             MangaReaderSettingKey.HIDE_TIME_BATTERY,
             MangaReaderSettingKey.FOOTER_ALIGNMENT,
-            // 💡 页脚偏移也归入页脚设置分组
+            // 💡 页脚（章节信息部分）偏移
             MangaReaderSettingKey.FOOTER_OFFSET_X,
-            MangaReaderSettingKey.FOOTER_OFFSET_Y -> updateFooterSetting(key, value)
+            MangaReaderSettingKey.FOOTER_OFFSET_Y,
+            // 💡 时间电量独立偏移
+            MangaReaderSettingKey.TIME_BATTERY_OFFSET_X,
+            MangaReaderSettingKey.TIME_BATTERY_OFFSET_Y -> updateFooterSetting(key, value)
             MangaReaderSettingKey.MENU_TOP_BAR_LIQUID_GLASS -> updateMangaPreference {
                 it.copy(menuTopBarLiquidGlass = enabled)
             }
@@ -972,9 +975,12 @@ class MangaReaderViewModel(
                 MangaReaderSettingKey.HIDE_PROGRESS_LABEL -> config.hideProgressRatioLabel = enabled
                 MangaReaderSettingKey.HIDE_TIME_BATTERY -> config.hideTimeBattery = enabled
                 MangaReaderSettingKey.FOOTER_ALIGNMENT -> config.footerOrientation = value
-                // 💡 页脚偏移持久化到 MangaFooterConfig
+                // 💡 页脚（章节信息部分）偏移
                 MangaReaderSettingKey.FOOTER_OFFSET_X -> config.footerOffsetXDp = value
                 MangaReaderSettingKey.FOOTER_OFFSET_Y -> config.footerOffsetYDp = value
+                // 💡 时间电量独立偏移
+                MangaReaderSettingKey.TIME_BATTERY_OFFSET_X -> config.timeBatteryOffsetXDp = value
+                MangaReaderSettingKey.TIME_BATTERY_OFFSET_Y -> config.timeBatteryOffsetYDp = value
                 else -> Unit
             }
             settings.copy(footerConfig = GSON.toJson(config))
@@ -1368,9 +1374,12 @@ class MangaReaderViewModel(
         hideProgressLabel = footer.hideProgressRatioLabel,
         hideTimeBattery = footer.hideTimeBattery,
         footerAlignment = footer.footerOrientation,
-        // 💡 从 MangaFooterConfig 读取页脚偏移
+        // 💡 页脚（章节信息部分）偏移
         footerOffsetX = footer.footerOffsetXDp,
         footerOffsetY = footer.footerOffsetYDp,
+        // 💡 时间电量独立偏移
+        timeBatteryOffsetX = footer.timeBatteryOffsetXDp,
+        timeBatteryOffsetY = footer.timeBatteryOffsetYDp,
         menuTopBarLiquidGlass = settings.menuTopBarLiquidGlass,
         menuBottomBarLiquidGlass = settings.menuBottomBarLiquidGlass,
         menuBottomBarFloating = settings.menuBottomBarFloating,
