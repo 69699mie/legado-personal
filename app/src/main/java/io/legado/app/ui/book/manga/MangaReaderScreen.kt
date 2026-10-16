@@ -1479,6 +1479,9 @@ private fun MangaPageImage(
         settings.disableCrossFade,
         page.retryRevision,
         decodeSize,
+        // 💡 锐化开关/强度必须进 key，否则开关变化不会触发 ImageRequest 重建
+        settings.sharpenEnabled,
+        settings.sharpenStrength,
     ) {
         listOf(
             page.key,
@@ -1491,6 +1494,8 @@ private fun MangaPageImage(
             settings.disableCrossFade,
             page.retryRevision,
             decodeSize,
+            settings.sharpenEnabled,
+            settings.sharpenStrength,
         )
     }
     val fileOwner = remember(imagePipelineKey) { MangaImageFileOwner() }
@@ -1845,8 +1850,11 @@ private fun MangaReaderItemUi.Page.imageRequest(
     onSuccess: () -> Unit = {},
     onError: (String?) -> Unit = {},
 ): ImageRequest {
+    // 💡 高清解码与锐化都必须进 memoryCacheKey，否则 Coil 按旧 key 命中内存缓存，展示的仍是旧位图。
     val memoryCacheKey = "manga-page-v2:$bookUrl:$imageUrl:${settings.sourceOrigin}:" +
-        "${settings.enableEInk}:${settings.eInkThreshold}:${settings.enableGray}:${fileOwner != null}:$retryRevision"
+        "${settings.enableEInk}:${settings.eInkThreshold}:${settings.enableGray}:" +
+        "hq=${settings.highQualityDecode}:sharpen=${settings.sharpenEnabled}:${settings.sharpenStrength}:" +
+        "${fileOwner != null}:$retryRevision"
     return ImageRequest.Builder(context)
         .data(imageUrl)
         .allowHardware(true)
@@ -2076,6 +2084,7 @@ internal fun mangaColorMatrix(settings: MangaReaderSettings): ColorMatrix? {
                 0f, 0f, 0f, 1f, 0f,
             )
         )
+        // 💡 androidx.compose.ui.graphics.ColorMatrix 没有 postConcat，用 timesAssign
         matrix *= contrastMatrix
     }
     val scales = floatArrayOf(
