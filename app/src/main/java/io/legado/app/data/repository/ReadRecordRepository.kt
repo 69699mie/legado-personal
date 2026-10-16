@@ -416,22 +416,24 @@ class ReadRecordRepository(
      *
      * 只更新 readRecord 汇总表的 lastRead，不写会话/明细；
      * 阅读时长由 [addReadTime] 单独累积。
+     *
+     * ⚠️ 这里必须直接使用 books 表的原始 name/author，不能走 ReadRecordIdentity 规范化，
+     * 否则作者含换行/多行空白时，规范化后的 key 会与 books 表不一致，
+     * 导致首页 [ReadRecordDao.observeRecentHomeBooks] 的 EXISTS 匹配失败，记录被隐藏。
      */
     suspend fun recordBookOpened(bookName: String, bookAuthor: String) {
         if (bookName.isBlank()) return
-        val normalizedName = ReadRecordIdentity.bookName(bookName)
-        val normalizedAuthor = ReadRecordIdentity.author(bookAuthor)
         val now = System.currentTimeMillis()
         database.withTransaction {
-            val existing = dao.getReadRecord("", normalizedName, normalizedAuthor)
+            val existing = dao.getReadRecord("", bookName, bookAuthor)
             if (existing != null) {
                 dao.update(existing.copy(lastRead = now))
             } else {
                 dao.insert(
                     ReadRecord(
                         deviceId = "",
-                        bookName = normalizedName,
-                        bookAuthor = normalizedAuthor,
+                        bookName = bookName,
+                        bookAuthor = bookAuthor,
                         readTime = 0L,
                         lastRead = now,
                     )
@@ -443,15 +445,15 @@ class ReadRecordRepository(
     /**
      * 💡 新增：累积阅读时长到 readRecord 汇总表，并刷新 lastRead。
      *
+     * ⚠️ 同样必须直接使用原始 name/author，理由见 [recordBookOpened]。
+     *
      * @param deltaMillis 自上次落盘以来新增的阅读时长（毫秒），必须 > 0。
      */
     suspend fun addReadTime(bookName: String, bookAuthor: String, deltaMillis: Long) {
         if (bookName.isBlank() || deltaMillis <= 0L) return
-        val normalizedName = ReadRecordIdentity.bookName(bookName)
-        val normalizedAuthor = ReadRecordIdentity.author(bookAuthor)
         val now = System.currentTimeMillis()
         database.withTransaction {
-            val existing = dao.getReadRecord("", normalizedName, normalizedAuthor)
+            val existing = dao.getReadRecord("", bookName, bookAuthor)
             if (existing != null) {
                 dao.update(
                     existing.copy(
@@ -463,8 +465,8 @@ class ReadRecordRepository(
                 dao.insert(
                     ReadRecord(
                         deviceId = "",
-                        bookName = normalizedName,
-                        bookAuthor = normalizedAuthor,
+                        bookName = bookName,
+                        bookAuthor = bookAuthor,
                         readTime = deltaMillis,
                         lastRead = now,
                     )
