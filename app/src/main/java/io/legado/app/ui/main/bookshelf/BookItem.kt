@@ -86,6 +86,8 @@ fun BookshelfGridItem(
     titleSmallFont: Boolean = false,
     titleCenter: Boolean = true,
     titleMaxLines: Int = 2,
+    /** 💡 新增：书名下方的副标题（如 212/214） */
+    subtitle: String? = null,
     coverShadow: Boolean = false,
     accessibilityLabel: String? = null,
     coverWidth: Int = 84,
@@ -141,8 +143,22 @@ fun BookshelfGridItem(
                     textAlign = if (titleCenter) TextAlign.Center else TextAlign.Start,
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(start = 4.dp, end = 4.dp, bottom = 4.dp)
+                        .padding(start = 4.dp, end = 4.dp, bottom = if (subtitle.isNullOrEmpty()) 4.dp else 0.dp)
                 )
+                // 💡 新增：书名下方的章节进度
+                if (!subtitle.isNullOrEmpty()) {
+                    AppText(
+                        text = subtitle,
+                        style = LegadoTheme.typography.labelSmall,
+                        color = LegadoTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        textAlign = if (titleCenter) TextAlign.Center else TextAlign.Start,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(start = 4.dp, end = 4.dp, bottom = 4.dp)
+                    )
+                }
             }
         }
     }
@@ -750,7 +766,14 @@ fun BookItem(
     val showIntroBelowContent = showIntro && settings.bookshelfListIntroBelowContent
     val unreadCount = book.getUnreadChapterNum()
     val unreadText = if (settings.showUnread && unreadCount > 0) unreadCount.toString() else null
-    val showUpdateBadge = settings.showUnread && settings.showUnreadNew && book.isNew
+
+    // 💡 去掉"显示新章节更新标志"功能后，badge 不再需要小圆点图标。
+    // 网格模式：未读>0 时右上角直接显示"更新"两个字，替代原来的数字。
+    // 列表模式：保持数字角标（不叠加 Update 图标）。
+    val showUpdateBadge = false
+    val isGridMode = layoutMode != 0
+    val updateLabel = stringResource(R.string.update)
+
     val bookTypeLabel = if (settings.showTip) {
         when {
             book.isAudio -> stringResource(R.string.audio)
@@ -772,6 +795,25 @@ fun BookItem(
         null
     }
 
+    // 💡 网格模式右上角："更新"（有未读时）代替数字
+    //    列表模式右上角：数字未读角标（保持原样）
+    val badgeTextForCover = when {
+        locked -> null
+        isGridMode -> if (settings.showUnread && unreadCount > 0) updateLabel else null
+        else -> unreadText
+    }
+    // 💡 网格模式左上角：最新话更新时间（受"显示上次更新时间"开关控制）
+    val topLeftTextForCover = if (
+        !locked &&
+        isGridMode &&
+        settings.showLastUpdateTime &&
+        !book.isLocal
+    ) {
+        book.latestChapterTime.toTimeAgo()
+    } else {
+        null
+    }
+
     val cover: @Composable (Modifier) -> Unit = { coverModifier ->
         Box(modifier = coverModifier) {
             BookshelfCover(
@@ -788,9 +830,12 @@ fun BookItem(
                 // 传本书 bookUrl：封面命中本地（含别名）缓存时
                 // 不解析书源规则、不弹登录提示、不重新下载
                 bookUrl = book.bookUrl,
-                // 锁定态不露未读角标与来源标签：它们都是真实信息
-                badgeText = if (locked) null else if (layoutMode != 0) unreadText else null,
-                showBadgeDot = !locked && showUpdateBadge,
+                // 网格模式：右上角显示"更新"（有未读时）；列表模式：数字角标
+                badgeText = badgeTextForCover,
+                // 💡 网格模式左上角显示更新时间
+                topLeftText = topLeftTextForCover,
+                // 💡 已去掉"显示新章节更新标志"功能，小圆点图标不再使用
+                showBadgeDot = showUpdateBadge,
                 leftBottomText = if (locked) null else matchedSourceLabel ?: bookTypeLabel,
                 showLoadingPlaceholder = true,
                 // 模糊与"已隐藏"叠加层都交给封面组件在**共享元素节点内部**渲染。
@@ -823,11 +868,22 @@ fun BookItem(
     )
 
     if (layoutMode != 0) {
+        // 💡 网格模式书名下方章节进度："212/214"（受"显示最新章节"开关控制）
+        val chapterProgressText = if (
+            !locked &&
+            settings.bookshelfShowLatestChapter &&
+            book.totalChapterNum > 0
+        ) {
+            "${book.durChapterIndex + 1}/${book.totalChapterNum}"
+        } else {
+            null
+        }
         BookshelfGridItem(
             cover = cover,
             // 锁定态不渲染书名：占位条与"已隐藏"字样都不再需要，封面那套
             // （模糊 + 遮罩 + 点阵 + 锁标）已经说明了状态
             title = if (locked) "" else book.name,
+            subtitle = chapterProgressText,
             gridStyle = gridStyle,
             modifier = modifier,
             isSelected = isSelected,
@@ -854,7 +910,7 @@ fun BookItem(
             {
                 TextCard(
                     text = unreadText,
-                    icon = if (showUpdateBadge) Icons.Default.Update else null,
+                    icon = null,
                     iconSize = 12.dp,
                     cornerRadius = 4.dp,
                     horizontalPadding = 4.dp,
