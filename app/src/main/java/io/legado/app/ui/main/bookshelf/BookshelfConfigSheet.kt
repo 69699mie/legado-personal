@@ -440,14 +440,9 @@ fun BookshelfConfigSheet(
                                     onUpdate { it.copy(bookshelfListCoverCenter = value) }
                                 }
                             )
-                            CompactSwitchSettingItem(
-                                title = stringResource(R.string.show_latest_chapter),
-                                checked = settings.bookshelfShowLatestChapter,
-                                color = LegadoTheme.colorScheme.surface,
-                                onCheckedChange = { value ->
-                                    onUpdate { it.copy(bookshelfShowLatestChapter = value) }
-                                }
-                            )
+
+                            // 💡 已移除"显示最新章节"开关（bookshelfShowLatestChapter），
+                            //    它现在挪到"角标与信息"分组下，网格模式下也能直接控制章节进度显示。
 
                             CompactSwitchSettingItem(
                                 title = stringResource(R.string.show_synopsis),
@@ -515,8 +510,6 @@ fun BookshelfConfigSheet(
                 }
             }
 
-
-
             CompactSliderSettingItem(
                 title = stringResource(R.string.max_title_lines),
                 value = settings.bookshelfTitleMaxLines.toFloat(),
@@ -547,23 +540,11 @@ fun BookshelfConfigSheet(
                 }
             )
 
-            CompactSwitchSettingItem(
-                title = stringResource(R.string.show_unread_new),
-                checked = settings.showUnreadNew,
-                color = LegadoTheme.colorScheme.surface,
-                onCheckedChange = { value ->
-                    onUpdate { it.copy(showUnreadNew = value) }
-                }
-            )
+            // 💡 已删除"显示新章节更新标志"开关（showUnreadNew）。
+            //    网格模式的"更新"标签由"显示未读标志"控制。
 
-            CompactSwitchSettingItem(
-                title = stringResource(R.string.show_wait_up_count),
-                checked = settings.showWaitUpCount,
-                color = LegadoTheme.colorScheme.surface,
-                onCheckedChange = { value ->
-                    onUpdate { it.copy(showWaitUpCount = value) }
-                }
-            )
+            // 💡 已删除"显示等待更新数量"开关（showWaitUpCount）。
+            //    标题栏不再显示 (X) 后缀，该开关已无效果。
 
             CompactSwitchSettingItem(
                 title = stringResource(R.string.show_book_count),
@@ -580,6 +561,17 @@ fun BookshelfConfigSheet(
                 color = LegadoTheme.colorScheme.surface,
                 onCheckedChange = { value ->
                     onUpdate { it.copy(showLastUpdateTime = value) }
+                }
+            )
+
+            // 💡 从"更多信息"分组移到这里：网格模式控制书名下方章节进度，
+            //    列表模式控制最新章节信息显示。
+            CompactSwitchSettingItem(
+                title = stringResource(R.string.show_latest_chapter),
+                checked = settings.bookshelfShowLatestChapter,
+                color = LegadoTheme.colorScheme.surface,
+                onCheckedChange = { value ->
+                    onUpdate { it.copy(bookshelfShowLatestChapter = value) }
                 }
             )
 
