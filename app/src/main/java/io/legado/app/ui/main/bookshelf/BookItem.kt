@@ -772,7 +772,8 @@ fun BookItem(
     // 列表模式：保持数字角标（不叠加 Update 图标）。
     val showUpdateBadge = false
     val isGridMode = layoutMode != 0
-    val updateLabel = stringResource(R.string.update)
+    // 💡 项目里没有 R.string.update 这个资源，使用硬编码字符串
+    val updateLabel = "更新"
 
     val bookTypeLabel = if (settings.showTip) {
         when {
