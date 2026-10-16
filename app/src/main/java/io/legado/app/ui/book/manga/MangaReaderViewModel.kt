@@ -6,6 +6,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import io.legado.app.R
 import io.legado.app.data.model.MangaFooterConfig
+import io.legado.app.data.repository.ReadRecordRepository // 💡 新增
 import io.legado.app.data.repository.manga.MangaReaderActionPaymentResult
 import io.legado.app.data.repository.manga.MangaReaderActionRepository
 import io.legado.app.domain.gateway.MangaReaderSessionFactory
@@ -27,8 +28,11 @@ import io.legado.app.utils.GSON
 import io.legado.app.utils.fromJsonObject
 import kotlinx.collections.immutable.persistentListOf
 import kotlinx.collections.immutable.toImmutableList
+import kotlinx.coroutines.CoroutineScope // 💡 新增
 import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.Dispatchers // 💡 新增
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay // 💡 新增
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asSharedFlow
@@ -42,12 +46,16 @@ import splitties.init.appCtx
 /** 会把下载百分比写进 UiState 的页窗口：当前页前后各若干项。 */
 private const val PAGE_PROGRESS_WINDOW = 3
 
+/** 💡 新增：阅读时长的落盘间隔（毫秒）。越大越省 IO，被杀时丢的时长越多。 */
+private const val READ_RECORD_FLUSH_INTERVAL_MS = 30_000L
+
 class MangaReaderViewModel(
     private val mangaSettingsGateway: MangaSettingsGateway,
     private val otherSettingsGateway: OtherSettingsGateway,
     private val readSettingsGateway: ReadSettingsGateway,
     private val actionRepository: MangaReaderActionRepository,
     private val cacheBookChaptersUseCase: CacheBookChaptersUseCase,
+    private val readRecordRepository: ReadRecordRepository, // 💡 新增：写入/累积阅读记录
     sessionFactory: MangaReaderSessionFactory,
 ) : ViewModel() {
 
@@ -60,6 +68,12 @@ class MangaReaderViewModel(
     private var pagerScrollInProgress = false
     private var deferredReadySession: MangaSessionState? = null
     private var initializationRequest: MangaReaderIntent.Initialize? = null
+
+    // 💡 新增：阅读记录追踪
+    private var readRecordBookName: String? = null
+    private var readRecordBookAuthor: String? = null
+    private var readSessionStartedAt: Long = 0L
+    private var readSessionFlushJob: Job? = null
 
     private val _uiState = MutableStateFlow(MangaReaderUiState())
     val uiState = _uiState.asStateFlow()
@@ -338,6 +352,16 @@ class MangaReaderViewModel(
         initializationRequest = intent
         showLoading()
         viewModelScope.launch {
+            // 💡 新增：只在书架书中写入阅读记录（搜索页未上架的书不写）
+            if (intent.inBookshelf && !intent.bookUrl.isNullOrBlank()) {
+                val book = actionRepository.getBook(intent.bookUrl)
+                if (book != null) {
+                    runCatching {
+                        readRecordRepository.recordBookOpened(book.name, book.author)
+                    }
+                    startReadTimeTracking(book.name, book.author)
+                }
+            }
             readerSession.execute(
                 MangaSessionCommand.Open(
                     bookUrl = intent.bookUrl,
@@ -703,6 +727,16 @@ class MangaReaderViewModel(
     }
 
     override fun onCleared() {
+        // 💡 新增：退出前把最后一段阅读时长落盘（onCleared 不能 suspend，用独立 IO 协程）
+        val name = readRecordBookName
+        val author = readRecordBookAuthor
+        val delta = System.currentTimeMillis() - readSessionStartedAt
+        readSessionFlushJob?.cancel()
+        if (name != null && author != null && delta > 0L) {
+            CoroutineScope(Dispatchers.IO).launch {
+                runCatching { readRecordRepository.addReadTime(name, author, delta) }
+            }
+        }
         readerSession.close()
         super.onCleared()
     }
@@ -717,6 +751,31 @@ class MangaReaderViewModel(
             requireNotNull(state.book?.bookUrl),
             state.chapterIndex,
         )
+    }
+
+    // 💡 新增：开始追踪阅读时长
+    private fun startReadTimeTracking(bookName: String, bookAuthor: String) {
+        readRecordBookName = bookName
+        readRecordBookAuthor = bookAuthor
+        readSessionStartedAt = System.currentTimeMillis()
+        readSessionFlushJob?.cancel()
+        readSessionFlushJob = viewModelScope.launch {
+            while (true) {
+                delay(READ_RECORD_FLUSH_INTERVAL_MS)
+                flushReadTime()
+            }
+        }
+    }
+
+    // 💡 新增：把自上次落盘以来的时长写入数据库
+    private suspend fun flushReadTime() {
+        val name = readRecordBookName ?: return
+        val author = readRecordBookAuthor ?: return
+        val now = System.currentTimeMillis()
+        val delta = now - readSessionStartedAt
+        if (delta <= 0L) return
+        readSessionStartedAt = now
+        runCatching { readRecordRepository.addReadTime(name, author, delta) }
     }
 
     private fun setMenuVisible(visible: Boolean) {
