@@ -411,6 +411,68 @@ class ReadRecordRepository(
         }
     }
 
+    /**
+     * 💡 新增：从书架打开漫画时立即写入阅读记录，使首页「最近阅读」立刻出现该书。
+     *
+     * 只更新 readRecord 汇总表的 lastRead，不写会话/明细；
+     * 阅读时长由 [addReadTime] 单独累积。
+     */
+    suspend fun recordBookOpened(bookName: String, bookAuthor: String) {
+        if (bookName.isBlank()) return
+        val normalizedName = ReadRecordIdentity.bookName(bookName)
+        val normalizedAuthor = ReadRecordIdentity.author(bookAuthor)
+        val now = System.currentTimeMillis()
+        database.withTransaction {
+            val existing = dao.getReadRecord("", normalizedName, normalizedAuthor)
+            if (existing != null) {
+                dao.update(existing.copy(lastRead = now))
+            } else {
+                dao.insert(
+                    ReadRecord(
+                        deviceId = "",
+                        bookName = normalizedName,
+                        bookAuthor = normalizedAuthor,
+                        readTime = 0L,
+                        lastRead = now,
+                    )
+                )
+            }
+        }
+    }
+
+    /**
+     * 💡 新增：累积阅读时长到 readRecord 汇总表，并刷新 lastRead。
+     *
+     * @param deltaMillis 自上次落盘以来新增的阅读时长（毫秒），必须 > 0。
+     */
+    suspend fun addReadTime(bookName: String, bookAuthor: String, deltaMillis: Long) {
+        if (bookName.isBlank() || deltaMillis <= 0L) return
+        val normalizedName = ReadRecordIdentity.bookName(bookName)
+        val normalizedAuthor = ReadRecordIdentity.author(bookAuthor)
+        val now = System.currentTimeMillis()
+        database.withTransaction {
+            val existing = dao.getReadRecord("", normalizedName, normalizedAuthor)
+            if (existing != null) {
+                dao.update(
+                    existing.copy(
+                        readTime = existing.readTime + deltaMillis,
+                        lastRead = now,
+                    )
+                )
+            } else {
+                dao.insert(
+                    ReadRecord(
+                        deviceId = "",
+                        bookName = normalizedName,
+                        bookAuthor = normalizedAuthor,
+                        readTime = deltaMillis,
+                        lastRead = now,
+                    )
+                )
+            }
+        }
+    }
+
     /** 用户是否曾为当前书籍明确选择「保留独立记录」。 */
     private suspend fun hasKeepAliasDecision(bookName: String, bookAuthor: String): Boolean {
         val key = ReadRecordIdentity.key(bookName, bookAuthor)
