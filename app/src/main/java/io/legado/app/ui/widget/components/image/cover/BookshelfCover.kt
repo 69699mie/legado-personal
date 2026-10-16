@@ -5,13 +5,11 @@ import androidx.compose.animation.ExperimentalSharedTransitionApi
 import androidx.compose.animation.SharedTransitionScope
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
-import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Update
 import androidx.compose.runtime.Composable
@@ -21,9 +19,8 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import io.legado.app.core.ui.morph.BookCoverMorphAnchors
-import io.legado.app.ui.theme.LegadoTheme
+import io.legado.app.ui.widget.components.card.TextCard
 import io.legado.app.ui.widget.components.progressIndicator.AppLinearProgressIndicator
-import io.legado.app.ui.widget.components.text.AppText
 
 @OptIn(ExperimentalSharedTransitionApi::class)
 @Composable
@@ -36,7 +33,7 @@ fun BookshelfCover(
     isUpdating: Boolean = false,
     badgeText: String? = null,
     showBadgeDot: Boolean = false,
-    /** 💡 新增：封面左上角文字（如最新话更新时间） */
+    /** 封面左上角文字（如最新话更新时间） */
     topLeftText: String? = null,
     leftBottomText: String? = null,
     sourceOrigin: String? = null,
@@ -86,78 +83,61 @@ fun BookshelfCover(
             } else Modifier
         )
 
-        // 💡 左上角：紧凑角标（紧凑内边距 + labelSmall 字号）
+        // 💡 左上角：最新话更新时间。恢复使用 TextCard，颜色与原版一致，
+        //    仅缩小内边距让角标更紧凑。
         if (!topLeftText.isNullOrEmpty()) {
-            Box(
+            TextCard(
+                text = topLeftText,
                 modifier = Modifier
                     .align(Alignment.TopStart)
                     .padding(2.dp)
-                    .background(
-                        color = LegadoTheme.colorScheme.cardContainer,
-                        shape = RoundedCornerShape(3.dp)
-                    )
-                    .padding(horizontal = 3.dp, vertical = 1.dp)
                     .then(overlayModifier)
                     .graphicsLayer {
                         alpha =
                             if (BookCoverMorphAnchors.isOriginCoverHidden(sharedCoverKey)) 0f else 1f
-                    }
-            ) {
-                AppText(
-                    text = topLeftText,
-                    style = LegadoTheme.typography.labelSmall,
-                    color = LegadoTheme.colorScheme.onCardContainer
-                )
-            }
+                    },
+                cornerRadius = 3.dp,
+                horizontalPadding = 3.dp,
+                verticalPadding = 1.dp
+            )
         }
 
-        // 💡 右上角：紧凑角标
+        // 💡 右上角：未读数字角标。恢复使用 TextCard，颜色与原版一致。
         if (!badgeText.isNullOrEmpty()) {
-            Box(
+            TextCard(
+                text = badgeText,
+                icon = if (showBadgeDot) Icons.Default.Update else null,
+                iconSize = 12.dp,
                 modifier = Modifier
                     .align(Alignment.TopEnd)
                     .padding(2.dp)
-                    .background(
-                        color = LegadoTheme.colorScheme.cardContainer,
-                        shape = RoundedCornerShape(3.dp)
-                    )
-                    .padding(horizontal = 3.dp, vertical = 1.dp)
                     .then(overlayModifier)
                     .graphicsLayer {
                         alpha =
                             if (BookCoverMorphAnchors.isOriginCoverHidden(sharedCoverKey)) 0f else 1f
-                    }
-            ) {
-                AppText(
-                    text = badgeText,
-                    style = LegadoTheme.typography.labelSmall,
-                    color = LegadoTheme.colorScheme.onCardContainer
-                )
-            }
+                    },
+                cornerRadius = 3.dp,
+                horizontalPadding = 3.dp,
+                verticalPadding = 1.dp
+            )
         }
 
+        // 💡 左下角：来源/类型标签。恢复使用 TextCard，颜色与原版一致。
         if (!leftBottomText.isNullOrEmpty()) {
-            Box(
+            TextCard(
+                text = leftBottomText,
                 modifier = Modifier
                     .align(Alignment.BottomStart)
                     .padding(2.dp)
-                    .background(
-                        color = LegadoTheme.colorScheme.cardContainer,
-                        shape = RoundedCornerShape(3.dp)
-                    )
-                    .padding(horizontal = 3.dp, vertical = 1.dp)
                     .then(overlayModifier)
                     .graphicsLayer {
                         alpha =
                             if (BookCoverMorphAnchors.isOriginCoverHidden(sharedCoverKey)) 0f else 1f
-                    }
-            ) {
-                AppText(
-                    text = leftBottomText,
-                    style = LegadoTheme.typography.labelSmall,
-                    color = LegadoTheme.colorScheme.onCardContainer
-                )
-            }
+                    },
+                cornerRadius = 3.dp,
+                horizontalPadding = 3.dp,
+                verticalPadding = 1.dp
+            )
         }
 
         if (isUpdating) {
