@@ -39,6 +39,12 @@ fun TextCard(
     textStyle: TextStyle = LegadoTheme.typography.labelSmallEmphasized,
     border: BorderStroke? = null,
     horizontalArrangement: Arrangement.Horizontal = Arrangement.Start,
+    /**
+     * 💡 是否忽略主题的「覆盖卡片圆角」设置。
+     * 默认 false（保持原有行为，受主题覆盖）。
+     * 角标等小徽章应传 true，让它们保持自己传入的 [cornerRadius]，不被主题圆角覆盖成椭圆。
+     */
+    ignoreThemeCornerRadiusOverride: Boolean = false,
 ) {
     val defaultBackground = LegadoTheme.colorScheme.surfaceContainer
     val defaultContent = LegadoTheme.colorScheme.onSurface
@@ -52,7 +58,8 @@ fun TextCard(
         containerColor = finalBackgroundColor,
         contentColor = finalContentColor,
         onClick = onClick,
-        border = border
+        border = border,
+        overrideCornerRadius = !ignoreThemeCornerRadiusOverride,
     ) {
         Row(
             modifier = Modifier.padding(
@@ -87,4 +94,3 @@ fun TextCard(
         }
     }
 }
-
