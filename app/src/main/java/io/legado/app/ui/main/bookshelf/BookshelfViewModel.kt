@@ -939,9 +939,9 @@ class BookshelfViewModel(
 
             else -> bookshelfTitle
         }
+        // 💡 已移除等待更新数量后缀 (X)：标题始终显示书架/当前分组名
         return when {
             isEditMode -> bookshelfTitle
-            upBooksCount > 0 -> "$baseTitle ($upBooksCount)"
             else -> baseTitle
         }
     }
