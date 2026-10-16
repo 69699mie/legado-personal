@@ -566,12 +566,12 @@ val appModule = module {
                 add(CoverFetcher.Factory(okHttpClient, okHttpClientManga))
             }
             .crossfade(true)
-            // 💡 修复存储暴涨：给 Coil 设置 500MB 磁盘缓存硬上限，超出后按 LRU 自动淘汰最旧图片。
+            // 💡 修复存储暴涨：给 Coil 设置 200MB 磁盘缓存硬上限，超出后按 LRU 自动淘汰最旧图片。
             // 只作用于 Coil 自己的 image_cache 目录，不会碰到 CacheBook 手动下载的章节文件。
             .diskCache {
                 coil3.disk.DiskCache.Builder()
                     .directory(get<android.content.Context>().cacheDir.resolve("image_cache").toOkioPath())
-                    .maxSizeBytes(500L * 1024 * 1024)
+                    .maxSizeBytes(200L * 1024 * 1024)
                     .build()
             }
             .build()
