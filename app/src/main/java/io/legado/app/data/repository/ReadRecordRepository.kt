@@ -412,19 +412,21 @@ class ReadRecordRepository(
     }
 
     /**
-     * 💡 新增：从书架打开漫画时立即写入阅读记录，使首页「最近阅读」立刻出现该书。
+     * 💡 从书架打开漫画时立即写入阅读记录，让首页「最近阅读」和阅读记录页都能立刻看到该书。
      *
-     * 只更新 readRecord 汇总表的 lastRead，不写会话/明细；
-     * 阅读时长由 [addReadTime] 单独累积。
-     *
-     * ⚠️ 这里必须直接使用 books 表的原始 name/author，不能走 ReadRecordIdentity 规范化，
+     * ⚠️ 必须直接使用 books 表的原始 name/author，不能走 ReadRecordIdentity 规范化，
      * 否则作者含换行/多行空白时，规范化后的 key 会与 books 表不一致，
      * 导致首页 [ReadRecordDao.observeRecentHomeBooks] 的 EXISTS 匹配失败，记录被隐藏。
+     *
+     * 同时补写一条 readRecordDetail（readTime=0），让阅读记录页的「汇总视图」立刻有数据；
+     * 阅读时长由 [addReadTime] 后续累积。
      */
     suspend fun recordBookOpened(bookName: String, bookAuthor: String) {
         if (bookName.isBlank()) return
         val now = System.currentTimeMillis()
+        val dateStr = now.toDateString()
         database.withTransaction {
+            // 1. 更新 readRecord 汇总表，让首页「最近阅读」立刻出现
             val existing = dao.getReadRecord("", bookName, bookAuthor)
             if (existing != null) {
                 dao.update(existing.copy(lastRead = now))
@@ -439,11 +441,29 @@ class ReadRecordRepository(
                     )
                 )
             }
+            // 2. 补一条当日明细，让阅读记录页「汇总视图」立刻有数据
+            val detail = dao.getDetail("", bookName, bookAuthor, dateStr)
+            if (detail == null) {
+                dao.insertDetail(
+                    ReadRecordDetail(
+                        deviceId = "",
+                        bookName = bookName,
+                        bookAuthor = bookAuthor,
+                        date = dateStr,
+                        readTime = 0L,
+                        readWords = 0L,
+                        firstReadTime = now,
+                        lastReadTime = now,
+                    )
+                )
+            } else {
+                dao.insertDetail(detail.copy(lastReadTime = maxOf(detail.lastReadTime, now)))
+            }
         }
     }
 
     /**
-     * 💡 新增：累积阅读时长到 readRecord 汇总表，并刷新 lastRead。
+     * 💡 累积阅读时长到 readRecord 汇总表，同步刷新 readRecordDetail 按天明细。
      *
      * ⚠️ 同样必须直接使用原始 name/author，理由见 [recordBookOpened]。
      *
@@ -452,7 +472,9 @@ class ReadRecordRepository(
     suspend fun addReadTime(bookName: String, bookAuthor: String, deltaMillis: Long) {
         if (bookName.isBlank() || deltaMillis <= 0L) return
         val now = System.currentTimeMillis()
+        val dateStr = now.toDateString()
         database.withTransaction {
+            // 1. 更新 readRecord 汇总
             val existing = dao.getReadRecord("", bookName, bookAuthor)
             if (existing != null) {
                 dao.update(
@@ -469,6 +491,34 @@ class ReadRecordRepository(
                         bookAuthor = bookAuthor,
                         readTime = deltaMillis,
                         lastRead = now,
+                    )
+                )
+            }
+            // 2. 同步更新当日明细（阅读记录页「汇总视图」按此展示）
+            val detail = dao.getDetail("", bookName, bookAuthor, dateStr)
+            if (detail != null) {
+                dao.insertDetail(
+                    detail.copy(
+                        readTime = detail.readTime + deltaMillis,
+                        lastReadTime = maxOf(detail.lastReadTime, now),
+                        firstReadTime = if (detail.firstReadTime <= 0L) {
+                            (now - deltaMillis).coerceAtLeast(0L)
+                        } else {
+                            detail.firstReadTime
+                        },
+                    )
+                )
+            } else {
+                dao.insertDetail(
+                    ReadRecordDetail(
+                        deviceId = "",
+                        bookName = bookName,
+                        bookAuthor = bookAuthor,
+                        date = dateStr,
+                        readTime = deltaMillis,
+                        readWords = 0L,
+                        firstReadTime = (now - deltaMillis).coerceAtLeast(0L),
+                        lastReadTime = now,
                     )
                 )
             }
