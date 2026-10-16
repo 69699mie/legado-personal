@@ -335,6 +335,7 @@ import io.legado.app.ui.widget.components.privacy.PrivateReadGateViewModel
 import io.legado.app.utils.isNightMode
 import io.legado.app.utils.sysConfiguration
 import kotlinx.coroutines.Dispatchers
+import okio.Path.Companion.toOkioPath
 import org.koin.core.module.dsl.factoryOf
 import org.koin.core.module.dsl.singleOf
 import org.koin.core.module.dsl.viewModel
@@ -565,6 +566,14 @@ val appModule = module {
                 add(CoverFetcher.Factory(okHttpClient, okHttpClientManga))
             }
             .crossfade(true)
+            // 💡 修复存储暴涨：给 Coil 设置 500MB 磁盘缓存硬上限，超出后按 LRU 自动淘汰最旧图片。
+            // 只作用于 Coil 自己的 image_cache 目录，不会碰到 CacheBook 手动下载的章节文件。
+            .diskCache {
+                coil3.disk.DiskCache.Builder()
+                    .directory(get<android.content.Context>().cacheDir.resolve("image_cache").toOkioPath())
+                    .maxSizeBytes(500L * 1024 * 1024)
+                    .build()
+            }
             .build()
     }
     // 书架首屏封面预热：依赖上面的 ImageLoader 单例，进程内复用已缓存封面
