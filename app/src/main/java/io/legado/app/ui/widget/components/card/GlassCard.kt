@@ -58,13 +58,15 @@ private fun BaseCard(
     border: BorderStroke? = null,
     alpha: Float = 1f,
     useItemBackground: Boolean = false,
+    /** 💡 是否允许主题的「覆盖卡片圆角」作用于本卡片。默认 true（原有行为）。 */
+    overrideCornerRadius: Boolean = true,
     content: @Composable ColumnScope.() -> Unit
 ) {
     val resolvedContainerColor = (containerColor ?: LegadoTheme.colorScheme.surfaceContainer)
         .let { it.copy(alpha = it.alpha * alpha) }
     val themeSettings = LocalAppUiConfiguration.current.theme
     val isTransparent = containerColor == Color.Transparent
-    val resolvedCornerRadius = if (themeSettings.overrideBaseCardCornerRadius) {
+    val resolvedCornerRadius = if (overrideCornerRadius && themeSettings.overrideBaseCardCornerRadius) {
         themeSettings.baseCardCornerRadius.dp
     } else {
         cornerRadius
@@ -122,6 +124,8 @@ fun GlassCard(
     contentColor: Color? = null,
     elevation: Dp = 0.dp,
     border: BorderStroke? = null,
+    /** 💡 是否允许主题的「覆盖卡片圆角」作用于本卡片。默认 true（原有行为）。 */
+    overrideCornerRadius: Boolean = true,
     content: @Composable ColumnScope.() -> Unit
 ) {
     BaseCard(
@@ -135,6 +139,7 @@ fun GlassCard(
         border = border,
         alpha = LocalAppUiConfiguration.current.theme.containerOpacity / 100f,
         useItemBackground = true,
+        overrideCornerRadius = overrideCornerRadius,
         content = content
     )
 }
@@ -150,6 +155,8 @@ fun NormalCard(
     contentColor: Color? = null,
     elevation: Dp = 0.dp,
     border: BorderStroke? = null,
+    /** 💡 是否允许主题的「覆盖卡片圆角」作用于本卡片。默认 true（原有行为）。 */
+    overrideCornerRadius: Boolean = true,
     content: @Composable ColumnScope.() -> Unit
 ) {
     BaseCard(
@@ -163,6 +170,7 @@ fun NormalCard(
         border = border,
         alpha = 1f,
         useItemBackground = false,
+        overrideCornerRadius = overrideCornerRadius,
         content = content
     )
 }
