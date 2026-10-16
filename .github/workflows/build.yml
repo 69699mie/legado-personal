@@ -24,13 +24,29 @@ jobs:
             CURRENT=0
           fi
           V=$((CURRENT + 1))
-          MAJOR=$(( (V - 1) / 10 + 1 ))
-          MINOR=$(( (V - 1) % 10 ))
-          if [ "$MINOR" -eq 0 ]; then
-            VERSION_NAME="${MAJOR}.0"
-          else
-            VERSION_NAME="${MAJOR}.0${MINOR}"
-          fi
+          # 三段版本号：MAJOR.MINOR.PATCH
+          # 每 100 个小版本进一个大版本
+          # 显示规则：值为 0 时显示 "0"；值为 1-9 时显示 "0X"；值为 10+ 时正常显示
+          #   1.0.0 → 1.0.09 → 1.01.0 → 1.01.09 → … → 1.09.09 → 2.0.0
+          MAJOR=$(( (V - 1) / 100 + 1 ))
+          REM=$(( (V - 1) % 100 ))
+          MINOR=$(( REM / 10 ))
+          PATCH=$(( REM % 10 ))
+
+          format_segment() {
+            local v=$1
+            if [ "$v" -eq 0 ]; then
+              echo "0"
+            elif [ "$v" -lt 10 ]; then
+              echo "0$v"
+            else
+              echo "$v"
+            fi
+          }
+
+          MINOR_STR=$(format_segment "$MINOR")
+          PATCH_STR=$(format_segment "$PATCH")
+          VERSION_NAME="${MAJOR}.${MINOR_STR}.${PATCH_STR}"
           echo "VERSION_NAME=$VERSION_NAME" >> $GITHUB_OUTPUT
           echo "VERSION_CODE=$V" >> $GITHUB_OUTPUT
           echo "$V" > version.txt
@@ -70,7 +86,7 @@ jobs:
 
       - name: Build with Gradle
         env:
-          GRADLE_OPTS: "-Dorg.gradle.jvmargs=-Xmx4g -XX:MaxMetaspaceSize=512m -Dfile.encoding=UTF-8"
+          GRADLE_OPTS: "-Dorg.gradle.jvmargs=-Xmx6g -XX:MaxMetaspaceSize=1g -Dfile.encoding=UTF-8"
         run: |
           chmod +x ./gradlew
           ./gradlew assembleRelease --no-daemon --stacktrace \
