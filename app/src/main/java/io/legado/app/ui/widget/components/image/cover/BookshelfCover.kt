@@ -83,8 +83,7 @@ fun BookshelfCover(
             } else Modifier
         )
 
-        // 💡 左上角：最新话更新时间。恢复使用 TextCard，颜色与原版一致，
-        //    仅缩小内边距让角标更紧凑。
+        // 💡 左上角：最新话更新时间。圆角改小，接近方正的小圆角矩形。
         if (!topLeftText.isNullOrEmpty()) {
             TextCard(
                 text = topLeftText,
@@ -96,13 +95,13 @@ fun BookshelfCover(
                         alpha =
                             if (BookCoverMorphAnchors.isOriginCoverHidden(sharedCoverKey)) 0f else 1f
                     },
-                cornerRadius = 3.dp,
+                cornerRadius = 1.dp,
                 horizontalPadding = 3.dp,
                 verticalPadding = 1.dp
             )
         }
 
-        // 💡 右上角：未读数字角标。恢复使用 TextCard，颜色与原版一致。
+        // 💡 右上角：未读数字角标。圆角改小，接近方正的小圆角矩形。
         if (!badgeText.isNullOrEmpty()) {
             TextCard(
                 text = badgeText,
@@ -116,13 +115,13 @@ fun BookshelfCover(
                         alpha =
                             if (BookCoverMorphAnchors.isOriginCoverHidden(sharedCoverKey)) 0f else 1f
                     },
-                cornerRadius = 3.dp,
+                cornerRadius = 1.dp,
                 horizontalPadding = 3.dp,
                 verticalPadding = 1.dp
             )
         }
 
-        // 💡 左下角：来源/类型标签。恢复使用 TextCard，颜色与原版一致。
+        // 💡 左下角：来源/类型标签。圆角改小。
         if (!leftBottomText.isNullOrEmpty()) {
             TextCard(
                 text = leftBottomText,
@@ -134,7 +133,7 @@ fun BookshelfCover(
                         alpha =
                             if (BookCoverMorphAnchors.isOriginCoverHidden(sharedCoverKey)) 0f else 1f
                     },
-                cornerRadius = 3.dp,
+                cornerRadius = 1.dp,
                 horizontalPadding = 3.dp,
                 verticalPadding = 1.dp
             )
