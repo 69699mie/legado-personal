@@ -34,6 +34,8 @@ fun BookshelfCover(
     isUpdating: Boolean = false,
     badgeText: String? = null,
     showBadgeDot: Boolean = false,
+    /** 💡 新增：封面左上角文字（如最新话更新时间） */
+    topLeftText: String? = null,
     leftBottomText: String? = null,
     sourceOrigin: String? = null,
     // 本书 bookUrl，供封面别名缓存键；书架组件默认本地优先
@@ -81,6 +83,26 @@ fun BookshelfCover(
                 }
             } else Modifier
         )
+
+        // 💡 新增：左上角文字（最新话更新时间）
+        if (!topLeftText.isNullOrEmpty()) {
+            TextCard(
+                text = topLeftText,
+                backgroundColor = LegadoTheme.colorScheme.cardContainer,
+                contentColor = LegadoTheme.colorScheme.onCardContainer,
+                modifier = Modifier
+                    .align(Alignment.TopStart)
+                    .padding(2.dp)
+                    .then(overlayModifier)
+                    .graphicsLayer {
+                        alpha =
+                            if (BookCoverMorphAnchors.isOriginCoverHidden(sharedCoverKey)) 0f else 1f
+                    },
+                cornerRadius = 4.dp,
+                horizontalPadding = 4.dp,
+                verticalPadding = 2.dp
+            )
+        }
 
         if (!badgeText.isNullOrEmpty()) {
             TextCard(
