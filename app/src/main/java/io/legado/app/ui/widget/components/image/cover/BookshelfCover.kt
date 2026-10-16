@@ -37,17 +37,13 @@ fun BookshelfCover(
     topLeftText: String? = null,
     leftBottomText: String? = null,
     sourceOrigin: String? = null,
-    // 本书 bookUrl，供封面别名缓存键；书架组件默认本地优先
-    // （preferCache=true）：有缓存（含别名命中）直接显示，不跑书源规则脚本、不联网。
     bookUrl: String? = null,
     onLoadFinish: (() -> Unit)? = null,
     showLoadingPlaceholder: Boolean = true,
     sharedTransitionScope: SharedTransitionScope? = null,
     animatedVisibilityScope: AnimatedVisibilityScope? = null,
     sharedCoverKey: String? = null,
-    /** 内容模糊：透传给封面组件，作用点在共享元素节点内部，转场时才不会被落下 */
     contentBlur: Dp = 0.dp,
-    /** 盖在封面上的叠加层（遮罩/点阵/锁标），必须渲染在共享节点内部 */
     overlayContent: (@Composable BoxScope.() -> Unit)? = null,
 ) {
     Box(modifier = modifier) {
@@ -71,7 +67,6 @@ fun BookshelfCover(
             leftBottomText = leftBottomText,
         )
 
-        // 使用 animatedVisibilityScope 的 animateEnterExit 为叠加层添加同步动画
         val overlayModifier = Modifier.then(
             if (animatedVisibilityScope != null) {
                 with(animatedVisibilityScope) {
@@ -83,7 +78,7 @@ fun BookshelfCover(
             } else Modifier
         )
 
-        // 左上角：最新话更新时间（新增能力）。参数与原始右上角角标完全一致。
+        // 💡 左上角：最新话更新时间。ignoreThemeCornerRadiusOverride = true，让角标不被主题圆角覆盖成椭圆。
         if (!topLeftText.isNullOrEmpty()) {
             TextCard(
                 text = topLeftText,
@@ -97,11 +92,12 @@ fun BookshelfCover(
                     },
                 cornerRadius = 4.dp,
                 horizontalPadding = 4.dp,
-                verticalPadding = 2.dp
+                verticalPadding = 2.dp,
+                ignoreThemeCornerRadiusOverride = true,
             )
         }
 
-        // 右上角：未读数字角标。参数与原始代码完全一致。
+        // 💡 右上角：未读数字角标。同样绕过主题圆角覆盖。
         if (!badgeText.isNullOrEmpty()) {
             TextCard(
                 text = badgeText,
@@ -117,11 +113,12 @@ fun BookshelfCover(
                     },
                 cornerRadius = 4.dp,
                 horizontalPadding = 4.dp,
-                verticalPadding = 2.dp
+                verticalPadding = 2.dp,
+                ignoreThemeCornerRadiusOverride = true,
             )
         }
 
-        // 左下角：来源/类型标签。参数与原始代码完全一致。
+        // 💡 左下角：来源/类型标签。同样绕过主题圆角覆盖。
         if (!leftBottomText.isNullOrEmpty()) {
             TextCard(
                 text = leftBottomText,
@@ -135,7 +132,8 @@ fun BookshelfCover(
                     },
                 cornerRadius = 4.dp,
                 horizontalPadding = 4.dp,
-                verticalPadding = 2.dp
+                verticalPadding = 2.dp,
+                ignoreThemeCornerRadiusOverride = true,
             )
         }
 
