@@ -38,6 +38,17 @@ class ReadRecordRepository(
 ) {
     private fun getCurrentDeviceId(): String = ""
 
+    /**
+     * 作者名取第一行。
+     *
+     * books 表的 author 可能是多行（书源常在作者字段里叠加作者/出品方/绘制，
+     * 用换行分隔，例如 "Iron Wall\nKENAZ\nZero-Big"）。
+     * 阅读记录只存第一行，读取侧 SQL 用「第一行 + 换行」前缀匹配还原对应关系。
+     */
+    private fun firstLineAuthor(author: String): String =
+        if (author.isBlank()) author
+        else author.substringBefore('\n').substringBefore('\r').trim()
+
     private fun Long.toDateString(): String =
         Instant.fromEpochMilliseconds(this).toLocalDateTime(TimeZone.currentSystemDefault()).date.toString()
 
@@ -414,20 +425,21 @@ class ReadRecordRepository(
     /**
      * 💡 从书架打开漫画时立即写入阅读记录，让首页「最近阅读」和阅读记录页都能立刻看到该书。
      *
-     * ⚠️ 必须直接使用 books 表的原始 name/author，不能走 ReadRecordIdentity 规范化，
-     * 否则作者含换行/多行空白时，规范化后的 key 会与 books 表不一致，
-     * 导致首页 [ReadRecordDao.observeRecentHomeBooks] 的 EXISTS 匹配失败，记录被隐藏。
+     * ⚠️ 写入前会把作者取第一行：书源常把「作者/出品方/绘制」用换行堆在 author 字段里，
+     *    而首页 JOIN 需要与 books 表比对。写入存第一行，读取侧 SQL 用「第一行 + 换行」
+     *    前缀匹配找回多行作者；两侧口径互相咬合，缺一不可。
      *
      * 同时补写一条 readRecordDetail（readTime=0），让阅读记录页的「汇总视图」立刻有数据；
      * 阅读时长由 [addReadTime] 后续累积。
      */
     suspend fun recordBookOpened(bookName: String, bookAuthor: String) {
         if (bookName.isBlank()) return
+        val author = firstLineAuthor(bookAuthor)
         val now = System.currentTimeMillis()
         val dateStr = now.toDateString()
         database.withTransaction {
             // 1. 更新 readRecord 汇总表，让首页「最近阅读」立刻出现
-            val existing = dao.getReadRecord("", bookName, bookAuthor)
+            val existing = dao.getReadRecord("", bookName, author)
             if (existing != null) {
                 dao.update(existing.copy(lastRead = now))
             } else {
@@ -435,20 +447,20 @@ class ReadRecordRepository(
                     ReadRecord(
                         deviceId = "",
                         bookName = bookName,
-                        bookAuthor = bookAuthor,
+                        bookAuthor = author,
                         readTime = 0L,
                         lastRead = now,
                     )
                 )
             }
             // 2. 补一条当日明细，让阅读记录页「汇总视图」立刻有数据
-            val detail = dao.getDetail("", bookName, bookAuthor, dateStr)
+            val detail = dao.getDetail("", bookName, author, dateStr)
             if (detail == null) {
                 dao.insertDetail(
                     ReadRecordDetail(
                         deviceId = "",
                         bookName = bookName,
-                        bookAuthor = bookAuthor,
+                        bookAuthor = author,
                         date = dateStr,
                         readTime = 0L,
                         readWords = 0L,
@@ -465,17 +477,18 @@ class ReadRecordRepository(
     /**
      * 💡 累积阅读时长到 readRecord 汇总表，同步刷新 readRecordDetail 按天明细。
      *
-     * ⚠️ 同样必须直接使用原始 name/author，理由见 [recordBookOpened]。
+     * ⚠️ 同样取作者第一行，理由见 [recordBookOpened]。
      *
      * @param deltaMillis 自上次落盘以来新增的阅读时长（毫秒），必须 > 0。
      */
     suspend fun addReadTime(bookName: String, bookAuthor: String, deltaMillis: Long) {
         if (bookName.isBlank() || deltaMillis <= 0L) return
+        val author = firstLineAuthor(bookAuthor)
         val now = System.currentTimeMillis()
         val dateStr = now.toDateString()
         database.withTransaction {
             // 1. 更新 readRecord 汇总
-            val existing = dao.getReadRecord("", bookName, bookAuthor)
+            val existing = dao.getReadRecord("", bookName, author)
             if (existing != null) {
                 dao.update(
                     existing.copy(
@@ -488,14 +501,14 @@ class ReadRecordRepository(
                     ReadRecord(
                         deviceId = "",
                         bookName = bookName,
-                        bookAuthor = bookAuthor,
+                        bookAuthor = author,
                         readTime = deltaMillis,
                         lastRead = now,
                     )
                 )
             }
             // 2. 同步更新当日明细（阅读记录页「汇总视图」按此展示）
-            val detail = dao.getDetail("", bookName, bookAuthor, dateStr)
+            val detail = dao.getDetail("", bookName, author, dateStr)
             if (detail != null) {
                 dao.insertDetail(
                     detail.copy(
@@ -513,7 +526,7 @@ class ReadRecordRepository(
                     ReadRecordDetail(
                         deviceId = "",
                         bookName = bookName,
-                        bookAuthor = bookAuthor,
+                        bookAuthor = author,
                         date = dateStr,
                         readTime = deltaMillis,
                         readWords = 0L,
