@@ -83,7 +83,7 @@ fun BookshelfCover(
             } else Modifier
         )
 
-        // 💡 左上角：最新话更新时间。圆角改小，接近方正的小圆角矩形。
+        // 左上角：最新话更新时间（新增能力）。参数与原始右上角角标完全一致。
         if (!topLeftText.isNullOrEmpty()) {
             TextCard(
                 text = topLeftText,
@@ -95,13 +95,13 @@ fun BookshelfCover(
                         alpha =
                             if (BookCoverMorphAnchors.isOriginCoverHidden(sharedCoverKey)) 0f else 1f
                     },
-                cornerRadius = 1.dp,
-                horizontalPadding = 3.dp,
-                verticalPadding = 1.dp
+                cornerRadius = 4.dp,
+                horizontalPadding = 4.dp,
+                verticalPadding = 2.dp
             )
         }
 
-        // 💡 右上角：未读数字角标。圆角改小，接近方正的小圆角矩形。
+        // 右上角：未读数字角标。参数与原始代码完全一致。
         if (!badgeText.isNullOrEmpty()) {
             TextCard(
                 text = badgeText,
@@ -115,13 +115,13 @@ fun BookshelfCover(
                         alpha =
                             if (BookCoverMorphAnchors.isOriginCoverHidden(sharedCoverKey)) 0f else 1f
                     },
-                cornerRadius = 1.dp,
-                horizontalPadding = 3.dp,
-                verticalPadding = 1.dp
+                cornerRadius = 4.dp,
+                horizontalPadding = 4.dp,
+                verticalPadding = 2.dp
             )
         }
 
-        // 💡 左下角：来源/类型标签。圆角改小。
+        // 左下角：来源/类型标签。参数与原始代码完全一致。
         if (!leftBottomText.isNullOrEmpty()) {
             TextCard(
                 text = leftBottomText,
@@ -133,9 +133,9 @@ fun BookshelfCover(
                         alpha =
                             if (BookCoverMorphAnchors.isOriginCoverHidden(sharedCoverKey)) 0f else 1f
                     },
-                cornerRadius = 1.dp,
-                horizontalPadding = 3.dp,
-                verticalPadding = 1.dp
+                cornerRadius = 4.dp,
+                horizontalPadding = 4.dp,
+                verticalPadding = 2.dp
             )
         }
 
