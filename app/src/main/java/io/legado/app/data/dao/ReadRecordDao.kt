@@ -27,13 +27,26 @@ interface ReadRecordDao {
 
     // 💡 漫画专用 App：所有全局统计/列表查询都通过 EXISTS 关联 books 表，仅统计漫画书（type & image > 0）。
     // 老数据若匹配不到 books 表（书已删除），则不计入，符合"只看漫画"的预期。
+    //
+    // 💡 作者匹配：readRecord 存的是 books.author 的「第一行」（书源常用换行堆叠作者/出品方/绘制）。
+    //   这里除了直接相等，还要匹配「books.author 以 readRecord.bookAuthor 开头，且下一个字符是换行」
+    //   的多行情况。用 substr 而非 LIKE，避免作者名里的 % / _ 被误当通配符。
 
     @Query(
         """
         SELECT sum(r.readTime) FROM readRecord r
         WHERE EXISTS (
             SELECT 1 FROM books b
-            WHERE b.name = r.bookName AND b.author = r.bookAuthor
+            WHERE b.name = r.bookName
+              AND (
+                b.author = r.bookAuthor
+                OR (
+                  r.bookAuthor != ''
+                  AND length(b.author) > length(r.bookAuthor)
+                  AND substr(b.author, 1, length(r.bookAuthor)) = r.bookAuthor
+                  AND substr(b.author, length(r.bookAuthor) + 1, 1) IN (char(10), char(13))
+                )
+              )
               AND b.type & ${BookType.image} > 0
         )
         """
@@ -47,7 +60,16 @@ interface ReadRecordDao {
             FROM readRecord r
             WHERE EXISTS (
                 SELECT 1 FROM books b
-                WHERE b.name = r.bookName AND b.author = r.bookAuthor
+                WHERE b.name = r.bookName
+                  AND (
+                    b.author = r.bookAuthor
+                    OR (
+                      r.bookAuthor != ''
+                      AND length(b.author) > length(r.bookAuthor)
+                      AND substr(b.author, 1, length(r.bookAuthor)) = r.bookAuthor
+                      AND substr(b.author, length(r.bookAuthor) + 1, 1) IN (char(10), char(13))
+                    )
+                  )
                   AND b.type & ${BookType.image} > 0
             )
             GROUP BY r.bookName, r.bookAuthor
@@ -62,7 +84,16 @@ interface ReadRecordDao {
         WHERE r.date = :date
           AND EXISTS (
               SELECT 1 FROM books b
-              WHERE b.name = r.bookName AND b.author = r.bookAuthor
+              WHERE b.name = r.bookName
+                AND (
+                  b.author = r.bookAuthor
+                  OR (
+                    r.bookAuthor != ''
+                    AND length(b.author) > length(r.bookAuthor)
+                    AND substr(b.author, 1, length(r.bookAuthor)) = r.bookAuthor
+                    AND substr(b.author, length(r.bookAuthor) + 1, 1) IN (char(10), char(13))
+                  )
+                )
                 AND b.type & ${BookType.image} > 0
           )
         """
@@ -79,7 +110,16 @@ interface ReadRecordDao {
             FROM readRecord r
             WHERE EXISTS (
                 SELECT 1 FROM books b
-                WHERE b.name = r.bookName AND b.author = r.bookAuthor
+                WHERE b.name = r.bookName
+                  AND (
+                    b.author = r.bookAuthor
+                    OR (
+                      r.bookAuthor != ''
+                      AND length(b.author) > length(r.bookAuthor)
+                      AND substr(b.author, 1, length(r.bookAuthor)) = r.bookAuthor
+                      AND substr(b.author, length(r.bookAuthor) + 1, 1) IN (char(10), char(13))
+                    )
+                  )
                   AND b.type & ${BookType.image} > 0
             )
             GROUP BY bookName, bookAuthor
@@ -101,7 +141,15 @@ interface ReadRecordDao {
             SELECT candidate.bookUrl
             FROM books AS candidate
             WHERE candidate.name = recent.bookName
-                AND candidate.author = recent.bookAuthor
+                AND (
+                  candidate.author = recent.recordAuthor
+                  OR (
+                    recent.recordAuthor != ''
+                    AND length(candidate.author) > length(recent.recordAuthor)
+                    AND substr(candidate.author, 1, length(recent.recordAuthor)) = recent.recordAuthor
+                    AND substr(candidate.author, length(recent.recordAuthor) + 1, 1) IN (char(10), char(13))
+                  )
+                )
             ORDER BY candidate.durChapterTime DESC, candidate.bookUrl ASC
             LIMIT 1
         )
@@ -166,7 +214,16 @@ interface ReadRecordDao {
         SELECT r.* FROM readRecord r
         WHERE EXISTS (
             SELECT 1 FROM books b
-            WHERE b.name = r.bookName AND b.author = r.bookAuthor
+            WHERE b.name = r.bookName
+              AND (
+                b.author = r.bookAuthor
+                OR (
+                  r.bookAuthor != ''
+                  AND length(b.author) > length(r.bookAuthor)
+                  AND substr(b.author, 1, length(r.bookAuthor)) = r.bookAuthor
+                  AND substr(b.author, length(r.bookAuthor) + 1, 1) IN (char(10), char(13))
+                )
+              )
               AND b.type & ${BookType.image} > 0
         )
         ORDER BY r.lastRead DESC
@@ -180,7 +237,16 @@ interface ReadRecordDao {
         WHERE (r.bookName LIKE '%' || :query || '%' OR r.bookAuthor LIKE '%' || :query || '%')
           AND EXISTS (
               SELECT 1 FROM books b
-              WHERE b.name = r.bookName AND b.author = r.bookAuthor
+              WHERE b.name = r.bookName
+                AND (
+                  b.author = r.bookAuthor
+                  OR (
+                    r.bookAuthor != ''
+                    AND length(b.author) > length(r.bookAuthor)
+                    AND substr(b.author, 1, length(r.bookAuthor)) = r.bookAuthor
+                    AND substr(b.author, length(r.bookAuthor) + 1, 1) IN (char(10), char(13))
+                  )
+                )
                 AND b.type & ${BookType.image} > 0
           )
         ORDER BY r.lastRead DESC
@@ -272,7 +338,16 @@ interface ReadRecordDao {
         SELECT r.* FROM readRecordDetail r
         WHERE EXISTS (
             SELECT 1 FROM books b
-            WHERE b.name = r.bookName AND b.author = r.bookAuthor
+            WHERE b.name = r.bookName
+              AND (
+                b.author = r.bookAuthor
+                OR (
+                  r.bookAuthor != ''
+                  AND length(b.author) > length(r.bookAuthor)
+                  AND substr(b.author, 1, length(r.bookAuthor)) = r.bookAuthor
+                  AND substr(b.author, length(r.bookAuthor) + 1, 1) IN (char(10), char(13))
+                )
+              )
               AND b.type & ${BookType.image} > 0
         )
         ORDER BY r.date DESC, r.lastReadTime DESC
@@ -286,7 +361,16 @@ interface ReadRecordDao {
         WHERE (r.bookName LIKE '%' || :query || '%' OR r.bookAuthor LIKE '%' || :query || '%')
           AND EXISTS (
               SELECT 1 FROM books b
-              WHERE b.name = r.bookName AND b.author = r.bookAuthor
+              WHERE b.name = r.bookName
+                AND (
+                  b.author = r.bookAuthor
+                  OR (
+                    r.bookAuthor != ''
+                    AND length(b.author) > length(r.bookAuthor)
+                    AND substr(b.author, 1, length(r.bookAuthor)) = r.bookAuthor
+                    AND substr(b.author, length(r.bookAuthor) + 1, 1) IN (char(10), char(13))
+                  )
+                )
                 AND b.type & ${BookType.image} > 0
           )
         ORDER BY r.date DESC, r.lastReadTime DESC
@@ -302,7 +386,16 @@ interface ReadRecordDao {
         SELECT r.* FROM readRecordSession r
         WHERE EXISTS (
             SELECT 1 FROM books b
-            WHERE b.name = r.bookName AND b.author = r.bookAuthor
+            WHERE b.name = r.bookName
+              AND (
+                b.author = r.bookAuthor
+                OR (
+                  r.bookAuthor != ''
+                  AND length(b.author) > length(r.bookAuthor)
+                  AND substr(b.author, 1, length(r.bookAuthor)) = r.bookAuthor
+                  AND substr(b.author, length(r.bookAuthor) + 1, 1) IN (char(10), char(13))
+                )
+              )
               AND b.type & ${BookType.image} > 0
         )
         ORDER BY r.startTime ASC
