@@ -142,12 +142,12 @@ interface ReadRecordDao {
             FROM books AS candidate
             WHERE candidate.name = recent.bookName
                 AND (
-                  candidate.author = recent.recordAuthor
+                  candidate.author = recent.bookAuthor
                   OR (
-                    recent.recordAuthor != ''
-                    AND length(candidate.author) > length(recent.recordAuthor)
-                    AND substr(candidate.author, 1, length(recent.recordAuthor)) = recent.recordAuthor
-                    AND substr(candidate.author, length(recent.recordAuthor) + 1, 1) IN (char(10), char(13))
+                    recent.bookAuthor != ''
+                    AND length(candidate.author) > length(recent.bookAuthor)
+                    AND substr(candidate.author, 1, length(recent.bookAuthor)) = recent.bookAuthor
+                    AND substr(candidate.author, length(recent.bookAuthor) + 1, 1) IN (char(10), char(13))
                   )
                 )
             ORDER BY candidate.durChapterTime DESC, candidate.bookUrl ASC
