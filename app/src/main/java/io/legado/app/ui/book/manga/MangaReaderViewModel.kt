@@ -47,7 +47,7 @@ import splitties.init.appCtx
 /** 会把下载百分比写进 UiState 的页窗口：当前页前后各若干项。 */
 private const val PAGE_PROGRESS_WINDOW = 3
 
-/** 💡 新增：阅读时长的落盘间隔（毫秒）。越大越省 IO，被杀时丢的时长越多。 */
+/** 阅读时长的落盘间隔（毫秒）。 */
 private const val READ_RECORD_FLUSH_INTERVAL_MS = 30_000L
 
 class MangaReaderViewModel(
@@ -57,7 +57,7 @@ class MangaReaderViewModel(
     private val actionRepository: MangaReaderActionRepository,
     private val cacheBookChaptersUseCase: CacheBookChaptersUseCase,
     private val readRecordRepository: ReadRecordRepository,
-    private val imageLoader: ImageLoader, // 💡 新增：用于清理缓存
+    private val imageLoader: ImageLoader,
     sessionFactory: MangaReaderSessionFactory,
 ) : ViewModel() {
 
@@ -71,15 +71,16 @@ class MangaReaderViewModel(
     private var deferredReadySession: MangaSessionState? = null
     private var initializationRequest: MangaReaderIntent.Initialize? = null
 
-    // 💡 新增：阅读记录追踪
+    // 阅读记录追踪
     private var readRecordBookName: String? = null
     private var readRecordBookAuthor: String? = null
     private var readSessionStartedAt: Long = 0L
     private var readSessionFlushJob: Job? = null
 
-    // 💡 新增：阅读缓存记录与清理
+    // 阅读缓存记录与清理
     private var maxReadChapterIndex = -1
     private val chapterImageUrls = mutableMapOf<Int, List<String>>()
+    private var currentBookUrl: String? = null
 
     private val _uiState = MutableStateFlow(MangaReaderUiState())
     val uiState = _uiState.asStateFlow()
@@ -358,10 +359,10 @@ class MangaReaderViewModel(
         initializationRequest = intent
         showLoading()
         viewModelScope.launch {
-            // 💡 新增：只在书架书中写入阅读记录（搜索页未上架的书不写）
             if (intent.inBookshelf && !intent.bookUrl.isNullOrBlank()) {
                 val book = actionRepository.getBook(intent.bookUrl)
                 if (book != null) {
+                    currentBookUrl = book.bookUrl
                     runCatching {
                         readRecordRepository.recordBookOpened(book.name, book.author)
                     }
@@ -462,8 +463,8 @@ class MangaReaderViewModel(
             else showLoading()
             return
         }
-        
-        // 💡 新增：记录阅读进度并清理已读章节缓存
+
+        // 记录当前章节进度并触发清理
         recordAndCleanChapterCache(session.chapterIndex, current.chapter)
 
         if (pagerScrollInProgress &&
@@ -683,20 +684,18 @@ class MangaReaderViewModel(
     }
 
     private fun recordAndCleanChapterCache(chapterIndex: Int, chapterContent: io.legado.app.domain.model.manga.MangaChapterContent) {
-        // 记录当前章节的图片地址，供后续清理使用
         chapterImageUrls[chapterIndex] = chapterContent.pages.map { it.imageUrl }
 
-        // 如果当前章节大于历史最高阅读章节，说明在往后看，触发旧章节清理
         if (chapterIndex > maxReadChapterIndex) {
             if (maxReadChapterIndex >= 0) {
-                val bookUrl = _uiState.value.bookUrl
+                val bookUrl = currentBookUrl ?: _uiState.value.bookUrl
                 if (bookUrl != null) {
+                    // 直接清理所有小于当前章节的图片缓存
                     for (i in 0 until chapterIndex) {
                         chapterImageUrls[i]?.forEach { url ->
                             val key = "manga-page:$bookUrl:$i:$url"
                             imageLoader.diskCache?.remove(key)
                         }
-                        // 清理完后从记录表中移除，防止内存占用和重复查询
                         chapterImageUrls.remove(i)
                     }
                 }
@@ -760,7 +759,6 @@ class MangaReaderViewModel(
     }
 
     override fun onCleared() {
-        // 💡 新增：退出前把最后一段阅读时长落盘（onCleared 不能 suspend，用独立 IO 协程）
         val name = readRecordBookName
         val author = readRecordBookAuthor
         val delta = System.currentTimeMillis() - readSessionStartedAt
@@ -770,6 +768,24 @@ class MangaReaderViewModel(
                 runCatching { readRecordRepository.addReadTime(name, author, delta) }
             }
         }
+
+        // 退出阅读器时，强制清理所有已读章节的图片缓存，确保不留旧图
+        val bookUrl = currentBookUrl ?: _uiState.value.bookUrl
+        if (bookUrl != null) {
+            CoroutineScope(Dispatchers.IO).launch {
+                chapterImageUrls.forEach { (index, urls) ->
+                    // 留最后一章，之前的全清
+                    if (index < maxReadChapterIndex) {
+                        urls.forEach { url ->
+                            val key = "manga-page:$bookUrl:$index:$url"
+                            imageLoader.diskCache?.remove(key)
+                        }
+                    }
+                }
+                chapterImageUrls.clear()
+            }
+        }
+
         readerSession.close()
         super.onCleared()
     }
@@ -786,7 +802,6 @@ class MangaReaderViewModel(
         )
     }
 
-    // 💡 新增：开始追踪阅读时长
     private fun startReadTimeTracking(bookName: String, bookAuthor: String) {
         readRecordBookName = bookName
         readRecordBookAuthor = bookAuthor
@@ -800,7 +815,6 @@ class MangaReaderViewModel(
         }
     }
 
-    // 💡 新增：把自上次落盘以来的时长写入数据库
     private suspend fun flushReadTime() {
         val name = readRecordBookName ?: return
         val author = readRecordBookAuthor ?: return
@@ -972,7 +986,6 @@ class MangaReaderViewModel(
             MangaReaderSettingKey.FILTER_GREEN,
             MangaReaderSettingKey.FILTER_BLUE,
             MangaReaderSettingKey.FILTER_ALPHA,
-            // 💡 画质与性能：对比度归入颜色分支
             MangaReaderSettingKey.FILTER_CONTRAST,
             MangaReaderSettingKey.AUTO_BRIGHTNESS,
             MangaReaderSettingKey.BRIGHTNESS -> updateColorSetting(key, value)
@@ -984,13 +997,10 @@ class MangaReaderViewModel(
             MangaReaderSettingKey.HIDE_CHAPTER_LABEL,
             MangaReaderSettingKey.HIDE_PROGRESS,
             MangaReaderSettingKey.HIDE_PROGRESS_LABEL,
-            // 💡 时间电量开关也归入页脚设置分组
             MangaReaderSettingKey.HIDE_TIME_BATTERY,
             MangaReaderSettingKey.FOOTER_ALIGNMENT,
-            // 💡 页脚（章节信息部分）偏移
             MangaReaderSettingKey.FOOTER_OFFSET_X,
             MangaReaderSettingKey.FOOTER_OFFSET_Y,
-            // 💡 时间电量独立偏移
             MangaReaderSettingKey.TIME_BATTERY_OFFSET_X,
             MangaReaderSettingKey.TIME_BATTERY_OFFSET_Y -> updateFooterSetting(key, value)
             MangaReaderSettingKey.MENU_TOP_BAR_LIQUID_GLASS -> updateMangaPreference {
@@ -1014,7 +1024,6 @@ class MangaReaderViewModel(
             MangaReaderSettingKey.MENU_SEED_COLOR -> updateMangaPreference {
                 it.copy(menuSeedColor = value)
             }
-            // 💡 画质与性能：5 个独立分支
             MangaReaderSettingKey.MANGA_HIGH_QUALITY_DECODE -> updateMangaPreference {
                 it.copy(highQualityDecode = enabled)
             }
@@ -1055,7 +1064,6 @@ class MangaReaderViewModel(
                 MangaReaderSettingKey.FILTER_GREEN -> config.g = value
                 MangaReaderSettingKey.FILTER_BLUE -> config.b = value
                 MangaReaderSettingKey.FILTER_ALPHA -> config.a = value
-                // 💡 画质与性能：对比度
                 MangaReaderSettingKey.FILTER_CONTRAST -> config.contrast = value
                 MangaReaderSettingKey.AUTO_BRIGHTNESS -> config.autoBrightness = value != 0
                 MangaReaderSettingKey.BRIGHTNESS -> config.l = value
@@ -1087,10 +1095,8 @@ class MangaReaderViewModel(
                 MangaReaderSettingKey.HIDE_PROGRESS_LABEL -> config.hideProgressRatioLabel = enabled
                 MangaReaderSettingKey.HIDE_TIME_BATTERY -> config.hideTimeBattery = enabled
                 MangaReaderSettingKey.FOOTER_ALIGNMENT -> config.footerOrientation = value
-                // 💡 页脚（章节信息部分）偏移
                 MangaReaderSettingKey.FOOTER_OFFSET_X -> config.footerOffsetXDp = value
                 MangaReaderSettingKey.FOOTER_OFFSET_Y -> config.footerOffsetYDp = value
-                // 💡 时间电量独立偏移
                 MangaReaderSettingKey.TIME_BATTERY_OFFSET_X -> config.timeBatteryOffsetXDp = value
                 MangaReaderSettingKey.TIME_BATTERY_OFFSET_Y -> config.timeBatteryOffsetYDp = value
                 else -> Unit
@@ -1486,13 +1492,10 @@ class MangaReaderViewModel(
         hideProgressLabel = footer.hideProgressRatioLabel,
         hideTimeBattery = footer.hideTimeBattery,
         footerAlignment = footer.footerOrientation,
-        // 💡 页脚（章节信息部分）偏移
         footerOffsetX = footer.footerOffsetXDp,
         footerOffsetY = footer.footerOffsetYDp,
-        // 💡 时间电量独立偏移
         timeBatteryOffsetX = footer.timeBatteryOffsetXDp,
         timeBatteryOffsetY = footer.timeBatteryOffsetYDp,
-        // 💡 画质与性能
         contrast = colorFilter.contrast,
         highQualityDecode = settings.highQualityDecode,
         sharpenEnabled = settings.sharpenEnabled,
