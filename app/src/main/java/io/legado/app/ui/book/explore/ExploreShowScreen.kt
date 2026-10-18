@@ -43,7 +43,6 @@ import io.legado.app.domain.model.BookShelfState
 import io.legado.app.ui.main.bookCoverSharedElementKey
 import io.legado.app.ui.theme.responsiveHazeEffect
 import io.legado.app.ui.theme.responsiveHazeSource
-import io.legado.app.ui.widget.components.AppPullToRefresh
 import io.legado.app.ui.widget.components.AppScaffold
 import io.legado.app.ui.widget.components.LoadMoreFooter
 import io.legado.app.ui.widget.components.book.SearchBookGridItem
@@ -272,128 +271,120 @@ fun ExploreShowScreen(
     )
 
     val resultContent: @Composable (PaddingValues) -> Unit = { paddingValues ->
-        AppPullToRefresh(
-            modifier = Modifier.fillMaxSize(),
-            isRefreshing = state.isRefreshing,
-            onRefresh = { onIntent(ExploreShowIntent.Refresh) },
-            topPadding = paddingValues.calculateTopPadding(),
-            scrollBehavior = scrollBehavior
-        ) {
-            // 💡 移除 Crossfade，直接使用 if-else 渲染，并包一层 Box 防止父级的固有尺寸测量传递进 Lazy 组件
-            Box(modifier = Modifier.fillMaxSize()) {
-                if (isGridMode) {
-                    LazyVerticalGrid(
-                        state = gridState,
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .then(
-                                if (embeddedInMain) Modifier else Modifier.responsiveHazeSource(
-                                    hazeState
-                                )
-                            ),
-                        columns = GridCells.Fixed(state.gridCount),
-                        contentPadding = PaddingValues(
-                            top = paddingValues.calculateTopPadding() + 12.dp,
-                            bottom = paddingValues.calculateBottomPadding() + if (embeddedInMain) 108.dp else 12.dp,
-                            start = 12.dp,
-                            end = 12.dp
+        // 💡 修复：彻底移除 AppPullToRefresh，改用普通 Box，打断 SubcomposeLayout 的固有尺寸请求链条
+        Box(modifier = Modifier.fillMaxSize()) {
+            if (isGridMode) {
+                LazyVerticalGrid(
+                    state = gridState,
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .then(
+                            if (embeddedInMain) Modifier else Modifier.responsiveHazeSource(
+                                hazeState
+                            )
                         ),
-                        horizontalArrangement = Arrangement.spacedBy(4.dp),
-                        verticalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        itemsIndexed(
-                            items = books,
-                            key = { index, item -> "${item.book.bookUrl}:$index" }
-                        ) { index, item ->
-                            val sharedCoverKey = bookCoverSharedElementKey(
-                                item.book.bookUrl,
-                                "explore:grid:$index"
-                            )
-                            ExploreBookGridItem(
-                                book = item.book,
-                                shelfState = item.shelfState,
-                                onClick = {
-                                    onIntent(
-                                        ExploreShowIntent.OpenBook(
-                                            item.book,
-                                            sharedCoverKey
-                                        )
+                    columns = GridCells.Fixed(state.gridCount),
+                    contentPadding = PaddingValues(
+                        top = paddingValues.calculateTopPadding() + 12.dp,
+                        bottom = paddingValues.calculateBottomPadding() + if (embeddedInMain) 108.dp else 12.dp,
+                        start = 12.dp,
+                        end = 12.dp
+                    ),
+                    horizontalArrangement = Arrangement.spacedBy(4.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    itemsIndexed(
+                        items = books,
+                        key = { index, item -> "${item.book.bookUrl}:$index" }
+                    ) { index, item ->
+                        val sharedCoverKey = bookCoverSharedElementKey(
+                            item.book.bookUrl,
+                            "explore:grid:$index"
+                        )
+                        ExploreBookGridItem(
+                            book = item.book,
+                            shelfState = item.shelfState,
+                            onClick = {
+                                onIntent(
+                                    ExploreShowIntent.OpenBook(
+                                        item.book,
+                                        sharedCoverKey
                                     )
-                                },
-                                onLongClick = { book, coverKey ->
-                                    previewBook = book
-                                    previewSharedCoverKey = coverKey
-                                },
-                                modifier = Modifier.animateItem(),
-                                sharedTransitionScope = sharedTransitionScope,
-                                animatedVisibilityScope = animatedVisibilityScope,
-                                sharedCoverKey = sharedCoverKey,
-                            )
-                        }
-
-                        if (showLoadMoreFooter) {
-                            item(span = { GridItemSpan(maxLineSpan) }) {
-                                ExploreShowLoadMoreFooter(
-                                    state = state,
-                                    onRetry = { onIntent(ExploreShowIntent.LoadMore) },
-                                    onLoadMore = { onIntent(ExploreShowIntent.ForceLoadNext) },
                                 )
-                            }
+                            },
+                            onLongClick = { book, coverKey ->
+                                previewBook = book
+                                previewSharedCoverKey = coverKey
+                            },
+                            modifier = Modifier.animateItem(),
+                            sharedTransitionScope = sharedTransitionScope,
+                            animatedVisibilityScope = animatedVisibilityScope,
+                            sharedCoverKey = sharedCoverKey,
+                        )
+                    }
+
+                    if (showLoadMoreFooter) {
+                        item(span = { GridItemSpan(maxLineSpan) }) {
+                            ExploreShowLoadMoreFooter(
+                                state = state,
+                                onRetry = { onIntent(ExploreShowIntent.LoadMore) },
+                                onLoadMore = { onIntent(ExploreShowIntent.ForceLoadNext) },
+                            )
                         }
                     }
-                } else {
-                    LazyColumn(
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .then(
-                                if (embeddedInMain) Modifier else Modifier.responsiveHazeSource(
-                                    hazeState
-                                )
-                            ),
-                        state = listState,
-                        contentPadding = PaddingValues(
-                            top = paddingValues.calculateTopPadding(),
-                            bottom = paddingValues.calculateBottomPadding() + if (embeddedInMain) 108.dp else 16.dp
+                }
+            } else {
+                LazyColumn(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .then(
+                            if (embeddedInMain) Modifier else Modifier.responsiveHazeSource(
+                                hazeState
+                            )
+                        ),
+                    state = listState,
+                    contentPadding = PaddingValues(
+                        top = paddingValues.calculateTopPadding(),
+                        bottom = paddingValues.calculateBottomPadding() + if (embeddedInMain) 108.dp else 16.dp
+                    )
+                ) {
+                    itemsIndexed(
+                        items = books,
+                        key = { index, item -> "${item.book.bookUrl}:$index" }
+                    ) { index, item ->
+                        val sharedCoverKey = bookCoverSharedElementKey(
+                            item.book.bookUrl,
+                            "explore:list:$index"
                         )
-                    ) {
-                        itemsIndexed(
-                            items = books,
-                            key = { index, item -> "${item.book.bookUrl}:$index" }
-                        ) { index, item ->
-                            val sharedCoverKey = bookCoverSharedElementKey(
-                                item.book.bookUrl,
-                                "explore:list:$index"
-                            )
-                            ExploreBookItem(
-                                book = item.book,
-                                shelfState = item.shelfState,
-                                onClick = {
-                                    onIntent(
-                                        ExploreShowIntent.OpenBook(
-                                            item.book,
-                                            sharedCoverKey
-                                        )
+                        ExploreBookItem(
+                            book = item.book,
+                            shelfState = item.shelfState,
+                            onClick = {
+                                onIntent(
+                                    ExploreShowIntent.OpenBook(
+                                        item.book,
+                                        sharedCoverKey
                                     )
-                                },
-                                onLongClick = { book, coverKey ->
-                                    previewBook = book
-                                    previewSharedCoverKey = coverKey
-                                },
-                                modifier = Modifier.animateItem(),
-                                sharedTransitionScope = sharedTransitionScope,
-                                animatedVisibilityScope = animatedVisibilityScope,
-                                sharedCoverKey = sharedCoverKey,
-                            )
-                        }
-
-                        if (showLoadMoreFooter) {
-                            item {
-                                ExploreShowLoadMoreFooter(
-                                    state = state,
-                                    onRetry = { onIntent(ExploreShowIntent.LoadMore) },
-                                    onLoadMore = { onIntent(ExploreShowIntent.ForceLoadNext) },
                                 )
-                            }
+                            },
+                            onLongClick = { book, coverKey ->
+                                previewBook = book
+                                previewSharedCoverKey = coverKey
+                            },
+                            modifier = Modifier.animateItem(),
+                            sharedTransitionScope = sharedTransitionScope,
+                            animatedVisibilityScope = animatedVisibilityScope,
+                            sharedCoverKey = sharedCoverKey,
+                        )
+                    }
+
+                    if (showLoadMoreFooter) {
+                        item {
+                            ExploreShowLoadMoreFooter(
+                                state = state,
+                                onRetry = { onIntent(ExploreShowIntent.LoadMore) },
+                                onLoadMore = { onIntent(ExploreShowIntent.ForceLoadNext) },
+                            )
                         }
                     }
                 }
