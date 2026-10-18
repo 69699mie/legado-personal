@@ -4,9 +4,10 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.toArgb
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import coil3.ImageLoader
 import io.legado.app.R
 import io.legado.app.data.model.MangaFooterConfig
-import io.legado.app.data.repository.ReadRecordRepository // 💡 新增
+import io.legado.app.data.repository.ReadRecordRepository
 import io.legado.app.data.repository.manga.MangaReaderActionPaymentResult
 import io.legado.app.data.repository.manga.MangaReaderActionRepository
 import io.legado.app.domain.gateway.MangaReaderSessionFactory
@@ -28,11 +29,11 @@ import io.legado.app.utils.GSON
 import io.legado.app.utils.fromJsonObject
 import kotlinx.collections.immutable.persistentListOf
 import kotlinx.collections.immutable.toImmutableList
-import kotlinx.coroutines.CoroutineScope // 💡 新增
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
-import kotlinx.coroutines.Dispatchers // 💡 新增
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
-import kotlinx.coroutines.delay // 💡 新增
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asSharedFlow
@@ -55,7 +56,8 @@ class MangaReaderViewModel(
     private val readSettingsGateway: ReadSettingsGateway,
     private val actionRepository: MangaReaderActionRepository,
     private val cacheBookChaptersUseCase: CacheBookChaptersUseCase,
-    private val readRecordRepository: ReadRecordRepository, // 💡 新增：写入/累积阅读记录
+    private val readRecordRepository: ReadRecordRepository,
+    private val imageLoader: ImageLoader, // 💡 新增：用于清理缓存
     sessionFactory: MangaReaderSessionFactory,
 ) : ViewModel() {
 
@@ -74,6 +76,10 @@ class MangaReaderViewModel(
     private var readRecordBookAuthor: String? = null
     private var readSessionStartedAt: Long = 0L
     private var readSessionFlushJob: Job? = null
+
+    // 💡 新增：阅读缓存记录与清理
+    private var maxReadChapterIndex = -1
+    private val chapterImageUrls = mutableMapOf<Int, List<String>>()
 
     private val _uiState = MutableStateFlow(MangaReaderUiState())
     val uiState = _uiState.asStateFlow()
@@ -456,6 +462,10 @@ class MangaReaderViewModel(
             else showLoading()
             return
         }
+        
+        // 💡 新增：记录阅读进度并清理已读章节缓存
+        recordAndCleanChapterCache(session.chapterIndex, current.chapter)
+
         if (pagerScrollInProgress &&
             (_uiState.value.chapterIndex != session.chapterIndex ||
                 pendingExplicitChapterIndex == session.chapterIndex)
@@ -669,6 +679,29 @@ class MangaReaderViewModel(
                     )
                 )
             }
+        }
+    }
+
+    private fun recordAndCleanChapterCache(chapterIndex: Int, chapterContent: io.legado.app.domain.model.manga.MangaChapterContent) {
+        // 记录当前章节的图片地址，供后续清理使用
+        chapterImageUrls[chapterIndex] = chapterContent.pages.map { it.imageUrl }
+
+        // 如果当前章节大于历史最高阅读章节，说明在往后看，触发旧章节清理
+        if (chapterIndex > maxReadChapterIndex) {
+            if (maxReadChapterIndex >= 0) {
+                val bookUrl = _uiState.value.bookUrl
+                if (bookUrl != null) {
+                    for (i in 0 until chapterIndex) {
+                        chapterImageUrls[i]?.forEach { url ->
+                            val key = "manga-page:$bookUrl:$i:$url"
+                            imageLoader.diskCache?.remove(key)
+                        }
+                        // 清理完后从记录表中移除，防止内存占用和重复查询
+                        chapterImageUrls.remove(i)
+                    }
+                }
+            }
+            maxReadChapterIndex = chapterIndex
         }
     }
 
