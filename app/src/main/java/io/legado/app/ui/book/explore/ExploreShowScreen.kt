@@ -282,6 +282,7 @@ fun ExploreShowScreen(
         ) {
             Crossfade(
                 targetState = isGridMode,
+                modifier = Modifier.fillMaxSize(), // 💡 修复：强制尺寸拦截，防止向下测量 Lazy 组件的固有尺寸
                 animationSpec = tween(250),
                 label = "LayoutCrossfade"
             ) { isGrid ->
