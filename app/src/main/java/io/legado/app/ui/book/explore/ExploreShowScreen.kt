@@ -6,6 +6,7 @@ import androidx.compose.animation.ExperimentalSharedTransitionApi
 import androidx.compose.animation.SharedTransitionScope
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -23,6 +24,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.GridView
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExperimentalMaterial3ExpressiveApi
+import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.derivedStateOf
@@ -43,7 +45,6 @@ import io.legado.app.domain.model.BookShelfState
 import io.legado.app.ui.main.bookCoverSharedElementKey
 import io.legado.app.ui.theme.responsiveHazeEffect
 import io.legado.app.ui.theme.responsiveHazeSource
-import io.legado.app.ui.widget.components.AppScaffold
 import io.legado.app.ui.widget.components.LoadMoreFooter
 import io.legado.app.ui.widget.components.book.SearchBookGridItem
 import io.legado.app.ui.widget.components.book.SearchBookListItem
@@ -271,7 +272,6 @@ fun ExploreShowScreen(
     )
 
     val resultContent: @Composable (PaddingValues) -> Unit = { paddingValues ->
-        // 💡 修复：彻底移除 AppPullToRefresh，改用普通 Box，打断 SubcomposeLayout 的固有尺寸请求链条
         Box(modifier = Modifier.fillMaxSize()) {
             if (isGridMode) {
                 LazyVerticalGrid(
@@ -392,35 +392,44 @@ fun ExploreShowScreen(
         }
     }
 
+    // 💡 修复：绕过 AppScaffold 内部可能触发的 SubcomposeLayout 固有尺寸测量
     if (embeddedInMain) {
         resultContent(embeddedPadding)
     } else {
-        AppScaffold(
-            modifier = Modifier.nestedScroll(scrollBehavior.nestedScrollConnection),
-            topBar = {
-                GlassMediumFlexibleTopAppBar(
-                    modifier = Modifier.responsiveHazeEffect(state = hazeState),
-                    title = state.selectedKindTitle ?: title,
-                    navigationIcon = { TopBarNavigationButton(onClick = onBack) },
-                    actions = {
-                        // 列表 / 网格切换与列数都收进同一个 sheet，顶栏只留一个入口。
-                        TopBarActionButton(
-                            onClick = {
-                                onIntent(ExploreShowIntent.ShowSheet(ExploreShowSheet.GridCount))
-                            },
-                            imageVector = Icons.Default.GridView,
-                            contentDescription = stringResource(R.string.a11y_switch_layout)
-                        )
-                        TopBarActionButton(
-                            onClick = { onIntent(ExploreShowIntent.ShowSheet(ExploreShowSheet.KindSelect)) },
-                            imageVector = AppIcons.Filter,
-                            contentDescription = stringResource(R.string.select_or_search_category)
-                        )
-                    },
-                    scrollBehavior = scrollBehavior
-                )
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .nestedScroll(scrollBehavior.nestedScrollConnection)
+        ) {
+            GlassMediumFlexibleTopAppBar(
+                modifier = Modifier.responsiveHazeEffect(state = hazeState),
+                title = state.selectedKindTitle ?: title,
+                navigationIcon = { TopBarNavigationButton(onClick = onBack) },
+                actions = {
+                    // 列表 / 网格切换与列数都收进同一个 sheet，顶栏只留一个入口。
+                    TopBarActionButton(
+                        onClick = {
+                            onIntent(ExploreShowIntent.ShowSheet(ExploreShowSheet.GridCount))
+                        },
+                        imageVector = Icons.Default.GridView,
+                        contentDescription = stringResource(R.string.a11y_switch_layout)
+                    )
+                    TopBarActionButton(
+                        onClick = { onIntent(ExploreShowIntent.ShowSheet(ExploreShowSheet.KindSelect)) },
+                        imageVector = AppIcons.Filter,
+                        contentDescription = stringResource(R.string.select_or_search_category)
+                    )
+                },
+                scrollBehavior = scrollBehavior
+            )
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .weight(1f)
+            ) {
+                resultContent(PaddingValues(0.dp))
             }
-        ) { paddingValues -> resultContent(paddingValues) }
+        }
     }
 
     val previewShelfState = previewBook?.let { book ->
