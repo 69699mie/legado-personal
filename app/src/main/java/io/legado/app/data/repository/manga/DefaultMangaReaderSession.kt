@@ -239,18 +239,9 @@ class DefaultMangaReaderSession(
     }
 
     private fun prefetch(chapterIndex: Int) {
-        val state = _state.value
-        val book = state.book ?: return
-        val indexes = (chapterIndex + 1..chapterIndex + prefetchCount)
-            .filter { it in 0 until state.chapterCount }
-        loadScope.launch {
-            indexes.forEach { index ->
-                val token = state.tokenFor(index) ?: return@forEach
-                if (_state.value.accepts(token)) {
-                    runCatching { dataGateway.prefetchChapter(book.bookUrl, index) }
-                }
-            }
-        }
+        // 💡 方案 A 终极防线：彻底斩断实体离线下载！
+        // 无论 DataRepository 有没有拦截，在底层 Session 直接返回。
+        return
     }
 
     private fun loadChapter(chapterIndex: Int) {
