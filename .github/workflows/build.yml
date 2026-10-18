@@ -86,7 +86,8 @@ jobs:
 
       - name: Build with Gradle
         env:
-          GRADLE_OPTS: "-Dorg.gradle.jvmargs=-Xmx6g -XX:MaxMetaspaceSize=1g -Dfile.encoding=UTF-8"
+          # 修复 OOM：将 -Xmx6g 降到 -Xmx4g，MaxMetaspaceSize 降到 512m
+          GRADLE_OPTS: "-Dorg.gradle.jvmargs=-Xmx4g -XX:MaxMetaspaceSize=512m -Dfile.encoding=UTF-8"
         run: |
           chmod +x ./gradlew
           ./gradlew assembleRelease --no-daemon --stacktrace \
