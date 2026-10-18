@@ -2,11 +2,10 @@ package io.legado.app.ui.book.explore
 
 import android.annotation.SuppressLint
 import androidx.compose.animation.AnimatedVisibilityScope
-import androidx.compose.animation.Crossfade
 import androidx.compose.animation.ExperimentalSharedTransitionApi
 import androidx.compose.animation.SharedTransitionScope
-import androidx.compose.animation.core.tween
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -280,13 +279,9 @@ fun ExploreShowScreen(
             topPadding = paddingValues.calculateTopPadding(),
             scrollBehavior = scrollBehavior
         ) {
-            Crossfade(
-                targetState = isGridMode,
-                modifier = Modifier.fillMaxSize(), // 💡 修复：强制尺寸拦截，防止向下测量 Lazy 组件的固有尺寸
-                animationSpec = tween(250),
-                label = "LayoutCrossfade"
-            ) { isGrid ->
-                if (isGrid) {
+            // 💡 移除 Crossfade，直接使用 if-else 渲染，并包一层 Box 防止父级的固有尺寸测量传递进 Lazy 组件
+            Box(modifier = Modifier.fillMaxSize()) {
+                if (isGridMode) {
                     LazyVerticalGrid(
                         state = gridState,
                         modifier = Modifier
