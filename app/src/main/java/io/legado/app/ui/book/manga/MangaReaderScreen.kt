@@ -1855,6 +1855,10 @@ private fun MangaReaderItemUi.Page.imageRequest(
         "${settings.enableEInk}:${settings.eInkThreshold}:${settings.enableGray}:" +
         "hq=${settings.highQualityDecode}:sharpen=${settings.sharpenEnabled}:${settings.sharpenStrength}:" +
         "${fileOwner != null}:$retryRevision"
+
+    // 💡 本次新增：独立磁盘缓存 Key，用于精准清理已读章节
+    val diskCacheKey = "manga-page:$bookUrl:$chapterIndex:$imageUrl"
+
     return ImageRequest.Builder(context)
         .data(imageUrl)
         .allowHardware(true)
@@ -1867,6 +1871,8 @@ private fun MangaReaderItemUi.Page.imageRequest(
         // 展示、背景取色与回退共享稳定身份；仅数据预取不读写位图缓存。
         .memoryCacheKey(memoryCacheKey)
         .placeholderMemoryCacheKey(memoryCacheKey)
+        // 💡 绑定此 Key，方便在切章时精准清除
+        .diskCacheKey(diskCacheKey)
         .apply {
             extras[CoverExtras.Manga] = true
             extras[CoverExtras.SourceOrigin] = settings.sourceOrigin
