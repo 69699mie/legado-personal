@@ -23,6 +23,7 @@ import io.legado.app.domain.model.settings.MangaSettings
 import io.legado.app.domain.usecase.CacheBookChaptersUseCase
 import io.legado.app.help.coil.CoverFetcher
 import io.legado.app.help.glide.progress.ProgressManager
+import io.legado.app.model.CacheBook
 import io.legado.app.model.SourceCallBack
 import io.legado.app.ui.book.manga.config.MangaColorFilterConfig
 import io.legado.app.utils.GSON
@@ -44,10 +45,7 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import splitties.init.appCtx
 
-/** 会把下载百分比写进 UiState 的页窗口：当前页前后各若干项。 */
 private const val PAGE_PROGRESS_WINDOW = 3
-
-/** 阅读时长的落盘间隔（毫秒）。 */
 private const val READ_RECORD_FLUSH_INTERVAL_MS = 30_000L
 
 class MangaReaderViewModel(
@@ -71,13 +69,11 @@ class MangaReaderViewModel(
     private var deferredReadySession: MangaSessionState? = null
     private var initializationRequest: MangaReaderIntent.Initialize? = null
 
-    // 阅读记录追踪
     private var readRecordBookName: String? = null
     private var readRecordBookAuthor: String? = null
     private var readSessionStartedAt: Long = 0L
     private var readSessionFlushJob: Job? = null
 
-    // 阅读缓存记录与清理
     private var maxReadChapterIndex = -1
     private val chapterImageUrls = mutableMapOf<Int, List<String>>()
     private var currentBookUrl: String? = null
@@ -464,7 +460,6 @@ class MangaReaderViewModel(
             return
         }
 
-        // 记录当前章节进度并触发清理
         recordAndCleanChapterCache(session.chapterIndex, current.chapter)
 
         if (pagerScrollInProgress &&
@@ -769,12 +764,14 @@ class MangaReaderViewModel(
             }
         }
 
-        // 退出阅读器时，强制清理所有已读章节的图片缓存，确保不留旧图
         val bookUrl = currentBookUrl ?: _uiState.value.bookUrl
         if (bookUrl != null) {
             CoroutineScope(Dispatchers.IO).launch {
+                // 💡 核心拦截：在退出阅读器时，直接让 CacheBook 抹除这本书的所有实体下载任务！
+                // 避免旧版本遗留的下载队列继续运行。
+                CacheBook.remove(appCtx, bookUrl)
+
                 chapterImageUrls.forEach { (index, urls) ->
-                    // 留最后一章，之前的全清
                     if (index < maxReadChapterIndex) {
                         urls.forEach { url ->
                             val key = "manga-page:$bookUrl:$index:$url"
