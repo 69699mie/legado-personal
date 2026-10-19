@@ -939,7 +939,6 @@ class BookshelfViewModel(
 
             else -> bookshelfTitle
         }
-        // 💡 已移除等待更新数量后缀 (X)：标题始终显示书架/当前分组名
         return when {
             isEditMode -> bookshelfTitle
             else -> baseTitle
@@ -1297,14 +1296,9 @@ class BookshelfViewModel(
     }
 
     private fun addDownload(source: BookSource, book: Book) {
-        if (downloadCacheSettingsGateway.currentSettings.preDownloadNum == 0) return
-        val endIndex =
-            min(
-                book.totalChapterNum - 1,
-                book.durChapterIndex + downloadCacheSettingsGateway.currentSettings.preDownloadNum
-            )
-        val cacheBook = CacheBook.getOrCreate(source, book)
-        cacheBook.addDownload(book.durChapterIndex, endIndex)
+        // 💡 终极拦截：为了节约硬盘空间，彻底禁止书架在后台发起实体离线下载。
+        // 阅读器内的流畅阅读全权交由 Coil 的临时缓存负责。
+        return
     }
 
     private fun cacheBook() {
