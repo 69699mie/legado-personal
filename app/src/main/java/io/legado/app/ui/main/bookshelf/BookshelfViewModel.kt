@@ -1296,8 +1296,9 @@ class BookshelfViewModel(
     }
 
     private fun addDownload(source: BookSource, book: Book) {
-        // 💡 终极拦截：为了节约硬盘空间，彻底禁止书架在后台发起实体离线下载。
-        // 阅读器内的流畅阅读全权交由 Coil 的临时缓存负责。
+        // 💡 彻底废除书架在后台自动“下载”实体文件的行为。
+        // 阅读器的高效翻页体验由 Coil 内存/临时缓存负责，绝不写入实体内存。
+        // 真正的手动下载走的是“缓存管理”或“详情页”的直接调用，完全不经过这个方法。
         return
     }
 
