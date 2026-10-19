@@ -23,7 +23,6 @@ import io.legado.app.domain.model.settings.MangaSettings
 import io.legado.app.domain.usecase.CacheBookChaptersUseCase
 import io.legado.app.help.coil.CoverFetcher
 import io.legado.app.help.glide.progress.ProgressManager
-import io.legado.app.model.CacheBook
 import io.legado.app.model.SourceCallBack
 import io.legado.app.ui.book.manga.config.MangaColorFilterConfig
 import io.legado.app.utils.GSON
@@ -359,11 +358,6 @@ class MangaReaderViewModel(
                 val book = actionRepository.getBook(intent.bookUrl)
                 if (book != null) {
                     currentBookUrl = book.bookUrl
-                    
-                    // 💡 核心修复：进入阅读器瞬间，清空该书所有后台实体下载任务。
-                    // 确保哪怕有旧版本的残留队列，也在此刻灰飞烟灭。
-                    CacheBook.remove(appCtx, book.bookUrl)
-
                     runCatching {
                         readRecordRepository.recordBookOpened(book.name, book.author)
                     }
@@ -464,9 +458,6 @@ class MangaReaderViewModel(
             else showLoading()
             return
         }
-
-        // 💡 每次切章刷新时，强制踢掉可能产生的幽灵下载任务
-        CacheBook.remove(appCtx, book.bookUrl)
 
         recordAndCleanChapterCache(session.chapterIndex, current.chapter)
 
@@ -774,9 +765,6 @@ class MangaReaderViewModel(
         val bookUrl = currentBookUrl ?: _uiState.value.bookUrl
         if (bookUrl != null) {
             CoroutineScope(Dispatchers.IO).launch {
-                // 💡 退出时强行抹除任务
-                CacheBook.remove(appCtx, bookUrl)
-
                 chapterImageUrls.forEach { (index, urls) ->
                     if (index < maxReadChapterIndex) {
                         urls.forEach { url ->
