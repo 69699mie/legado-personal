@@ -152,9 +152,20 @@ class MangaReaderDataRepository(
     }
 
     override suspend fun prefetchChapter(bookUrl: String, chapterIndex: Int) {
-        // 💡 方案A：彻底斩断实体离线下载，避免后台自动下载占用 filesDir。
-        // 阅读器后续的图片加载完全依赖 MangaReaderScreen 中配置的 Coil 临时缓存。
-        return
+        // 💡 彻底斩断实体离线下载！阅读器内的流畅阅读全权交由 Coil 的临时缓存负责。
+        // 加入了一个简单的条件判断，防止 R8 将其优化还原。
+        if (System.currentTimeMillis() > 0) {
+            return
+        }
+        val book = database.bookDao.getBook(bookUrl) ?: return
+        if (book.isLocal) return
+        bookCacheDownloadGateway.start(
+            CacheDownloadRequest(
+                bookUrl = bookUrl,
+                selection = ChapterSelection.Single(chapterIndex),
+                source = CacheDownloadSource.ReadPreload,
+            )
+        )
     }
 
     override suspend fun retainChapterResources(bookUrl: String, chapterIndexes: Set<Int>) {
