@@ -18,17 +18,27 @@ class CacheDownloadStateStore {
         runningIndices: Set<Int>,
         pausedIndices: Set<Int> = emptySet(),
     ) {
-        updateBook(bookUrl) { current ->
-            current.copy(
-                waitingCount = waitingCount,
-                runningIndices = runningIndices,
-                pausedIndices = pausedIndices,
-                failureMessage = if (waitingCount > 0 || runningIndices.isNotEmpty() || pausedIndices.isNotEmpty()) {
-                    null
-                } else {
-                    current.failureMessage
-                },
-            )
+        _stateFlow.update { state ->
+            val current = state.books[bookUrl] ?: CacheBookDownloadState(bookUrl)
+            
+            // 💡 终极过滤：如果没在等待、没在下载、没暂停，且成功缓存数量为 0，且没有报错
+            // 说明这就是一个彻头彻尾的空壳（比如幽灵预读残留），直接物理剔除！
+            if (waitingCount == 0 && runningIndices.isEmpty() && pausedIndices.isEmpty() && 
+                current.successCount == 0 && current.failureMessage == null) {
+                state.copy(books = state.books - bookUrl).recalculate()
+            } else {
+                val next = current.copy(
+                    waitingCount = waitingCount,
+                    runningIndices = runningIndices,
+                    pausedIndices = pausedIndices,
+                    failureMessage = if (waitingCount > 0 || runningIndices.isNotEmpty() || pausedIndices.isNotEmpty()) {
+                        null
+                    } else {
+                        current.failureMessage
+                    },
+                )
+                state.copy(books = state.books + (bookUrl to next)).recalculate()
+            }
         }
     }
 
