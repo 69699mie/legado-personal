@@ -21,6 +21,7 @@ import io.legado.app.utils.LogUtils
 import io.legado.app.utils.onEachParallel
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.GlobalScope
 import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.currentCoroutineContext
@@ -36,6 +37,7 @@ import kotlinx.coroutines.flow.onCompletion
 import kotlinx.coroutines.flow.onStart
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.isActive
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
@@ -177,6 +179,23 @@ object CacheBook {
 
     private val successDownloadCount = AtomicInteger(0)
 
+    // 💡 启动清道夫：清理掉历史残留的 0 进度空壳
+    init {
+        GlobalScope.launch(Dispatchers.IO) {
+            delay(2000)
+            val state = stateStore.state
+            state.books.forEach { bookState ->
+                // 如果这本书进度为 0，且没有在下载中、没有在等待中，说明是个死壳
+                if (bookState.cachedIndices.isEmpty() && bookState.runningIndices.isEmpty() && bookState.waitingCount == 0) {
+                    val model = cacheBookMap[bookState.bookUrl]
+                    if (model == null || (!model.isRun() && !model.hasQueuedDownloads())) {
+                        stateStore.removeBook(bookState.bookUrl)
+                    }
+                }
+            }
+        }
+    }
+
     val cacheBookMap: ConcurrentHashMap<String, CacheBookModel>
         get() = coordinator.taskMap
 
@@ -291,8 +310,7 @@ object CacheBook {
     }
 
     fun start(context: Context, request: CacheDownloadRequest, isLocal: Boolean = false) {
-        // 💡 终极拦截：彻底拒绝一切来自阅读器预读的实体下载请求！
-        // 只要来源是 ReadPreload，连启动 Service 的资格都没有，彻底杜绝幽灵列表。
+        // 💡 拦截：彻底拒绝预读实体下载
         if (request.source == CacheDownloadSource.ReadPreload) {
             return
         }
@@ -312,7 +330,7 @@ object CacheBook {
         val validRequests = requests.filter { it.hasValidSelection() }
         if (validRequests.isEmpty()) return@withContext
         
-        // 💡 批量请求也过滤掉预读
+        // 💡 拦截：批量请求过滤预读
         val filteredRequests = validRequests.filter { it.source != CacheDownloadSource.ReadPreload }
         if (filteredRequests.isEmpty()) return@withContext
         
