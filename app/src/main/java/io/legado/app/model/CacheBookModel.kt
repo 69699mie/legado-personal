@@ -33,7 +33,6 @@ class CacheBookModel(
 ) {
 
     private companion object {
-        /** Download timeout: 2 minutes */
         const val DOWNLOAD_TIMEOUT_MS = 120_000L
     }
 
@@ -271,8 +270,7 @@ class CacheBookModel(
     }
 
     fun addRequest(request: CacheDownloadRequest) {
-        // 💡 终极防线：彻底拒绝预读任务进入 CacheBook 实体队列！
-        // 只要来源是 ReadPreload，直接丢弃，绝不允许写入 filesDir。
+        // 💡 终极防线 1：彻底拒绝预读任务进入 CacheBook 实体队列！
         if (request.source == CacheDownloadSource.ReadPreload) {
             return
         }
@@ -303,7 +301,6 @@ class CacheBookModel(
                 }
             }
             queue.enqueue(request)
-            // 单章/少量章节提到队首，避免排在失败重试之后；大 Range 保持懒游标
             when (val selection = request.selection) {
                 is ChapterSelection.Single -> queue.prioritize(selection.index)
                 is ChapterSelection.Indices -> {
