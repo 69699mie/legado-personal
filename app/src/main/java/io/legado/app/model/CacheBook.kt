@@ -732,13 +732,28 @@ object CacheBook {
 
     private fun notifyTaskQueuesChanged(bookUrl: String) {
         cacheBookMap[bookUrl]?.let { model ->
+            val waitingCount = model.queueCounts().first
+            val runningIndices = model.downloadingIndices()
+            val pausedIndices = model.pausedIndices()
+            val isLoading = model.isLoading()
+            
+            val successCount = stateStore.bookState(bookUrl)?.successCount ?: 0
+            
+            if (waitingCount == 0 && runningIndices.isEmpty() && pausedIndices.isEmpty() && !isLoading && successCount == 0) {
+                cacheBookMap.remove(bookUrl)
+                stateStore.removeBook(bookUrl)
+                updateSummary()
+                _queueChangedFlow.tryEmit(bookUrl)
+                return
+            }
+            
             stateStore.updateBookQueue(
                 bookUrl = bookUrl,
-                waitingCount = model.queueCounts().first,
-                runningIndices = model.downloadingIndices(),
-                pausedIndices = model.pausedIndices(),
+                waitingCount = waitingCount,
+                runningIndices = runningIndices,
+                pausedIndices = pausedIndices,
             )
-            _downloadingIndicesFlow.tryEmit(bookUrl to model.downloadingIndices())
+            _downloadingIndicesFlow.tryEmit(bookUrl to runningIndices)
             _downloadErrorFlow.tryEmit(bookUrl to errorIndices(bookUrl))
         }
         updateSummary()
