@@ -153,9 +153,6 @@ private const val WEBTOON_DOUBLE_TAP_ZOOM = 2.5f
 private const val MIN_PAGE_ZOOM = 1f
 private const val MAX_PAGE_ZOOM = 3f
 
-/**
- * 放大后的平移边界：横向限制在单页宽度溢出的范围内，纵向限制在放大后的内容高度内。
- */
 internal fun clampZoomPan(
     target: Offset,
     zoom: Float,
@@ -428,7 +425,7 @@ private fun MangaChapterImagePrefetch(
         prefetch.update(pages.keys.toList()) { key ->
             val page = pages.getValue(key)
             try {
-                // 💡 修复核心：预加载不传 fileOwner，直接走 Coil 缓存，不落盘！
+                // 💡 预加载不传 fileOwner
                 val result = imageLoader.execute(
                     page.imageRequest(
                         settings = state.settings,
@@ -446,12 +443,6 @@ private fun MangaChapterImagePrefetch(
     }
 }
 
-/**
- * 把预加载列表按「距离锚点的绝对距离」升序重排。
- *
- * 锚点是 state.pages 里的下标；预加载项的 key 与 state.pages 项 key 一致，
- * 因此可以精确算出距离。
- */
 private fun prioritizePrefetchByDistance(
     pages: List<MangaReaderItemUi.Page>,
     anchor: Int,
@@ -1470,8 +1461,8 @@ private fun MangaPageImage(
         )
     }
     
-    // 💡 修复：完全剥离实体落盘，取消 fileOwner 的创建
-    val fileOwner = null 
+    // 💡 保留 fileOwner 实例以满足 UI 组件的签名要求
+    val fileOwner = remember(imagePipelineKey) { MangaImageFileOwner() }
     
     var webtoonImageDisplayed by remember(imagePipelineKey) { mutableStateOf(false) }
     var webtoonResult by remember(imagePipelineKey) { mutableStateOf<SuccessResult?>(null) }
@@ -1480,7 +1471,7 @@ private fun MangaPageImage(
             settings = settings,
             context = context,
             decodeSize = decodeSize,
-            fileOwner = fileOwner, // 传 null
+            fileOwner = null, // 💡 修复：传 null，阻止 CoverInterceptor 触发落盘
             onFileTransfer = {
                 onIntent(
                     MangaReaderIntent.PageLoadStarted(
@@ -1521,7 +1512,7 @@ private fun MangaPageImage(
                     sourceOrigin = settings.sourceOrigin,
                     fallbackColor = settings.backgroundColor,
                     aspectRatio = imageRatio,
-                    fileOwner = fileOwner,
+                    fileOwner = null, // 💡 不传 fileOwner
                 ) { colors ->
                     automaticBackgrounds[page.key] = colors
                 },
