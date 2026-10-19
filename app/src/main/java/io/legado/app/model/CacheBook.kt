@@ -21,7 +21,6 @@ import io.legado.app.utils.LogUtils
 import io.legado.app.utils.onEachParallel
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.GlobalScope
 import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.currentCoroutineContext
@@ -37,7 +36,6 @@ import kotlinx.coroutines.flow.onCompletion
 import kotlinx.coroutines.flow.onStart
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.isActive
-import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
@@ -179,23 +177,6 @@ object CacheBook {
 
     private val successDownloadCount = AtomicInteger(0)
 
-    // 💡 启动清道夫：清理掉历史残留的 0 进度空壳
-    init {
-        GlobalScope.launch(Dispatchers.IO) {
-            delay(2000)
-            val state = stateStore.state
-            state.books.forEach { bookState ->
-                // 如果这本书进度为 0，且没有在下载中、没有在等待中，说明是个死壳
-                if (bookState.cachedIndices.isEmpty() && bookState.runningIndices.isEmpty() && bookState.waitingCount == 0) {
-                    val model = cacheBookMap[bookState.bookUrl]
-                    if (model == null || (!model.isRun() && !model.hasQueuedDownloads())) {
-                        stateStore.removeBook(bookState.bookUrl)
-                    }
-                }
-            }
-        }
-    }
-
     val cacheBookMap: ConcurrentHashMap<String, CacheBookModel>
         get() = coordinator.taskMap
 
@@ -310,7 +291,6 @@ object CacheBook {
     }
 
     fun start(context: Context, request: CacheDownloadRequest, isLocal: Boolean = false) {
-        // 💡 拦截：彻底拒绝预读实体下载
         if (request.source == CacheDownloadSource.ReadPreload) {
             return
         }
@@ -330,7 +310,6 @@ object CacheBook {
         val validRequests = requests.filter { it.hasValidSelection() }
         if (validRequests.isEmpty()) return@withContext
         
-        // 💡 拦截：批量请求过滤预读
         val filteredRequests = validRequests.filter { it.source != CacheDownloadSource.ReadPreload }
         if (filteredRequests.isEmpty()) return@withContext
         
@@ -751,15 +730,34 @@ object CacheBook {
 
     private fun Int?.orZero(): Int = this ?: 0
 
+    // 💡 核心修改点：在 UI 状态更新时，过滤掉没有任何实际动作和缓存的“空壳”
     private fun notifyTaskQueuesChanged(bookUrl: String) {
-        cacheBookMap[bookUrl]?.let { model ->
+        val model = cacheBookMap[bookUrl]
+        if (model != null) {
+            val waitingCount = model.queueCounts().first
+            val runningIndices = model.downloadingIndices()
+            val pausedIndices = model.pausedIndices()
+            val isLoading = model.isLoading()
+            
+            // 获取现有已经缓存成功的章节（如果有的话）
+            val cachedIndices = stateStore.bookState(bookUrl)?.cachedIndices ?: emptySet()
+            
+            // 💡 判定：如果没在等待、没在下载、没暂停、没加载，且一个章节都没缓存（0/256），直接剔除！
+            if (waitingCount == 0 && runningIndices.isEmpty() && pausedIndices.isEmpty() && !isLoading && cachedIndices.isEmpty()) {
+                cacheBookMap.remove(bookUrl)
+                stateStore.removeBook(bookUrl)
+                updateSummary()
+                _queueChangedFlow.tryEmit(bookUrl)
+                return
+            }
+            
             stateStore.updateBookQueue(
                 bookUrl = bookUrl,
-                waitingCount = model.queueCounts().first,
-                runningIndices = model.downloadingIndices(),
-                pausedIndices = model.pausedIndices(),
+                waitingCount = waitingCount,
+                runningIndices = runningIndices,
+                pausedIndices = pausedIndices,
             )
-            _downloadingIndicesFlow.tryEmit(bookUrl to model.downloadingIndices())
+            _downloadingIndicesFlow.tryEmit(bookUrl to runningIndices)
             _downloadErrorFlow.tryEmit(bookUrl to errorIndices(bookUrl))
         }
         updateSummary()
