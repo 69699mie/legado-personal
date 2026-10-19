@@ -730,34 +730,15 @@ object CacheBook {
 
     private fun Int?.orZero(): Int = this ?: 0
 
-    // 💡 核心修改点：在 UI 状态更新时，过滤掉没有任何实际动作和缓存的“空壳”
     private fun notifyTaskQueuesChanged(bookUrl: String) {
-        val model = cacheBookMap[bookUrl]
-        if (model != null) {
-            val waitingCount = model.queueCounts().first
-            val runningIndices = model.downloadingIndices()
-            val pausedIndices = model.pausedIndices()
-            val isLoading = model.isLoading()
-            
-            // 获取现有已经缓存成功的章节（如果有的话）
-            val cachedIndices = stateStore.bookState(bookUrl)?.cachedIndices ?: emptySet()
-            
-            // 💡 判定：如果没在等待、没在下载、没暂停、没加载，且一个章节都没缓存（0/256），直接剔除！
-            if (waitingCount == 0 && runningIndices.isEmpty() && pausedIndices.isEmpty() && !isLoading && cachedIndices.isEmpty()) {
-                cacheBookMap.remove(bookUrl)
-                stateStore.removeBook(bookUrl)
-                updateSummary()
-                _queueChangedFlow.tryEmit(bookUrl)
-                return
-            }
-            
+        cacheBookMap[bookUrl]?.let { model ->
             stateStore.updateBookQueue(
                 bookUrl = bookUrl,
-                waitingCount = waitingCount,
-                runningIndices = runningIndices,
-                pausedIndices = pausedIndices,
+                waitingCount = model.queueCounts().first,
+                runningIndices = model.downloadingIndices(),
+                pausedIndices = model.pausedIndices(),
             )
-            _downloadingIndicesFlow.tryEmit(bookUrl to runningIndices)
+            _downloadingIndicesFlow.tryEmit(bookUrl to model.downloadingIndices())
             _downloadErrorFlow.tryEmit(bookUrl to errorIndices(bookUrl))
         }
         updateSummary()
