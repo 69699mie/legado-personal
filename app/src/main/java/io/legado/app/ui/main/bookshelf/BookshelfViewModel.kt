@@ -721,11 +721,6 @@ class BookshelfViewModel(
             themeColor = themeSettings.themeColor,
             pendingUploadUrl = pendingUploadUrl,
         )
-        // 常驻订阅：进入阅读页后 UI 停止收集，若让上游在超时后停掉，返回书架的前几帧
-        // 读到的仍是「阅读前」那一版排序，等 Room 重新查询到达再跳一次，重排就发生在
-        // 书架已经可见之后。管道挂在 viewModelScope（ViewModel 随返回栈条目存活），
-        // 因此返回首帧即是最新排序。与 komikku 的 LibraryScreenModel 同思路：
-        // 状态管道由 ScreenModel/ViewModel 自己持有，不随 UI 订阅启停。
     }.stateIn(
         viewModelScope,
         SharingStarted.Eagerly,
