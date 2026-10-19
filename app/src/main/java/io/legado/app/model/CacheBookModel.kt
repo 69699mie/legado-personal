@@ -159,11 +159,6 @@ class CacheBookModel(
                 )
     }
 
-    /**
-     * 是否占用下载槽：正文/图片进行中、加载目录、或失败重试退避中。
-     * 不含仅 waiting——独占 FIFO 下后续书会带着 waiting 干等，不能据此判定「正在下载」。
-     * 用于恢复时是否 [moveToTail]：有其它书占槽则队尾，否则队首。
-     */
     @Synchronized
     fun hasInFlightDownloads(): Boolean {
         return waitingRetry || (
@@ -175,14 +170,6 @@ class CacheBookModel(
                 )
     }
 
-    /**
-     * 有可启动的下载任务（队列中有待下载章节或正在加载目录）。
-     * 与 [hasRunnableDownloads] 不同，不包含已在执行中的任务。
-     * 用于判断是否需要向下载循环 emit 模型，避免无新章节可取时的高频空转。
-     *
-     * 注意：多书 FIFO 选「独占队首」必须用 [hasRunnableDownloads]（或重试中），
-     * 不能用本方法——否则并发下图时 waiting 暂时为空会跳过当前书去调度下一本。
-     */
     @Synchronized
     fun hasLaunchableChapters(): Boolean {
         return !isPaused && (queue.hasLaunchableChapter(onDownloadSet) || isLoading)
@@ -211,8 +198,6 @@ class CacheBookModel(
         isPaused = true
         isLoading = false
         waitingRetry = false
-        // 整书暂停：进行中与等待中的章节都移出调度队列，转入单章暂停集合。
-        // onCancel 使用 requeue=false，避免与超时/失败路径双重入队。
         onDownloadSet.toList().forEach { index ->
             canceledDownloadSet.add(index)
             pausedChapterSet.add(index)
@@ -286,18 +271,19 @@ class CacheBookModel(
     }
 
     fun addRequest(request: CacheDownloadRequest) {
+        // 💡 终极防线：彻底拒绝预读任务进入 CacheBook 实体队列！
+        // 只要来源是 ReadPreload，直接丢弃，绝不允许写入 filesDir。
+        if (request.source == CacheDownloadSource.ReadPreload) {
+            return
+        }
+
         val enqueueExplicit = request.source != CacheDownloadSource.ReadPreload
-        // 先入 FIFO，再暴露可调度章节。若反过来，冷启动多书并行准入时会出现：
-        // 已在 taskMap 且 waiting>0、尚未 ensure → processJob 当成非 FIFO 预下载并行。
-        // 锁序：仅 fifo → 释放 → model，与 startProcessJob（fifo snapshot 后调 model）不 ABBA。
         if (enqueueExplicit) {
             host.onExplicitBookQueued(book.bookUrl)
         }
         synchronized(this) {
             isStopped = false
             val selected = selectionIndices(request.selection)
-            // An explicit request resumes only its selected chapters. Reader preloads must not
-            // override a user's pause for this book or the global download queue.
             if (isPaused && request.source != CacheDownloadSource.ReadPreload) {
                 releaseBookPauseKeepingOnly(selected)
                 isPaused = false
@@ -457,7 +443,6 @@ class CacheBookModel(
     fun resumeDownload(index: Int): Boolean {
         val fromChapterPause = pausedChapterSet.remove(index)
         val bookPaused = isPaused
-        // 整书暂停时 isPaused(index) 对等待中章节为 true，但章节不在 pausedChapterSet
         if (!fromChapterPause && !bookPaused) return false
         if (bookPaused) {
             releaseBookPauseKeepingOnly(setOf(index))
@@ -471,9 +456,6 @@ class CacheBookModel(
         return true
     }
 
-    /**
-     * 解除整书暂停：仅 [keepRunnable] 留在等待队列，其余等待章转入单章暂停。
-     */
     private fun releaseBookPauseKeepingOnly(keepRunnable: Set<Int>) {
         if (!isPaused) return
         for (idx in queue.waitingIndices()) {
@@ -493,9 +475,6 @@ class CacheBookModel(
         }
     }
 
-    /**
-     * 从待下载列表内取第一条下载
-     */
     fun download(scope: CoroutineScope, context: CoroutineContext) {
         val candidate = nextDownloadCandidate() ?: return
         val chapterIndex = candidate.chapterIndex
@@ -621,7 +600,6 @@ class CacheBookModel(
     ) {
         task.onSuccess(IO) {
             synchronized(this@CacheBookModel) {
-                // 与 addRequest 共用锁：用途复核和完成提交之间不能插入新的显式请求。
                 val explicitDownload = queue.isExplicitDownload(chapterIndex)
                 if ((chainImagesAfterContent || explicitDownload) &&
                     !repository.hasImageContent(book, chapter, explicitDownload)) {
@@ -642,7 +620,6 @@ class CacheBookModel(
             }
             emitPendingReadError(chapter, it)
         }.onCancel(IO) {
-            // 失败重试由 onError 入队；主动暂停由 pause/pauseDownload 入队或标记 canceled
             onCancel(chapterIndex, requeue = false)
             emitPendingReadCanceled(chapter)
         }.onFinally(IO) {
@@ -779,13 +756,10 @@ class CacheBookModel(
         preserveReadAloudPosition: Boolean = false,
     ): Boolean {
         if (!markChapterDownloadStarted(chapter.index)) {
-            // Chapter is already in onDownloadSet. Check if the task is actually alive.
             val hasLiveTask = synchronized(this) {
                 chapterTasks.containsKey(chapter.index)
             }
             if (!hasLiveTask) {
-                // Stale entry: onDownloadSet has the index but no live task.
-                // Clean up and retry.
                 synchronized(this) {
                     onDownloadSet.remove(chapter.index)
                 }
@@ -818,7 +792,6 @@ class CacheBookModel(
             semaphore = semaphore
         ).timeout(DOWNLOAD_TIMEOUT_MS)
         task.onSuccess { content ->
-            // 正文先交给阅读器；缓存成功态等图片完成后再标记
             downloadFinish(
                 chapter,
                 content,
@@ -837,7 +810,6 @@ class CacheBookModel(
                 onError(chapter, e)
                 ReadBook.downloadFailChapters[chapter.index] =
                     (ReadBook.downloadFailChapters[chapter.index] ?: 0) + 1
-                // 不覆盖已展示的正文
             }
         }.onError {
             onError(chapter, it)
