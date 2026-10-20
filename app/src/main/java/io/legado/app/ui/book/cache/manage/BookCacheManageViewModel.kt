@@ -175,7 +175,6 @@ class BookCacheManageViewModel(
         }
         viewModelScope.launch {
             CacheBook.cacheSuccessFlow.collect { chapter ->
-                // 增量标记已缓存，避免每成功一章就重新扫描全部章节缓存
                 markChapterCachedInUi(chapter.bookUrl, chapter.index)
             }
         }
@@ -192,11 +191,9 @@ class BookCacheManageViewModel(
                     if (hasActivity) {
                         scheduleProgressUpdate(bookUrl, debounceMillis = 100)
                     } else {
-                        // 排队/暂停/结束：只刷内存运行时态；isCached 由 cacheSuccessFlow 增量校正
                         scheduleRuntimeStatusRefresh(bookUrl)
                     }
                 }
-                // 从 state 移除的书也要刷掉运行时角标
                 prev.keys.forEach { bookUrl ->
                     if (!state.books.containsKey(bookUrl)) {
                         scheduleRuntimeStatusRefresh(bookUrl)
@@ -286,7 +283,6 @@ class BookCacheManageViewModel(
         val shouldRefreshSummary = pendingDownloadSummaryRefresh || bookUrls.isNotEmpty()
         pendingDownloadSummaryRefresh = false
         if (bookUrls.isNotEmpty()) {
-            // 批量轻量刷新：只改内存中的排队/进度态，并对列表按 FIFO 重排
             updateRuntimeDownloadStatuses(bookUrls)
             return
         }
@@ -308,7 +304,6 @@ class BookCacheManageViewModel(
             if (debounceMillis > 0) {
                 delay(debounceMillis)
             }
-            // 进度刷新不重排列表，避免下载中 LazyColumn 频繁挪动项导致折叠/点击卡顿
             updateRuntimeDownloadStatuses(listOf(bookUrl), resort = false)
             if (bookReloadJobs[bookUrl] == currentCoroutineContext()[Job]) {
                 bookReloadJobs.remove(bookUrl)
@@ -316,7 +311,6 @@ class BookCacheManageViewModel(
         }
     }
 
-    /** 仅刷新运行时下载态（等待/下载中/暂停/进度），不扫磁盘、不重建章节缓存标记。 */
     private fun scheduleImmediateRuntimeStatusRefresh(bookUrl: String) {
         viewModelScope.launch {
             updateRuntimeDownloadStatuses(listOf(bookUrl), resort = true)
@@ -473,8 +467,9 @@ class BookCacheManageViewModel(
         )
     }
 
+    // 💡 核心修改：只根据 cachedCount 判断，无视残留的空文本文件
     private fun shouldShowItem(item: BookCacheBookItem): Boolean {
-        return item.cachedFileCount > 0 || item.hasDownloadTask || item.errorCount > 0
+        return item.cachedCount > 0 || item.hasDownloadTask || item.errorCount > 0
     }
 
     private suspend fun buildChapterItems(bookUrl: String): List<BookCacheChapterItem> {
@@ -551,7 +546,6 @@ class BookCacheManageViewModel(
     private fun toggleBookExpanded(bookUrl: String) {
         val shouldExpand = !_uiState.value.expandedBookUrls.contains(bookUrl)
         if (!shouldExpand) {
-            // 折叠立即生效，并取消进行中的章节列表构建，避免扫盘结果回写抢主线程
             bookReloadJobs.remove(bookUrl)?.cancel()
             chapterLoadJobs.remove(bookUrl)?.cancel()
             _uiState.update { state ->
@@ -598,7 +592,6 @@ class BookCacheManageViewModel(
         execute {
             CacheBook.pause(context)
         }.onFinally {
-            // 勿 forceDatabase 全量重载：展开章列表扫盘会卡住折叠/启停
             refreshAllRuntimeDownloadStatuses()
         }
     }
@@ -614,7 +607,6 @@ class BookCacheManageViewModel(
     private fun startAllDownloads() {
         val items = uiState.value.shelfBooks + uiState.value.notShelfBooks
         execute {
-            // FAB 一键开始：先全局解冻所有已在任务里的书/章；无任务时再为全部缺章书入队
             if (CacheBook.resume(context)) {
                 return@execute null
             }
@@ -742,7 +734,6 @@ class BookCacheManageViewModel(
                         progress = chapterProgress,
                     )
                     item.copy(
-                        // 进行中强制未缓存；完成后由 markChapterCachedInUi 校正 isCached/cachedCount
                         isCached = if (isDownloading || isWaiting || isPaused) false else item.isCached,
                         isWaiting = isWaiting,
                         isDownloading = isDownloading,
