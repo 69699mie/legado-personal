@@ -2,6 +2,7 @@ package io.legado.app.model
 
 import android.content.Context
 import android.content.Intent
+import android.util.Log
 import androidx.core.content.ContextCompat
 import io.legado.app.constant.IntentAction
 import io.legado.app.data.appDb
@@ -291,10 +292,10 @@ object CacheBook {
     }
 
     fun start(context: Context, request: CacheDownloadRequest, isLocal: Boolean = false) {
-        if (request.source == CacheDownloadSource.ReadPreload) {
-            return
-        }
-        
+        // 💡 追踪器 1：抓取是谁在调起下载服务
+        Log.e("GhostDebug", "CacheBook.start called: book=${request.bookUrl}, source=${request.source}")
+        Thread.dumpStack()
+
         if (isLocal) return
         if (!request.hasValidSelection()) return
         if (request.source != io.legado.app.model.cache.CacheDownloadSource.ReadPreload) {
@@ -310,23 +311,24 @@ object CacheBook {
         val validRequests = requests.filter { it.hasValidSelection() }
         if (validRequests.isEmpty()) return@withContext
         
-        val filteredRequests = validRequests.filter { it.source != CacheDownloadSource.ReadPreload }
-        if (filteredRequests.isEmpty()) return@withContext
-        
-        val urls = filteredRequests.map { it.bookUrl }.toSet()
+        val urls = validRequests.map { it.bookUrl }.toSet()
         val localBookUrls = appDb.bookDao.getCacheableBooks(urls)
             .filter { it.isLocal }
             .map { it.bookUrl }
             .toSet()
 
-        val finalRequests = filteredRequests.filterNot { it.bookUrl in localBookUrls }
+        val finalRequests = validRequests.filterNot { it.bookUrl in localBookUrls }
         if (finalRequests.isEmpty()) return@withContext
 
-        if (filteredRequests.any { it.source != io.legado.app.model.cache.CacheDownloadSource.ReadPreload }) {
+        if (validRequests.any { it.source != io.legado.app.model.cache.CacheDownloadSource.ReadPreload }) {
             isPaused = false
         }
         
         finalRequests.forEach { request ->
+            // 💡 追踪器 1（批量）：抓取是谁在调起下载服务
+            Log.e("GhostDebug", "CacheBook.start(batch) called: book=${request.bookUrl}, source=${request.source}")
+            Thread.dumpStack()
+            
             startCacheBookService(context) {
                 action = IntentAction.start
                 putRequestExtras(request)
@@ -732,28 +734,13 @@ object CacheBook {
 
     private fun notifyTaskQueuesChanged(bookUrl: String) {
         cacheBookMap[bookUrl]?.let { model ->
-            val waitingCount = model.queueCounts().first
-            val runningIndices = model.downloadingIndices()
-            val pausedIndices = model.pausedIndices()
-            val isLoading = model.isLoading()
-            
-            val successCount = stateStore.bookState(bookUrl)?.successCount ?: 0
-            
-            if (waitingCount == 0 && runningIndices.isEmpty() && pausedIndices.isEmpty() && !isLoading && successCount == 0) {
-                cacheBookMap.remove(bookUrl)
-                stateStore.removeBook(bookUrl)
-                updateSummary()
-                _queueChangedFlow.tryEmit(bookUrl)
-                return
-            }
-            
             stateStore.updateBookQueue(
                 bookUrl = bookUrl,
-                waitingCount = waitingCount,
-                runningIndices = runningIndices,
-                pausedIndices = pausedIndices,
+                waitingCount = model.queueCounts().first,
+                runningIndices = model.downloadingIndices(),
+                pausedIndices = model.pausedIndices(),
             )
-            _downloadingIndicesFlow.tryEmit(bookUrl to runningIndices)
+            _downloadingIndicesFlow.tryEmit(bookUrl to model.downloadingIndices())
             _downloadErrorFlow.tryEmit(bookUrl to errorIndices(bookUrl))
         }
         updateSummary()
