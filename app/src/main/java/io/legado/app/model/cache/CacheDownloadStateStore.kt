@@ -18,27 +18,17 @@ class CacheDownloadStateStore {
         runningIndices: Set<Int>,
         pausedIndices: Set<Int> = emptySet(),
     ) {
-        _stateFlow.update { state ->
-            val current = state.books[bookUrl] ?: CacheBookDownloadState(bookUrl)
-            
-            // 💡 终极过滤：如果没在等待、没在下载、没暂停，且成功缓存数量为 0，且没有报错
-            // 说明这就是一个彻头彻尾的空壳（比如幽灵预读残留），直接物理剔除！
-            if (waitingCount == 0 && runningIndices.isEmpty() && pausedIndices.isEmpty() && 
-                current.successCount == 0 && current.failureMessage == null) {
-                state.copy(books = state.books - bookUrl).recalculate()
-            } else {
-                val next = current.copy(
-                    waitingCount = waitingCount,
-                    runningIndices = runningIndices,
-                    pausedIndices = pausedIndices,
-                    failureMessage = if (waitingCount > 0 || runningIndices.isNotEmpty() || pausedIndices.isNotEmpty()) {
-                        null
-                    } else {
-                        current.failureMessage
-                    },
-                )
-                state.copy(books = state.books + (bookUrl to next)).recalculate()
-            }
+        updateBook(bookUrl) { current ->
+            current.copy(
+                waitingCount = waitingCount,
+                runningIndices = runningIndices,
+                pausedIndices = pausedIndices,
+                failureMessage = if (waitingCount > 0 || runningIndices.isNotEmpty() || pausedIndices.isNotEmpty()) {
+                    null
+                } else {
+                    current.failureMessage
+                },
+            )
         }
     }
 
@@ -140,7 +130,17 @@ class CacheDownloadStateStore {
     ) {
         _stateFlow.update { state ->
             val current = state.books[bookUrl] ?: CacheBookDownloadState(bookUrl)
-            state.copy(books = state.books + (bookUrl to transform(current))).recalculate()
+            val next = transform(current)
+            // 💡 绝对防御：在底层更新入口直接过滤。
+            // 如果没有等待任务、没有运行、没有暂停、没有成功/失败记录、且没有任何进度，
+            // 说明它就是一个幽灵空壳，直接物理剔除，绝不暴露给 UI。
+            if (next.waitingCount == 0 && next.runningIndices.isEmpty() && next.pausedIndices.isEmpty() &&
+                next.successCount == 0 && next.failedIndices.isEmpty() && next.failureMessage == null && next.chapterProgress.isEmpty()
+            ) {
+                state.copy(books = state.books - bookUrl).recalculate()
+            } else {
+                state.copy(books = state.books + (bookUrl to next)).recalculate()
+            }
         }
     }
 
