@@ -291,6 +291,7 @@ object CacheBook {
     }
 
     fun start(context: Context, request: CacheDownloadRequest, isLocal: Boolean = false) {
+        // 💡 彻底拒绝阅读器预读产生的实体下载
         if (request.source == CacheDownloadSource.ReadPreload) {
             return
         }
@@ -310,6 +311,7 @@ object CacheBook {
         val validRequests = requests.filter { it.hasValidSelection() }
         if (validRequests.isEmpty()) return@withContext
         
+        // 💡 批量请求过滤预读
         val filteredRequests = validRequests.filter { it.source != CacheDownloadSource.ReadPreload }
         if (filteredRequests.isEmpty()) return@withContext
         
@@ -732,28 +734,13 @@ object CacheBook {
 
     private fun notifyTaskQueuesChanged(bookUrl: String) {
         cacheBookMap[bookUrl]?.let { model ->
-            val waitingCount = model.queueCounts().first
-            val runningIndices = model.downloadingIndices()
-            val pausedIndices = model.pausedIndices()
-            val isLoading = model.isLoading()
-            
-            val successCount = stateStore.bookState(bookUrl)?.successCount ?: 0
-            
-            if (waitingCount == 0 && runningIndices.isEmpty() && pausedIndices.isEmpty() && !isLoading && successCount == 0) {
-                cacheBookMap.remove(bookUrl)
-                stateStore.removeBook(bookUrl)
-                updateSummary()
-                _queueChangedFlow.tryEmit(bookUrl)
-                return
-            }
-            
             stateStore.updateBookQueue(
                 bookUrl = bookUrl,
-                waitingCount = waitingCount,
-                runningIndices = runningIndices,
-                pausedIndices = pausedIndices,
+                waitingCount = model.queueCounts().first,
+                runningIndices = model.downloadingIndices(),
+                pausedIndices = model.pausedIndices(),
             )
-            _downloadingIndicesFlow.tryEmit(bookUrl to runningIndices)
+            _downloadingIndicesFlow.tryEmit(bookUrl to model.downloadingIndices())
             _downloadErrorFlow.tryEmit(bookUrl to errorIndices(bookUrl))
         }
         updateSummary()
