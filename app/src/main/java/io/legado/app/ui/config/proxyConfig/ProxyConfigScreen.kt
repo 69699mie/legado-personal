@@ -21,7 +21,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.input.nestedscroll.nestedScroll
-import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import io.legado.app.R
@@ -32,7 +31,6 @@ import io.legado.app.ui.widget.components.alert.AppAlertDialog
 import io.legado.app.ui.widget.components.button.series.MediumOutlinedButton
 import io.legado.app.ui.widget.components.button.series.MediumTonalButton
 import io.legado.app.ui.widget.components.card.NormalCard
-import io.legado.app.ui.widget.components.settingItem.ClickableSettingItem
 import io.legado.app.ui.widget.components.settingItem.DropdownListSettingItem
 import io.legado.app.ui.widget.components.settingItem.InputSettingItem
 import io.legado.app.ui.widget.components.text.AppText
@@ -70,7 +68,7 @@ fun ProxyConfigScreen(
             ),
             verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
-            items(sources, key = { it.source.bookSourceUrl }) { item ->
+            items(sources, key = { it.url }) { item ->
                 NormalCard(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -85,9 +83,9 @@ fun ProxyConfigScreen(
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Column(modifier = Modifier.weight(1f)) {
-                            AppText(text = item.source.bookSourceName, style = MaterialTheme.typography.titleMedium)
+                            AppText(text = item.name, style = MaterialTheme.typography.titleMedium)
                             AppText(
-                                text = item.source.bookSourceUrl,
+                                text = item.url,
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
@@ -111,12 +109,12 @@ fun ProxyConfigScreen(
                 viewModel.clearTestResult()
             },
             onSave = { config ->
-                viewModel.saveProxy(editingItem!!.source.bookSourceUrl, config)
+                viewModel.saveProxy(editingItem!!.url, config)
                 editingItem = null
                 viewModel.clearTestResult()
             },
             onTest = { config ->
-                viewModel.testProxy(editingItem!!.source.bookSourceUrl, config)
+                viewModel.testProxy(editingItem!!.url, config)
             }
         )
     }
@@ -143,7 +141,7 @@ private fun ProxyEditDialog(
     AppAlertDialog(
         show = true,
         onDismissRequest = onDismiss,
-        title = "代理设置: ${item.source.bookSourceName}",
+        title = "代理设置: ${item.name}",
         content = {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 DropdownListSettingItem(
@@ -174,7 +172,6 @@ private fun ProxyEditDialog(
                     onConfirm = { password = it }
                 )
                 
-                // 测试状态展示
                 if (testResult.isTesting) {
                     AppText("正在测试...", color = MaterialTheme.colorScheme.primary)
                 } else if (testResult.success != null) {
