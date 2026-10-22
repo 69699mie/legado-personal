@@ -236,3 +236,52 @@ fun getProxyClient(proxy: String? = null): OkHttpClient {
     }
     return okHttpClient
 }
+
+/**
+ * 👇 以下为新增方法
+ * 根据书源 URL 动态获取代理 Client
+ */
+fun getDynamicProxyClient(sourceUrl: String?, isManga: Boolean = false): OkHttpClient {
+    val baseClient = if (isManga) okHttpClientManga else okHttpClient
+    if (sourceUrl.isNullOrBlank()) return baseClient
+    
+    val config = io.legado.app.help.config.ProxyManager.getConfig(sourceUrl)
+    if (config == null || config.host.isBlank()) return baseClient
+    
+    val proxyStr = config.toUrlString()
+    if (proxyStr.isBlank()) return baseClient
+    
+    // 复用原有的代理构建逻辑
+    val proxyClient = getProxyClient(proxyStr)
+    
+    // 如果是漫画客户端，需要在代理 Client 的基础上加上漫画特有的拦截器
+    if (isManga) {
+        return proxyClient.newBuilder().run {
+            val interceptors = interceptors()
+            // 进度拦截器
+            interceptors.add(1) { chain ->
+                val request = chain.request()
+                val response = chain.proceed(request)
+                val url = request.tag(ProgressUrlTag::class.java)?.url ?: request.url.toString()
+                response.newBuilder()
+                    .body(ProgressResponseBody(url, LISTENER, response.body))
+                    .build()
+            }
+            // 并发限制拦截器
+            interceptors.add(1) { chain ->
+                ConcurrentRateLimiter(chain.request().tag(BaseSource::class.java)).withLimitBlocking {
+                    chain.proceed(chain.request())
+                }
+            }
+            build()
+        }
+    }
+    return proxyClient
+}
+
+/**
+ * 获取强制直连的 Client（用于回退）
+ */
+fun getDirectClient(isManga: Boolean = false): OkHttpClient {
+    return if (isManga) okHttpClientManga else okHttpClient
+}
