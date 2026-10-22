@@ -136,20 +136,7 @@ class CoverFetcher(
                         )
                         .build()
                     
-                    // === 修改点：加入异常捕获，用于回退直连 ===
-                    val networkResponse = try {
-                        callFactory.newCall(networkRequest).execute()
-                    } catch (e: Exception) {
-                        val isProxy = callFactory !== io.legado.app.help.http.getDirectClient(isManga)
-                        if (isProxy && (e is IOException || e is java.net.SocketTimeoutException)) {
-                            // 代理请求异常，回退直连
-                            io.legado.app.help.http.getDirectClient(isManga).newCall(networkRequest).execute()
-                        } else {
-                            throw e
-                        }
-                    }
-                    // =====================================
-
+                    val networkResponse = callFactory.newCall(networkRequest).execute()
                     val body = networkResponse.body
                     if (!networkResponse.isSuccessful) {
                         body.close()
@@ -241,11 +228,8 @@ class CoverFetcher(
 
             val isManga = options.extras[CoverExtras.Manga] == true
             val loadOnlyWifi = options.extras[CoverExtras.LoadOnlyWifi] == true
-            
-            // === 修改点：使用动态代理 Client ===
-            val source = options.extras[CoverExtras.Source]
-            val client = io.legado.app.help.http.getDynamicProxyClient(source?.getKey(), isManga)
-            // ==============================
+
+            val client = if (isManga) okHttpClientManga else okHttpClient
 
             return CoverFetcher(data.toString(), options, client, loadOnlyWifi)
         }
