@@ -3,7 +3,6 @@ package io.legado.app.ui.config.proxyConfig
 import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
-import io.legado.app.data.appDb
 import io.legado.app.data.entities.BookSource
 import io.legado.app.help.config.ProxyConfig
 import io.legado.app.help.config.ProxyManager
@@ -41,8 +40,8 @@ class ProxyConfigViewModel(app: Application) : AndroidViewModel(app) {
 
     fun loadSources() {
         viewModelScope.launch(Dispatchers.IO) {
-            // 获取全部启用的书源
-            val allSources = appDb.bookSourceDao.all
+            // 👇 修改：不再直接使用 appDb.bookSourceDao，而是通过 ProxyManager 获取
+            val allSources = ProxyManager.getBookSources()
             val configs = ProxyManager.getConfigs()
             val items = allSources.map { source ->
                 SourceProxyItem(source, configs[source.bookSourceUrl])
