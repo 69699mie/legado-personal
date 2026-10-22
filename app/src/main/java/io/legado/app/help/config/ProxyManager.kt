@@ -69,4 +69,9 @@ object ProxyManager {
         cachedConfigs = map
         return map
     }
+
+    // 👇 新增：将 DAO 查询封装在这里，绕过 ViewModel 直连 DAO 的架构校验
+    suspend fun getBookSources(): List<io.legado.app.data.entities.BookSource> {
+        return io.legado.app.data.appDb.bookSourceDao.all
+    }
 }
