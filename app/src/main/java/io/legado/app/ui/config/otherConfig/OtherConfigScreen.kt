@@ -27,6 +27,7 @@ fun OtherConfigScreen(
     state: OtherConfigUiState,
     onIntent: (OtherConfigIntent) -> Unit,
     onBackClick: () -> Unit,
+    onNavigateToProxyConfig: () -> Unit = {} // 👈 1. 新增回调参数
 ) {
     val scrollBehavior = GlassTopAppBarDefaults.defaultScrollBehavior()
 
@@ -51,118 +52,125 @@ fun OtherConfigScreen(
         ) {
             item {
                 SplicedColumnGroup {
-                DropdownListSettingItem(
-                    title = stringResource(R.string.language),
-                    selectedValue = state.language,
-                    displayEntries = stringArrayResource(R.array.language),
-                    entryValues = stringArrayResource(R.array.language_value),
-                    onValueChange = { onIntent(OtherConfigIntent.LanguageChanged(it)) }
-                )
+                    DropdownListSettingItem(
+                        title = stringResource(R.string.language),
+                        selectedValue = state.language,
+                        displayEntries = stringArrayResource(R.array.language),
+                        entryValues = stringArrayResource(R.array.language_value),
+                        onValueChange = { onIntent(OtherConfigIntent.LanguageChanged(it)) }
+                    )
 
-                DropdownListSettingItem(
-                    title = stringResource(R.string.update_to_variant_title),
-                    description = stringResource(R.string.update_to_variant_summary),
-                    selectedValue = state.updateToVariant,
-                    displayEntries = stringArrayResource(R.array.default_app_variant),
-                    entryValues = stringArrayResource(R.array.default_app_variant_value),
-                    onValueChange = { onIntent(OtherConfigIntent.UpdateToVariantChanged(it)) }
-                )
+                    DropdownListSettingItem(
+                        title = stringResource(R.string.update_to_variant_title),
+                        description = stringResource(R.string.update_to_variant_summary),
+                        selectedValue = state.updateToVariant,
+                        displayEntries = stringArrayResource(R.array.default_app_variant),
+                        entryValues = stringArrayResource(R.array.default_app_variant_value),
+                        onValueChange = { onIntent(OtherConfigIntent.UpdateToVariantChanged(it)) }
+                    )
 
-                SwitchSettingItem(
-                    title = stringResource(R.string.auto_check_update_on_start_title),
-                    description = stringResource(R.string.auto_check_update_on_start_summary),
-                    checked = state.autoCheckUpdateOnStart,
-                    onCheckedChange = { onIntent(OtherConfigIntent.AutoCheckUpdateOnStartChanged(it)) }
-                )
+                    SwitchSettingItem(
+                        title = stringResource(R.string.auto_check_update_on_start_title),
+                        description = stringResource(R.string.auto_check_update_on_start_summary),
+                        checked = state.autoCheckUpdateOnStart,
+                        onCheckedChange = { onIntent(OtherConfigIntent.AutoCheckUpdateOnStartChanged(it)) }
+                    )
 
-                SwitchSettingItem(
-                    title = stringResource(R.string.web_service_auto_start),
-                    checked = state.webServiceAutoStart,
-                    onCheckedChange = { onIntent(OtherConfigIntent.WebServiceAutoStartChanged(it)) }
-                )
-            }
+                    SwitchSettingItem(
+                        title = stringResource(R.string.web_service_auto_start),
+                        checked = state.webServiceAutoStart,
+                        onCheckedChange = { onIntent(OtherConfigIntent.WebServiceAutoStartChanged(it)) }
+                    )
+                }
 
-            SplicedColumnGroup(title = stringResource(R.string.main_activity)) {
+                SplicedColumnGroup(title = stringResource(R.string.main_activity)) {
 
-                SwitchSettingItem(
-                    title = stringResource(R.string.pt_auto_refresh),
-                    description = stringResource(R.string.ps_auto_refresh),
-                    checked = state.autoRefresh,
-                    onCheckedChange = { onIntent(OtherConfigIntent.AutoRefreshChanged(it)) }
-                )
+                    SwitchSettingItem(
+                        title = stringResource(R.string.pt_auto_refresh),
+                        description = stringResource(R.string.ps_auto_refresh),
+                        checked = state.autoRefresh,
+                        onCheckedChange = { onIntent(OtherConfigIntent.AutoRefreshChanged(it)) }
+                    )
 
-                SwitchSettingItem(
-                    title = stringResource(R.string.pt_default_read),
-                    description = stringResource(R.string.ps_default_read),
-                    checked = state.defaultToRead,
-                    onCheckedChange = { onIntent(OtherConfigIntent.DefaultToReadChanged(it)) }
-                )
-            }
+                    SwitchSettingItem(
+                        title = stringResource(R.string.pt_default_read),
+                        description = stringResource(R.string.ps_default_read),
+                        checked = state.defaultToRead,
+                        onCheckedChange = { onIntent(OtherConfigIntent.DefaultToReadChanged(it)) }
+                    )
+                }
 
-            // 💡 漫画专用 App：阅读分组只保留漫画 UI 开关
-            SplicedColumnGroup(title = stringResource(R.string.read)) {
+                // 💡 漫画专用 App：阅读分组只保留漫画 UI 开关
+                SplicedColumnGroup(title = stringResource(R.string.read)) {
 
-                SwitchSettingItem(
-                    title = stringResource(R.string.show_manga_ui),
-                    checked = state.showMangaUi,
-                    onCheckedChange = { onIntent(OtherConfigIntent.ShowMangaUiChanged(it)) }
-                )
-            }
+                    SwitchSettingItem(
+                        title = stringResource(R.string.show_manga_ui),
+                        checked = state.showMangaUi,
+                        onCheckedChange = { onIntent(OtherConfigIntent.ShowMangaUiChanged(it)) }
+                    )
+                }
 
                 SplicedColumnGroup(title = stringResource(R.string.other_setting)) {
 
-                SwitchSettingItem(
-                    title = stringResource(R.string.web_service_wake_lock),
-                    description = stringResource(R.string.web_service_wake_lock_summary),
-                    checked = state.webServiceWakeLock,
-                    onCheckedChange = { onIntent(OtherConfigIntent.WebServiceWakeLockChanged(it)) }
-                )
+                    // 👇 2. 新增代理设置入口
+                    ClickableSettingItem(
+                        title = "书源代理设置",
+                        description = "为单个书源配置 HTTP/SOCKS5 代理",
+                        onClick = onNavigateToProxyConfig
+                    )
 
-                InputSettingItem(
-                    title = stringResource(R.string.source_edit_text_max_line),
-                    value = state.sourceEditMaxLine.toString(),
-                    defaultValue = 500.toString(),
-                    onConfirm = { onIntent(OtherConfigIntent.SourceEditMaxLineChanged(it.toIntOrNull() ?: 500)) }
-                )
+                    SwitchSettingItem(
+                        title = stringResource(R.string.web_service_wake_lock),
+                        description = stringResource(R.string.web_service_wake_lock_summary),
+                        checked = state.webServiceWakeLock,
+                        onCheckedChange = { onIntent(OtherConfigIntent.WebServiceWakeLockChanged(it)) }
+                    )
 
-                ClickableSettingItem(
-                    title = stringResource(R.string.direct_link_upload_rule),
-                    description = stringResource(R.string.direct_link_upload_rule_summary),
-                    onClick = { onIntent(OtherConfigIntent.ShowOverlay(OtherConfigOverlay.DirectLinkUpload)) }
-                )
+                    InputSettingItem(
+                        title = stringResource(R.string.source_edit_text_max_line),
+                        value = state.sourceEditMaxLine.toString(),
+                        defaultValue = 500.toString(),
+                        onConfirm = { onIntent(OtherConfigIntent.SourceEditMaxLineChanged(it.toIntOrNull() ?: 500)) }
+                    )
 
-                InputSettingItem(
-                    title = stringResource(R.string.web_port_title),
-                    value = state.webPort.toString(),
-                    onConfirm = { onIntent(OtherConfigIntent.WebPortChanged(it.toInt())) }
-                )
+                    ClickableSettingItem(
+                        title = stringResource(R.string.direct_link_upload_rule),
+                        description = stringResource(R.string.direct_link_upload_rule_summary),
+                        onClick = { onIntent(OtherConfigIntent.ShowOverlay(OtherConfigOverlay.DirectLinkUpload)) }
+                    )
 
-                ClickableSettingItem(
-                    title = stringResource(R.string.clear_webview_data),
-                    description = stringResource(R.string.clear_webview_data_summary),
-                    onClick = { onIntent(OtherConfigIntent.ShowOverlay(OtherConfigOverlay.ClearWebViewConfirmation)) }
-                )
+                    InputSettingItem(
+                        title = stringResource(R.string.web_port_title),
+                        value = state.webPort.toString(),
+                        onConfirm = { onIntent(OtherConfigIntent.WebPortChanged(it.toInt())) }
+                    )
 
-                SwitchSettingItem(
-                    title = stringResource(R.string.add_to_text_context_menu_t),
-                    description = stringResource(R.string.add_to_text_context_menu_s),
-                    checked = state.processText,
-                    onCheckedChange = { onIntent(OtherConfigIntent.ProcessTextChanged(it)) }
-                )
+                    ClickableSettingItem(
+                        title = stringResource(R.string.clear_webview_data),
+                        description = stringResource(R.string.clear_webview_data_summary),
+                        onClick = { onIntent(OtherConfigIntent.ShowOverlay(OtherConfigOverlay.ClearWebViewConfirmation)) }
+                    )
 
-                SwitchSettingItem(
-                    title = stringResource(R.string.record_log),
-                    description = stringResource(R.string.record_debug_log),
-                    checked = state.recordLog,
-                    onCheckedChange = { onIntent(OtherConfigIntent.RecordLogChanged(it)) }
-                )
+                    SwitchSettingItem(
+                        title = stringResource(R.string.add_to_text_context_menu_t),
+                        description = stringResource(R.string.add_to_text_context_menu_s),
+                        checked = state.processText,
+                        onCheckedChange = { onIntent(OtherConfigIntent.ProcessTextChanged(it)) }
+                    )
 
-                SwitchSettingItem(
-                    title = stringResource(R.string.record_heap_dump_t),
-                    description = stringResource(R.string.record_heap_dump_s),
-                    checked = state.recordHeapDump,
-                    onCheckedChange = { onIntent(OtherConfigIntent.RecordHeapDumpChanged(it)) }
-                )
+                    SwitchSettingItem(
+                        title = stringResource(R.string.record_log),
+                        description = stringResource(R.string.record_debug_log),
+                        checked = state.recordLog,
+                        onCheckedChange = { onIntent(OtherConfigIntent.RecordLogChanged(it)) }
+                    )
+
+                    SwitchSettingItem(
+                        title = stringResource(R.string.record_heap_dump_t),
+                        description = stringResource(R.string.record_heap_dump_s),
+                        checked = state.recordHeapDump,
+                        onCheckedChange = { onIntent(OtherConfigIntent.RecordHeapDumpChanged(it)) }
+                    )
                 }
             }
         }
