@@ -31,10 +31,6 @@ object MainNavigator {
         navigateToRoute(backStack, route, null, resetToHome)
     }
 
-    /**
-     * [tracker] 非空时在同一调用里记录栈顶路由：Activity 级叠层（全局朗读胶囊）据此
-     * 在导航发生的那一刻就重算显隐，而不是等 back stack 快照回灌后才被动刷新。
-     */
     fun navigateToRoute(
         backStack: MutableList<NavKey>,
         route: NavKey,
@@ -141,6 +137,7 @@ object MainNavigator {
                 }
             }
 
+            // 👇 新增：将代理设置页加入到设置子页面的栈处理规则中
             MainRouteSettingsOther,
             MainRouteSettingsRead,
             MainRouteSettingsCover,
@@ -155,7 +152,8 @@ object MainNavigator {
             MainRouteSettingsThemeManage,
             MainRouteSettingsDownloadCache,
             MainRouteSettingsTranslation,
-            MainRouteSettingsPrivate -> {
+            MainRouteSettingsPrivate,
+            MainRouteSettingsProxyConfig -> { // 👈 新增
                 backStack.clear()
                 backStack.add(MainRouteHome)
                 backStack.add(MainRouteSettings)
@@ -181,7 +179,6 @@ object MainNavigator {
             }
 
             is MainRouteAudioPlay -> {
-                // 播放器为单例语义：已在栈上（如通知栏再次进入）则替换，避免叠加多个播放界面
                 val existingAudioIndex = backStack.indexOfLast { it is MainRouteAudioPlay }
                 if (existingAudioIndex >= 0) {
                     while (backStack.lastIndex > existingAudioIndex) {
@@ -337,8 +334,6 @@ object MainNavigator {
                 }
             }
 
-            // 朗读设置的子页（设置 hub 与阅读界面朗读设置卡片两处入口）都只压栈、不清栈：
-            // 从阅读界面进来要能直接返回阅读界面。
             MainRouteVoicePool,
             MainRouteBgmPool,
             MainRouteVoiceEffect,
@@ -366,7 +361,6 @@ object MainNavigator {
                 }
             }
         }
-        // 同步栈快照：Activity 级叠层（全局朗读胶囊）据此立刻重算显隐，不必等 back stack 回灌
         tracker?.onBackStackChanged(backStack)
     }
 
