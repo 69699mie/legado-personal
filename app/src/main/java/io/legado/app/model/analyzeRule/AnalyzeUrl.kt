@@ -29,6 +29,8 @@ import io.legado.app.help.http.RequestMethod
 import io.legado.app.help.http.StrResponse
 import io.legado.app.help.http.addHeaders
 import io.legado.app.help.http.get
+import io.legado.app.help.http.getDynamicProxyClient // === 新增导入 ===
+import io.legado.app.help.http.getDirectClient // === 新增导入 ===
 import io.legado.app.help.http.getProxyClient
 import io.legado.app.help.http.newCallResponse
 import io.legado.app.help.http.newCallStrResponse
@@ -69,10 +71,6 @@ import kotlin.coroutines.CoroutineContext
 import kotlin.coroutines.EmptyCoroutineContext
 import kotlin.math.max
 
-/**
- * Created by GKF on 2018/1/24.
- * 搜索URL规则解析
- */
 @Suppress("unused", "MemberVisibilityCanBePrivate")
 @Keep
 @SuppressLint("DefaultLocale")
@@ -121,7 +119,6 @@ class AnalyzeUrl(
     private val concurrentRateLimiter = ConcurrentRateLimiter(source)
     private val cacheSettingsGateway get() = GlobalContext.get().get<DownloadCacheSettingsGateway>()
 
-    // 服务器ID
     var serverID: Long? = null
         private set
 
@@ -142,22 +139,13 @@ class AnalyzeUrl(
         domain = NetworkUtils.getSubDomain(source?.getKey() ?: url)
     }
 
-    /**
-     * 处理url
-     */
     fun initUrl() {
         ruleUrl = mUrl
-        //执行@js,<js></js>
         analyzeJs()
-        //替换参数
         replaceKeyPageJs()
-        //处理URL
         analyzeUrl()
     }
 
-    /**
-     * 执行@js,<js></js>
-     */
     private fun analyzeJs() {
         var start = 0
         var result = ruleUrl
@@ -182,14 +170,9 @@ class AnalyzeUrl(
         ruleUrl = result
     }
 
-    /**
-     * 替换关键字,页数,JS
-     */
-    private fun replaceKeyPageJs() { //先替换内嵌规则再替换页数规则，避免内嵌规则中存在大于小于号时，规则被切错
-        //js
+    private fun replaceKeyPageJs() { 
         if (ruleUrl.contains("{{") && ruleUrl.contains("}}")) {
-            val analyze = RuleAnalyzer(ruleUrl) //创建解析
-            //替换所有内嵌{{js}}
+            val analyze = RuleAnalyzer(ruleUrl)
             val url = analyze.innerRule("{{", "}}") {
                 val jsEval = evalJS(it) ?: ""
                 when (jsEval) {
@@ -200,11 +183,10 @@ class AnalyzeUrl(
             }
             if (url.isNotEmpty()) ruleUrl = url
         }
-        //page
         page?.let {
             for (m in pagePattern.findAll(ruleUrl)) {
                 val pages = m.groupValues[1].split(",")
-                ruleUrl = if (page < pages.size) { //pages[pages.size - 1]等同于pages.last()
+                ruleUrl = if (page < pages.size) {
                     ruleUrl.replace(m.value, pages[page - 1].trim { it <= ' ' })
                 } else {
                     ruleUrl.replace(m.value, pages.last().trim { it <= ' ' })
@@ -213,11 +195,7 @@ class AnalyzeUrl(
         }
     }
 
-    /**
-     * 解析Url
-     */
     private fun analyzeUrl() {
-        //replaceKeyPageJs已经替换掉额外内容，此处url是基础形式，可以直接切首个‘,’之前字符串。
         val urlMatch = paramPattern.find(ruleUrl)
         val urlNoOption =
             if (urlMatch != null) ruleUrl.substring(0, urlMatch.range.first) else ruleUrl
@@ -284,12 +262,6 @@ class AnalyzeUrl(
         }
     }
 
-    /**
-     * 解析QueryMap <key>=<value>
-     * name=
-     * name=name
-     * name=<BASE64> eg name=bmFtZQ==
-     */
     private fun analyzeFields(fieldsTxt: String) {
         encodedForm = encodeParams(fieldsTxt, charset, false)
     }
@@ -356,10 +328,6 @@ class AnalyzeUrl(
         }
     }
 
-
-    /**
-     * 执行JS
-     */
     fun evalJS(jsStr: String, result: Any? = null): Any? {
         val bindings = buildScriptBindings { bindings ->
             bindings["java"] = this
@@ -397,7 +365,6 @@ class AnalyzeUrl(
             "bookName" -> (ruleData as? Book)?.let {
                 return it.name
             }
-
             "title" -> chapter?.let {
                 return it.title
             }
@@ -407,9 +374,6 @@ class AnalyzeUrl(
             ?: ""
     }
 
-    /**
-     * 访问网站,返回StrResponse
-     */
     suspend fun getStrResponseAwait(
         jsStr: String? = null,
         sourceRegex: String? = null,
@@ -436,7 +400,7 @@ class AnalyzeUrl(
     ): StrResponse {
         setCookie()
         val startTime = System.currentTimeMillis()
-        val strResponse: StrResponse
+        var strResponse: StrResponse
         try {
             if (this.useWebView && useWebView) {
                 strResponse = when (method) {
@@ -510,22 +474,77 @@ class AnalyzeUrl(
             strResponse.putCallTime(connectionTime.toInt())
             return strResponse
         } catch (e: Exception) {
+            // === 新增：代理失败回退直连 ===
+            val isProxyConfigured = io.legado.app.help.config.ProxyManager.getConfig(source?.getKey()) != null
+            val isNetworkError = e is java.net.SocketTimeoutException ||
+                    e is java.net.ConnectException ||
+                    e is java.net.SocketException ||
+                    e is java.net.UnknownHostException ||
+                    e is javax.net.ssl.SSLException ||
+                    (e.message?.contains("407") == true)
+
+            if (isProxyConfigured && isNetworkError && !useWebView) {
+                try {
+                    // 使用直连 Client 重试
+                    strResponse = getDirectClient(false).newCallStrResponse(retry) {
+                        addHeaders(headerMap)
+                        when (method) {
+                            RequestMethod.POST -> {
+                                url(urlNoQuery)
+                                val contentType = headerMap["Content-Type"]
+                                val body = body
+                                if (!encodedForm.isNullOrEmpty() || body.isNullOrBlank()) {
+                                    postForm(encodedForm ?: "")
+                                } else if (!contentType.isNullOrBlank()) {
+                                    val requestBody = body.toRequestBody(contentType.toMediaType())
+                                    post(requestBody)
+                                } else {
+                                    postJson(body)
+                                }
+                            }
+
+                            RequestMethod.HEAD -> {
+                                get(urlNoQuery, encodedQuery)
+                                head()
+                            }
+
+                            else -> get(urlNoQuery, encodedQuery)
+                        }
+                    }.let {
+                        val isXml = it.raw.body.contentType()?.toString()
+                            ?.matches(AppPattern.xmlContentTypeRegex) == true
+                        if (isXml && it.body?.trim()?.startsWith("<?xml", true) == false) {
+                            StrResponse(it.raw, "<?xml version=\"1.0\"?>" + it.body)
+                        } else if (bodyJs != null) {
+                            val body = evalJS(bodyJs!!, it.body).toString()
+                            StrResponse(it.raw, body)
+                        } else it
+                    }
+                    val connectionTime = System.currentTimeMillis() - startTime
+                    strResponse.putCallTime(connectionTime.toInt())
+                    return strResponse
+                } catch (retryException: Exception) {
+                    throw retryException // 直连也失败，抛出
+                }
+            }
+            // =======================
+
             if (!isTest) {
                 throw e
             }
             val errorCode = when (e) {
-                is java.net.SocketTimeoutException -> -2  // 超时错误
-                is java.net.UnknownHostException -> -3   // 未找到域名
-                is java.net.ConnectException -> -4       // 连接被拒绝
-                is java.net.SocketException -> -5        // Socket错误（包括连接重置）
-                is javax.net.ssl.SSLException -> -6      // SSL证书或握手错误
+                is java.net.SocketTimeoutException -> -2
+                is java.net.UnknownHostException -> -3
+                is java.net.ConnectException -> -4
+                is java.net.SocketException -> -5
+                is javax.net.ssl.SSLException -> -6
                 is java.io.InterruptedIOException -> {
                     if (e.message?.contains("timeout") == true) {
-                        -1  // 超过设定时间
+                        -1
                     } else -7
                 }
 
-                else -> -7  // 其它错误
+                else -> -7
             }
             return StrResponse(url, e.message).apply {
                 putCallTime(errorCode)
@@ -544,9 +563,6 @@ class AnalyzeUrl(
         }
     }
 
-    /**
-     * 访问网站,返回Response
-     */
     suspend fun getResponseAwait(): Response {
         concurrentRateLimiter.withLimit {
             setCookie()
@@ -579,9 +595,6 @@ class AnalyzeUrl(
         }
     }
 
-    /**
-     * 返回一个errResponse
-     */
     fun getErrResponse(e: Throwable): Response = Response.Builder()
         .request(Request.Builder().url(url).build())
         .protocol(okhttp3.Protocol.HTTP_1_1)
@@ -590,14 +603,17 @@ class AnalyzeUrl(
         .body(e.stackTraceStr.toResponseBody(null))
         .build()
 
-    /**
-     * 返回一个errStrResponse
-     */
     fun getErrStrResponse(e: Throwable): StrResponse =
         StrResponse(getErrResponse(e), e.stackTraceStr)
 
     private fun getClient(): OkHttpClient {
-        val client = getProxyClient(proxy)
+        // === 修改点：优先使用书源自带的 proxy 字段，如果没有，则查全局代理配置 ===
+        val client = if (!proxy.isNullOrBlank()) {
+            getProxyClient(proxy)
+        } else {
+            getDynamicProxyClient(source?.getKey(), false)
+        }
+
         if (readTimeout == null && callTimeout == null && dnsIp == null) {
             return client
         }
@@ -626,7 +642,6 @@ class AnalyzeUrl(
         return AppPattern.domainRegex.find(url)?.groupValues?.getOrNull(1)
     }
 
-
     fun getResponse(): Response {
         return runBlocking(coroutineContext) {
             getResponseAwait()
@@ -646,9 +661,6 @@ class AnalyzeUrl(
         return null
     }
 
-    /**
-     * 访问网站,返回ByteArray
-     */
     suspend fun getByteArrayAwait(): ByteArray {
         getByteArrayIfDataUri()?.let {
             return it
@@ -662,9 +674,6 @@ class AnalyzeUrl(
         }
     }
 
-    /**
-     * 访问网站,返回InputStream
-     */
     suspend fun getInputStreamAwait(): InputStream {
         getByteArrayIfDataUri()?.let {
             return ByteArrayInputStream(it)
@@ -678,9 +687,6 @@ class AnalyzeUrl(
         }
     }
 
-    /**
-     * 上传文件
-     */
     suspend fun upload(fileName: String, file: Any, contentType: String): StrResponse {
         val bodyMap = GSON.fromJsonObject<HashMap<String, Any>>(body).getOrNull()
             ?: return getErrStrResponse(NoStackTraceException("请求体不是合法的JSON格式"))
@@ -699,20 +705,8 @@ class AnalyzeUrl(
         }
     }
 
-    /**
-     * 设置cookie 优先级
-     * urlOption临时cookie > 数据库cookie
-     */
     private fun setCookie() {
         val cookie = kotlin.run {
-            /* 每次调用getXX cookieJar已经保存过了
-            if (enabledCookieJar) {
-                val key = "${domain}_cookieJar"
-                CacheManager.getFromMemory(key)?.let {
-                    return@run it
-                }
-            }
-            */
             CookieStore.getCookie(domain)
         }
         if (cookie.isNotEmpty()) {
@@ -727,11 +721,7 @@ class AnalyzeUrl(
         }
     }
 
-    /**
-     * 保存cookieJar中的cookie在访问结束时就保存,不等到下次访问
-     */
     private fun saveCookie() {
-        //书源启用保存cookie时 添加内存中的cookie到数据库
         if (enabledCookieJar) {
             val key = "${domain}_cookieJar"
             CacheManager.getFromMemory(key)?.let {
@@ -743,9 +733,6 @@ class AnalyzeUrl(
         }
     }
 
-    /**
-     *获取处理过阅读定义的urlOption和cookie的GlideUrl
-     */
     fun getGlideUrl(): GlideUrl {
         setCookie()
         return GlideUrl(url, GlideHeaders(headerMap))
@@ -805,7 +792,6 @@ class AnalyzeUrl(
             setCookie()
             return ExoPlayerHelper.createMediaItem(url, headerMap)
         }
-
     }
 
     @Keep
@@ -814,108 +800,32 @@ class AnalyzeUrl(
         private var charset: String? = null,
         private var headers: Any? = null,
         private var body: Any? = null,
-        /**
-         * 源Url
-         **/
         private var origin: String? = null,
-        /**
-         * 重试次数
-         **/
         private var retry: Int? = null,
-        /**
-         * 类型
-         **/
         private var type: String? = null,
-        /**
-         * 是否使用webView
-         **/
         private var webView: Any? = null,
-        /**
-         * webView中执行的js
-         **/
         private var webJs: String? = null,
-        /**
-         * 自定义的域名ip
-         **/
         private var dnsIp: String? = null,
-        /**
-         * 解析完url参数时执行的js
-         * 执行结果会赋值给url
-         */
         private var js: String? = null,
-        /**
-         * 得到访问结果后执行的js,对结果进行二次处理
-         * 执行结果返回为body
-         */
         private var bodyJs: String? = null,
-        /**
-         * 服务器id
-         */
         private var serverID: Long? = null,
-        /**
-         * webview等待页面加载完毕的延迟时间（毫秒）
-         */
         private var webViewDelayTime: Long? = null,
     ) {
-        fun setMethod(value: String?) {
-            method = if (value.isNullOrBlank()) null else value
-        }
-
-        fun getMethod(): String? {
-            return method
-        }
-
-        fun setCharset(value: String?) {
-            charset = if (value.isNullOrBlank()) null else value
-        }
-
-        fun getCharset(): String? {
-            return charset
-        }
-
-        fun setOrigin(value: String?) {
-            origin = if (value.isNullOrBlank()) null else value
-        }
-
-        fun getOrigin(): String? {
-            return origin
-        }
-
-        fun setRetry(value: String?) {
-            retry = if (value.isNullOrEmpty()) null else value.toIntOrNull()
-        }
-
-        fun getRetry(): Int {
-            return retry ?: 0
-        }
-
-        fun setType(value: String?) {
-            type = if (value.isNullOrBlank()) null else value
-        }
-
-        fun getType(): String? {
-            return type
-        }
-
-        fun useWebView(): Boolean {
-            return when (webView) {
-                null, "", false, "false" -> false
-                else -> true
-            }
-        }
-
-        fun useWebView(boolean: Boolean) {
-            webView = if (boolean) true else null
-        }
-
+        fun setMethod(value: String?) { method = if (value.isNullOrBlank()) null else value }
+        fun getMethod(): String? = method
+        fun setCharset(value: String?) { charset = if (value.isNullOrBlank()) null else value }
+        fun getCharset(): String? = charset
+        fun setOrigin(value: String?) { origin = if (value.isNullOrBlank()) null else value }
+        fun getOrigin(): String? = origin
+        fun setRetry(value: String?) { retry = if (value.isNullOrEmpty()) null else value.toIntOrNull() }
+        fun getRetry(): Int = retry ?: 0
+        fun setType(value: String?) { type = if (value.isNullOrBlank()) null else value }
+        fun getType(): String? = type
+        fun useWebView(): Boolean = when (webView) { null, "", false, "false" -> false else -> true }
+        fun useWebView(boolean: Boolean) { webView = if (boolean) true else null }
         fun setHeaders(value: String?) {
-            headers = if (value.isNullOrBlank()) {
-                null
-            } else {
-                GSON.fromJsonObject<Map<String, Any>>(value).getOrNull()
-            }
+            headers = if (value.isNullOrBlank()) null else GSON.fromJsonObject<Map<String, Any>>(value).getOrNull()
         }
-
         fun getHeaderMap(): Map<*, *>? {
             return when (val value = headers) {
                 is Map<*, *> -> value
@@ -923,7 +833,6 @@ class AnalyzeUrl(
                 else -> null
             }
         }
-
         fun setBody(value: String?) {
             body = when {
                 value.isNullOrBlank() -> null
@@ -932,78 +841,25 @@ class AnalyzeUrl(
                 else -> value
             }
         }
-
-        fun getBody(): String? {
-            return body?.let {
-                it as? String ?: GSON.toJson(it)
-            }
-        }
-
-        fun setWebJs(value: String?) {
-            webJs = if (value.isNullOrBlank()) null else value
-        }
-
-        fun getWebJs(): String? {
-            return webJs
-        }
-        fun setDnsIp(value: String?) {
-            dnsIp = if (value.isNullOrBlank()) null else value
-        }
-
-        fun getDnsIp(): String? {
-            return dnsIp
-        }
-
-        fun setJs(value: String?) {
-            js = if (value.isNullOrBlank()) null else value
-        }
-
-        fun getJs(): String? {
-            return js
-        }
-
-        fun setBodyJs(value: String?) {
-            bodyJs = if (value.isNullOrBlank()) null else value
-        }
-
-        fun getBodyJs(): String? {
-            return bodyJs
-        }
-
-        fun setServerID(value: String?) {
-            serverID = if (value.isNullOrBlank()) null else value.toLong()
-        }
-
-        fun getServerID(): Long? {
-            return serverID
-        }
-
-        fun setWebViewDelayTime(value: String?) {
-            webViewDelayTime = if (value.isNullOrBlank()) null else value.toLong()
-        }
-
-        fun getWebViewDelayTime(): Long? {
-            return webViewDelayTime
-        }
+        fun getBody(): String? = body?.let { it as? String ?: GSON.toJson(it) }
+        fun setWebJs(value: String?) { webJs = if (value.isNullOrBlank()) null else value }
+        fun getWebJs(): String? = webJs
+        fun setDnsIp(value: String?) { dnsIp = if (value.isNullOrBlank()) null else value }
+        fun getDnsIp(): String? = dnsIp
+        fun setJs(value: String?) { js = if (value.isNullOrBlank()) null else value }
+        fun getJs(): String? = js
+        fun setBodyJs(value: String?) { bodyJs = if (value.isNullOrBlank()) null else value }
+        fun getBodyJs(): String? = bodyJs
+        fun setServerID(value: String?) { serverID = if (value.isNullOrBlank()) null else value.toLong() }
+        fun getServerID(): Long? = serverID
+        fun setWebViewDelayTime(value: String?) { webViewDelayTime = if (value.isNullOrBlank()) null else value.toLong() }
+        fun getWebViewDelayTime(): Long? = webViewDelayTime
     }
 
     data class ConcurrentRecord(
-        /**
-         * 开始访问时间
-         */
         var time: Long,
-        /**
-         * 限制次数
-         */
         var accessLimit: Int,
-        /**
-         * 间隔时间
-         */
         var interval: Int,
-        /**
-         * 正在访问的个数
-         */
         var frequency: Int
     )
-
 }
