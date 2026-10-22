@@ -21,6 +21,7 @@ import org.koin.androidx.compose.koinViewModel
 @Composable
 fun OtherConfigRouteScreen(
     onBackClick: () -> Unit,
+    onNavigateToProxyConfig: () -> Unit, // 👈 新增
     viewModel: OtherConfigViewModel = koinViewModel(),
 ) {
     val context = LocalContext.current
@@ -68,6 +69,7 @@ fun OtherConfigRouteScreen(
         state = state,
         onIntent = viewModel::onIntent,
         onBackClick = onBackClick,
+        onNavigateToProxyConfig = onNavigateToProxyConfig, // 👈 新增
     )
 
     FilePickerSheet(
@@ -94,7 +96,6 @@ fun OtherConfigRouteScreen(
         onConfirm = { viewModel.onIntent(OtherConfigIntent.ConfirmClearWebViewData) },
         onDismiss = { viewModel.onIntent(OtherConfigIntent.DismissOverlay) },
     )
-
 }
 
 private const val RESTART_DELAY_MILLIS = 3_000L
