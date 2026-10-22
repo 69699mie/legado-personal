@@ -29,8 +29,6 @@ import io.legado.app.help.http.RequestMethod
 import io.legado.app.help.http.StrResponse
 import io.legado.app.help.http.addHeaders
 import io.legado.app.help.http.get
-import io.legado.app.help.http.getDynamicProxyClient // === 新增导入 ===
-import io.legado.app.help.http.getDirectClient // === 新增导入 ===
 import io.legado.app.help.http.getProxyClient
 import io.legado.app.help.http.newCallResponse
 import io.legado.app.help.http.newCallStrResponse
@@ -400,7 +398,7 @@ class AnalyzeUrl(
     ): StrResponse {
         setCookie()
         val startTime = System.currentTimeMillis()
-        var strResponse: StrResponse
+        val strResponse: StrResponse
         try {
             if (this.useWebView && useWebView) {
                 strResponse = when (method) {
@@ -474,61 +472,6 @@ class AnalyzeUrl(
             strResponse.putCallTime(connectionTime.toInt())
             return strResponse
         } catch (e: Exception) {
-            // === 新增：代理失败回退直连 ===
-            val isProxyConfigured = io.legado.app.help.config.ProxyManager.getConfig(source?.getKey()) != null
-            val isNetworkError = e is java.net.SocketTimeoutException ||
-                    e is java.net.ConnectException ||
-                    e is java.net.SocketException ||
-                    e is java.net.UnknownHostException ||
-                    e is javax.net.ssl.SSLException ||
-                    (e.message?.contains("407") == true)
-
-            if (isProxyConfigured && isNetworkError && !useWebView) {
-                try {
-                    // 使用直连 Client 重试
-                    strResponse = getDirectClient(false).newCallStrResponse(retry) {
-                        addHeaders(headerMap)
-                        when (method) {
-                            RequestMethod.POST -> {
-                                url(urlNoQuery)
-                                val contentType = headerMap["Content-Type"]
-                                val body = body
-                                if (!encodedForm.isNullOrEmpty() || body.isNullOrBlank()) {
-                                    postForm(encodedForm ?: "")
-                                } else if (!contentType.isNullOrBlank()) {
-                                    val requestBody = body.toRequestBody(contentType.toMediaType())
-                                    post(requestBody)
-                                } else {
-                                    postJson(body)
-                                }
-                            }
-
-                            RequestMethod.HEAD -> {
-                                get(urlNoQuery, encodedQuery)
-                                head()
-                            }
-
-                            else -> get(urlNoQuery, encodedQuery)
-                        }
-                    }.let {
-                        val isXml = it.raw.body.contentType()?.toString()
-                            ?.matches(AppPattern.xmlContentTypeRegex) == true
-                        if (isXml && it.body?.trim()?.startsWith("<?xml", true) == false) {
-                            StrResponse(it.raw, "<?xml version=\"1.0\"?>" + it.body)
-                        } else if (bodyJs != null) {
-                            val body = evalJS(bodyJs!!, it.body).toString()
-                            StrResponse(it.raw, body)
-                        } else it
-                    }
-                    val connectionTime = System.currentTimeMillis() - startTime
-                    strResponse.putCallTime(connectionTime.toInt())
-                    return strResponse
-                } catch (retryException: Exception) {
-                    throw retryException // 直连也失败，抛出
-                }
-            }
-            // =======================
-
             if (!isTest) {
                 throw e
             }
@@ -607,13 +550,7 @@ class AnalyzeUrl(
         StrResponse(getErrResponse(e), e.stackTraceStr)
 
     private fun getClient(): OkHttpClient {
-        // === 修改点：优先使用书源自带的 proxy 字段，如果没有，则查全局代理配置 ===
-        val client = if (!proxy.isNullOrBlank()) {
-            getProxyClient(proxy)
-        } else {
-            getDynamicProxyClient(source?.getKey(), false)
-        }
-
+        val client = getProxyClient(proxy)
         if (readTimeout == null && callTimeout == null && dnsIp == null) {
             return client
         }
