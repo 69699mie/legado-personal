@@ -148,7 +148,6 @@ import io.legado.app.ui.config.downloadCacheConfig.DownloadCacheConfigRouteScree
 import io.legado.app.ui.config.labConfig.LabConfigRouteScreen
 import io.legado.app.ui.config.otherConfig.OtherConfigRouteScreen
 import io.legado.app.ui.config.privateConfig.PrivateConfigRouteScreen
-import io.legado.app.ui.config.proxyConfig.ProxyConfigScreen // 👈 新增：代理设置页导入
 import io.legado.app.ui.config.readConfig.ReadConfigRouteScreen
 import io.legado.app.ui.config.themeConfig.ThemeConfigRouteScreen
 import io.legado.app.ui.config.themeManage.ThemeManageRouteScreen
@@ -683,20 +682,7 @@ fun MainActivity.mainEntryProvider(
     }
 
     entry<MainRouteSettingsOther> {
-        OtherConfigRouteScreen(
-            onBackClick = { onNavigateBack() },
-            onNavigateToProxyConfig = { 
-                // 👈 新增：点击“书源代理设置”时跳转到代理配置页
-                onNavigateToRoute(MainRouteSettingsProxyConfig) 
-            }
-        )
-    }
-
-    // 👇 新增：注册代理设置页的 UI
-    entry<MainRouteSettingsProxyConfig> {
-        ProxyConfigScreen(
-            onBackClick = { onNavigateBack() }
-        )
+        OtherConfigRouteScreen(onBackClick = { onNavigateBack() })
     }
 
     entry<MainRouteSettingsRead> {
