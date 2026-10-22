@@ -73,6 +73,10 @@ data object MainRouteSettings : MainRoute
 @Serializable
 data object MainRouteSettingsOther : MainRoute
 
+// 👇 新增：代理设置页路由
+@Serializable
+data object MainRouteSettingsProxyConfig : MainRoute
+
 @Serializable
 data object MainRouteSettingsRead : MainRoute
 
