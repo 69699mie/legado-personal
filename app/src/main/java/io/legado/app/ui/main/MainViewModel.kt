@@ -100,8 +100,10 @@ private fun buildMainUiState(
         when (it) {
             MainDestination.Home -> appShell.showHome
             MainDestination.Explore -> appShell.showDiscovery
-            // 💡 漫画专用：RSS Tab 永久隐藏（小说订阅是 RSS 的主用途）
+            // 💡 漫画专用：RSS Tab 永久隐藏
             MainDestination.Rss -> false
+            // ➕ 影视 Tab：借用原本控制 Rss 的开关状态
+            MainDestination.Video -> appShell.showRss
             else -> true
         }
     }
