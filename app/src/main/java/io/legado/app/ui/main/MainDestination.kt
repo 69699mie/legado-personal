@@ -40,7 +40,6 @@ sealed class MainDestination(
     )
 
     companion object {
-        // ➕ 将 Video 加入默认列表（Rss 保留在底层防崩溃，但在 UI 中隐藏）
         val mainDestinations = persistentListOf<MainDestination>(Home, Bookshelf, Explore, Video, Rss, My)
 
         fun ordered(order: String): List<MainDestination> {
@@ -48,6 +47,8 @@ sealed class MainDestination(
             val ordered = order
                 .split(',')
                 .map(String::trim)
+                // 💡 核心兼容：将老用户本地存储里的 "rss" 映射到 "video"
+                .map { if (it == "rss") "video" else it }
                 .distinct()
                 .mapNotNull(byRoute::get)
             return ordered + mainDestinations.filterNot { it in ordered }
