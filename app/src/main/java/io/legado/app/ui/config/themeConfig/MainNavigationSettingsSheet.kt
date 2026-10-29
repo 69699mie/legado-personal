@@ -44,9 +44,16 @@ fun MainNavigationSettingsSheet(
 ) {
     var showNavigationIcons by remember(show) { mutableStateOf(false) }
     
+    // 初始时加载一次顺序
     var navigationItems by remember(show) {
         mutableStateOf(MainDestination.ordered(settings.mainNavigationOrder))
     }
+    
+    // ➕ 监听底层顺序变化，如果 ViewModel 将关闭的项移到了末尾，这里同步刷新列表
+    LaunchedEffect(settings.mainNavigationOrder) {
+        navigationItems = MainDestination.ordered(settings.mainNavigationOrder)
+    }
+
     val navigationListState = rememberLazyListState()
     val reorderableState =
         rememberReorderableLazyListState(navigationListState) { from, to ->
@@ -68,15 +75,6 @@ fun MainNavigationSettingsSheet(
         MainDestination.Video.route -> settings.showVideo
         MainDestination.My.route -> settings.showMy
         else -> true
-    }
-
-    fun setVisibilityForRoute(route: String, visible: Boolean) {
-        onSetVisible(route, visible)
-        if (!visible) {
-            val item = navigationItems.find { it.route == route } ?: return
-            navigationItems = navigationItems.filter { it.route != route } + item
-            onSetOrder(navigationItems.joinToString(",") { it.route })
-        }
     }
 
     val visibleItems = navigationItems.filter { isRouteVisible(it.route) }
@@ -162,8 +160,9 @@ fun MainNavigationSettingsSheet(
                         title = stringResource(destination.labelId),
                         isEnabled = true,
                         containerColor = LegadoTheme.colorScheme.onSheetContent,
-                        onEnabledChange = {
-                            setVisibilityForRoute(destination.route, false)
+                        onEnabledChange = { enabled ->
+                            // 💡 只发送显隐通知，由 ViewModel 保证原子操作（改显隐+改顺序）
+                            onSetVisible(destination.route, enabled)
                         },
                     )
                 }
@@ -179,8 +178,8 @@ fun MainNavigationSettingsSheet(
                             isEnabled = false,
                             canReorder = false,
                             containerColor = LegadoTheme.colorScheme.onSheetContent,
-                            onEnabledChange = {
-                                setVisibilityForRoute(destination.route, true)
+                            onEnabledChange = { enabled ->
+                                onSetVisible(destination.route, enabled)
                             },
                         )
                     }
