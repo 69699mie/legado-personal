@@ -63,6 +63,8 @@ fun MainNavigationSettingsSheet(
     fun isRouteVisible(route: String): Boolean = when (route) {
         MainDestination.Home.route -> settings.showHome
         MainDestination.Explore.route -> settings.showDiscovery
+        // ➕ 影视使用原订阅的开关控制
+        MainDestination.Video.route -> settings.showRss
         MainDestination.Rss.route -> settings.showRss
         else -> true
     }
@@ -78,9 +80,7 @@ fun MainNavigationSettingsSheet(
         }
     }
 
-    // 💡 漫画专用 App：过滤掉「订阅」开关。
-    // 刻意不动 navigationItems：Rss 仍在内存列表与 onSetOrder 输出的顺序串里，
-    // 只是不渲染为开关。撤销这两行即可恢复。
+    // 💡 漫画专用 App：过滤掉「订阅」开关，保留影视。
     val visibleItems = navigationItems.filter {
         isRouteVisible(it.route) && it.route != MainDestination.Rss.route
     }
