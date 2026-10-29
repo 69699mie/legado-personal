@@ -27,6 +27,12 @@ sealed class MainDestination(
         route = "rss",
         labelId = R.string.rss
     )
+    
+    // ➕ 新增影视入口
+    object Video : MainDestination(
+        route = "video",
+        labelId = R.string.movie
+    )
 
     object My : MainDestination(
         route = "my",
@@ -34,7 +40,8 @@ sealed class MainDestination(
     )
 
     companion object {
-        val mainDestinations = persistentListOf<MainDestination>(Home, Bookshelf, Explore, Rss, My)
+        // ➕ 将 Video 加入默认列表（Rss 保留在底层防崩溃，但在 UI 中隐藏）
+        val mainDestinations = persistentListOf<MainDestination>(Home, Bookshelf, Explore, Video, Rss, My)
 
         fun ordered(order: String): List<MainDestination> {
             val byRoute = mainDestinations.associateBy { it.route }
