@@ -52,7 +52,7 @@ fun NavIconManageSheet(
     onSelectIcon: (String) -> Unit,
     onClearIcon: (String) -> Unit,
 ) {
-    // 💡 过滤掉「订阅」图标项，改为「影视」
+    // 💡 漫画专用 App：过滤掉「订阅」图标项，改为「影视」
     val destinations = listOf(
         NavIconDestination(
             "home",
@@ -75,8 +75,8 @@ fun NavIconManageSheet(
         NavIconDestination(
             "video",
             R.string.movie,
-            settings.navIconVideo, // ➕ 独立字段
-            settings.navIconVideoSelected, // ➕ 独立字段
+            settings.navIconVideo,
+            settings.navIconVideoSelected,
         ),
         NavIconDestination("my", R.string.my, settings.navIconMy, settings.navIconMySelected),
     )
@@ -87,8 +87,7 @@ fun NavIconManageSheet(
         title = stringResource(R.string.theme_config_nav_icons),
     ) {
         Column(
-            modifier = Modifier
-                .fillMaxWidth(),
+            modifier = Modifier.fillMaxWidth(),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             Row(
@@ -104,8 +103,7 @@ fun NavIconManageSheet(
             }
             destinations.forEach { destination ->
                 NormalCard(
-                    modifier = Modifier
-                        .fillMaxWidth(),
+                    modifier = Modifier.fillMaxWidth(),
                     cornerRadius = 16.dp,
                     containerColor = LegadoTheme.colorScheme.onSheetContent,
                 ) {
@@ -230,4 +228,3 @@ private val NavIconDestination.mainDestination: MainDestination
         MainDestination.Rss.route -> MainDestination.Rss
         else -> MainDestination.My
     }
-}
