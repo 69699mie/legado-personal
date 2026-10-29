@@ -63,8 +63,7 @@ fun MainNavigationSettingsSheet(
     fun isRouteVisible(route: String): Boolean = when (route) {
         MainDestination.Home.route -> settings.showHome
         MainDestination.Explore.route -> settings.showDiscovery
-        // ➕ 影视使用原订阅的开关控制
-        MainDestination.Video.route -> settings.showRss
+        MainDestination.Video.route -> settings.showVideo
         MainDestination.Rss.route -> settings.showRss
         else -> true
     }
@@ -80,7 +79,7 @@ fun MainNavigationSettingsSheet(
         }
     }
 
-    // 💡 漫画专用 App：过滤掉「订阅」开关，保留影视。
+    // 💡 过滤掉「订阅」开关，显示「影视」
     val visibleItems = navigationItems.filter {
         isRouteVisible(it.route) && it.route != MainDestination.Rss.route
     }
@@ -121,11 +120,13 @@ fun MainNavigationSettingsSheet(
                 settings.navIconBookshelf,
                 settings.navIconExplore,
                 settings.navIconRss,
+                settings.navIconVideo,
                 settings.navIconMy,
                 settings.navIconHomeSelected,
                 settings.navIconBookshelfSelected,
                 settings.navIconExploreSelected,
                 settings.navIconRssSelected,
+                settings.navIconVideoSelected,
                 settings.navIconMySelected,
             ).count { it.isNotEmpty() }
             CompactClickableSettingItem(
