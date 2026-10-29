@@ -301,6 +301,13 @@ class ThemeConfigViewModel(
                     defaultHomePage = current.fallbackHomePage(intent),
                 )
             }
+            // ➕ 影视接管了原订阅的显隐配置
+            MainDestination.Video.route -> { current ->
+                current.copy(
+                    showRss = intent.visible,
+                    defaultHomePage = current.fallbackHomePage(intent),
+                )
+            }
             MainDestination.Rss.route -> { current ->
                 current.copy(
                     showRss = intent.visible,
@@ -340,6 +347,10 @@ class ThemeConfigViewModel(
             MainDestination.Explore.route -> { settings ->
                 settings.copy(navIconExplore = intent.path)
             }
+            // ➕ 影视借用 Rss 的图标保存字段
+            MainDestination.Video.route -> { settings ->
+                settings.copy(navIconRss = intent.path)
+            }
             MainDestination.Rss.route -> { settings ->
                 settings.copy(navIconRss = intent.path)
             }
@@ -358,6 +369,10 @@ class ThemeConfigViewModel(
                 settings.copy(navIconExploreSelected = intent.path)
             }
 
+            // ➕ 影视借用 Rss 的图标保存字段
+            "${MainDestination.Video.route}:selected" -> { settings ->
+                settings.copy(navIconRssSelected = intent.path)
+            }
             "${MainDestination.Rss.route}:selected" -> { settings ->
                 settings.copy(navIconRssSelected = intent.path)
             }
@@ -386,11 +401,13 @@ class ThemeConfigViewModel(
         MainDestination.Bookshelf.route -> navIconBookshelf
         MainDestination.Explore.route -> navIconExplore
         MainDestination.Rss.route -> navIconRss
+        MainDestination.Video.route -> navIconRss // 借用
         MainDestination.My.route -> navIconMy
         "${MainDestination.Home.route}:selected" -> navIconHomeSelected
         "${MainDestination.Bookshelf.route}:selected" -> navIconBookshelfSelected
         "${MainDestination.Explore.route}:selected" -> navIconExploreSelected
         "${MainDestination.Rss.route}:selected" -> navIconRssSelected
+        "${MainDestination.Video.route}:selected" -> navIconRssSelected // 借用
         "${MainDestination.My.route}:selected" -> navIconMySelected
         else -> ""
     }
