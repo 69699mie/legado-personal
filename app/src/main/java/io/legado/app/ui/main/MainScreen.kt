@@ -93,6 +93,7 @@ import io.legado.app.ui.main.home.HomeRouteScreen
 import io.legado.app.ui.main.my.MyRouteScreen
 import io.legado.app.ui.main.my.PrefClickEvent
 import io.legado.app.ui.main.rss.RssRouteScreen
+import io.legado.app.ui.main.video.VideoRouteScreen
 import io.legado.app.ui.theme.LegadoTheme
 import io.legado.app.ui.theme.ThemeResolver
 import io.legado.app.ui.widget.components.AppScaffold
@@ -596,6 +597,10 @@ fun MainScreen(
                                 onOpenEdit = onNavigateToBookSourceEdit,
                                 onOpenSearch = onNavigateToScopedSearch,
                             )
+
+                            // ➕ 挂载影视页面
+                            MainDestination.Video -> VideoRouteScreen()
+
                             MainDestination.Rss -> RssRouteScreen(
                                 onOpenSort = { sourceUrl, sortUrl, key ->
                                     onNavigateToRssSort(sourceUrl, sortUrl, key)
