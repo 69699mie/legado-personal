@@ -52,7 +52,7 @@ fun NavIconManageSheet(
     onSelectIcon: (String) -> Unit,
     onClearIcon: (String) -> Unit,
 ) {
-    // 💡 漫画专用 App：过滤掉「订阅」图标项
+    // 💡 漫画专用 App：过滤掉「订阅」图标项，改为「影视」
     val destinations = listOf(
         NavIconDestination(
             "home",
@@ -72,8 +72,13 @@ fun NavIconManageSheet(
             settings.navIconExplore,
             settings.navIconExploreSelected,
         ),
-        // 💡 漫画专用 App：移除「订阅」图标项
-        // NavIconDestination("rss", R.string.rss, settings.navIconRss, settings.navIconRssSelected),
+        // ➕ 影视使用原订阅的图标配置字段
+        NavIconDestination(
+            "video",
+            R.string.movie,
+            settings.navIconRss,
+            settings.navIconRssSelected,
+        ),
         NavIconDestination("my", R.string.my, settings.navIconMy, settings.navIconMySelected),
     )
 
@@ -222,7 +227,9 @@ private val NavIconDestination.mainDestination: MainDestination
         MainDestination.Home.route -> MainDestination.Home
         MainDestination.Bookshelf.route -> MainDestination.Bookshelf
         MainDestination.Explore.route -> MainDestination.Explore
+        MainDestination.Video.route -> MainDestination.Video
         // 💡 key 已不再出现 "rss"，此分支保留作为兼容（防止 when 不穷尽）
         MainDestination.Rss.route -> MainDestination.Rss
         else -> MainDestination.My
     }
+}
