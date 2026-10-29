@@ -24,10 +24,6 @@ jobs:
             CURRENT=0
           fi
           V=$((CURRENT + 1))
-          # 三段版本号：MAJOR.MINOR.PATCH
-          # 每 100 个小版本进一个大版本
-          # 显示规则：值为 0 时显示 "0"；值为 1-9 时显示 "0X"；值为 10+ 时正常显示
-          #   1.0.0 → 1.0.09 → 1.01.0 → 1.01.09 → … → 1.09.09 → 2.0.0
           MAJOR=$(( (V - 1) / 100 + 1 ))
           REM=$(( (V - 1) % 100 ))
           MINOR=$(( REM / 10 ))
@@ -86,7 +82,6 @@ jobs:
 
       - name: Build with Gradle
         env:
-          # 修复 OOM：将 -Xmx6g 降到 -Xmx4g，MaxMetaspaceSize 降到 512m
           GRADLE_OPTS: "-Dorg.gradle.jvmargs=-Xmx4g -XX:MaxMetaspaceSize=512m -Dfile.encoding=UTF-8"
         run: |
           chmod +x ./gradlew
@@ -108,6 +103,11 @@ jobs:
           name: 阅读专属版 v${{ steps.version.outputs.VERSION_NAME }}
           files: app/build/outputs/apk/**/*.apk
           generate_release_notes: true
+          # ➕ 修复：如果同名 tag 已存在，强制覆盖它并更新 Release 内容
+          allowUpdates: true
+          make_latest: true
+          # ➕ 修复：如果匹配不到 apk 文件则报错中断，避免空发布
+          fail_on_unmatched_files: true
 
       - name: Commit Version Bump
         run: |
@@ -115,4 +115,6 @@ jobs:
           git config --global user.email "actions@github.com"
           git add version.txt
           git commit -m "chore: bump version to ${{ steps.version.outputs.VERSION_NAME }}" || echo "No changes to commit"
-          git push
+          # ➕ 修复：强制拉取最新代码变基，防止被远端拒绝
+          git pull --rebase origin main || true
+          git push origin HEAD:main
