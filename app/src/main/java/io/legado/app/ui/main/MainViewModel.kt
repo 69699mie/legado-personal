@@ -100,10 +100,8 @@ private fun buildMainUiState(
         when (it) {
             MainDestination.Home -> appShell.showHome
             MainDestination.Explore -> appShell.showDiscovery
-            // 💡 漫画专用：RSS Tab 永久隐藏
-            MainDestination.Rss -> false
-            // ➕ 影视 Tab：借用原本控制 Rss 的开关状态
-            MainDestination.Video -> appShell.showRss
+            MainDestination.Rss -> false // 💡 Rss 依然在底层永久隐藏
+            MainDestination.Video -> appShell.showVideo // ➕ 使用专属开关
             else -> true
         }
     }
@@ -119,11 +117,13 @@ private fun buildMainUiState(
         navIconBookshelf = appShell.navIconBookshelf,
         navIconExplore = appShell.navIconExplore,
         navIconRss = appShell.navIconRss,
+        navIconVideo = appShell.navIconVideo, // ➕
         navIconMy = appShell.navIconMy,
         navIconHomeSelected = appShell.navIconHomeSelected,
         navIconBookshelfSelected = appShell.navIconBookshelfSelected,
         navIconExploreSelected = appShell.navIconExploreSelected,
         navIconRssSelected = appShell.navIconRssSelected,
+        navIconVideoSelected = appShell.navIconVideoSelected, // ➕
         navIconMySelected = appShell.navIconMySelected,
         deepPersonalizationActive = theme.appTheme == "12" && theme.enableDeepPersonalization,
         secondaryThemeColor = theme.secondaryThemeColor,
