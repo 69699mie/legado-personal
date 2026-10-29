@@ -31,6 +31,8 @@ data class MainUiState(
         MainDestination.Home -> navIconHome
         MainDestination.Bookshelf -> navIconBookshelf
         MainDestination.Explore -> navIconExplore
+        // ➕ 影视借用 Rss 的自定义图标字段
+        MainDestination.Video -> navIconRss
         MainDestination.Rss -> navIconRss
         MainDestination.My -> navIconMy
     }
@@ -39,6 +41,8 @@ data class MainUiState(
         MainDestination.Home -> navIconHomeSelected
         MainDestination.Bookshelf -> navIconBookshelfSelected
         MainDestination.Explore -> navIconExploreSelected
+        // ➕ 影视借用 Rss 的自定义图标字段
+        MainDestination.Video -> navIconRssSelected
         MainDestination.Rss -> navIconRssSelected
         MainDestination.My -> navIconMySelected
     }
