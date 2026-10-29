@@ -15,6 +15,7 @@ import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.LocationSearching
 import androidx.compose.material.icons.filled.MoreHoriz
 import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material.icons.filled.Movie
 import androidx.compose.material.icons.filled.MyLocation
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.Replay
@@ -24,6 +25,7 @@ import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.outlined.Explore
 import androidx.compose.material.icons.outlined.FilterAlt
 import androidx.compose.material.icons.outlined.Home
+import androidx.compose.material.icons.outlined.Movie
 import androidx.compose.material.icons.outlined.Person
 import androidx.compose.material.icons.outlined.RssFeed
 import androidx.compose.material.icons.outlined.Sell
@@ -142,6 +144,13 @@ object AppIcons {
                 if (selected) MiuixIcons.Regular.Album else MiuixIcons.Regular.Album
             } else {
                 if (selected) Icons.Default.Explore else Icons.Outlined.Explore
+            }
+            
+            // ➕ 增加 Video 分支（Miuix 暂时借用 Album 图标，Material 使用标准 Movie 图标）
+            MainDestination.Video -> if (isMiuix) {
+                MiuixIcons.Regular.Album
+            } else {
+                if (selected) Icons.Default.Movie else Icons.Outlined.Movie
             }
 
             MainDestination.Rss -> if (isMiuix) {
