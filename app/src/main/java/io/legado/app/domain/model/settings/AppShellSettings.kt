@@ -5,9 +5,11 @@ data class AppShellSettings(
     val fontScale: Int = 10,
     val composeEngine: String = "material",
     val showHome: Boolean = true,
+    val showBookshelf: Boolean = true, // ➕ 补上：原版没有的字段
     val showDiscovery: Boolean = true,
-    val showRss: Boolean = true, // 原订阅开关，保留防崩溃
-    val showVideo: Boolean = true, // ➕ 新增影视开关
+    val showVideo: Boolean = true,     // ➕ 补上：影视字段
+    val showMy: Boolean = true,        // ➕ 补上：原版没有的字段
+    val showRss: Boolean = true,       // 废弃，防崩溃保留
     val showStatusBar: Boolean = true,
     val swipeAnimation: Boolean = true,
     val predictiveBackEnabled: Boolean = true,
@@ -17,20 +19,19 @@ data class AppShellSettings(
     val tabletInterface: String = "auto",
     val labelVisibilityMode: String = "auto",
     val defaultHomePage: String = "bookshelf",
-    // ➕ 将默认排序里的 rss 替换为 video
     val mainNavigationOrder: String = "home,bookshelf,explore,video,my",
     val navExtended: Boolean = false,
     val navIconHome: String = "",
     val navIconBookshelf: String = "",
     val navIconExplore: String = "",
-    val navIconRss: String = "",
-    val navIconVideo: String = "", // ➕ 新增
+    val navIconVideo: String = "",
     val navIconMy: String = "",
     val navIconHomeSelected: String = "",
     val navIconBookshelfSelected: String = "",
     val navIconExploreSelected: String = "",
-    val navIconRssSelected: String = "",
-    val navIconVideoSelected: String = "", // ➕ 新增
+    val navIconVideoSelected: String = "",
     val navIconMySelected: String = "",
+    val navIconRss: String = "",
+    val navIconRssSelected: String = "",
     val launcherIcon: String = "ic_launcher",
 )
