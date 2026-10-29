@@ -99,10 +99,11 @@ private fun buildMainUiState(
     val destinations = MainDestination.ordered(appShell.mainNavigationOrder).filter {
         when (it) {
             MainDestination.Home -> appShell.showHome
+            MainDestination.Bookshelf -> appShell.showBookshelf // ➕ 修复：读取真实状态
             MainDestination.Explore -> appShell.showDiscovery
-            MainDestination.Video -> appShell.showVideo // ➕ 绑定独立的 showVideo
+            MainDestination.Video -> appShell.showVideo         // ➕ 修复：读取真实状态
+            MainDestination.My -> appShell.showMy               // ➕ 修复：读取真实状态
             MainDestination.Rss -> false
-            else -> true
         }
     }
     return MainUiState(
@@ -116,15 +117,15 @@ private fun buildMainUiState(
         navIconHome = appShell.navIconHome,
         navIconBookshelf = appShell.navIconBookshelf,
         navIconExplore = appShell.navIconExplore,
-        navIconRss = appShell.navIconRss,
-        navIconVideo = appShell.navIconVideo, // ➕
+        navIconVideo = appShell.navIconVideo,
         navIconMy = appShell.navIconMy,
         navIconHomeSelected = appShell.navIconHomeSelected,
         navIconBookshelfSelected = appShell.navIconBookshelfSelected,
         navIconExploreSelected = appShell.navIconExploreSelected,
-        navIconRssSelected = appShell.navIconRssSelected,
-        navIconVideoSelected = appShell.navIconVideoSelected, // ➕
+        navIconVideoSelected = appShell.navIconVideoSelected,
         navIconMySelected = appShell.navIconMySelected,
+        navIconRss = "",
+        navIconRssSelected = "",
         deepPersonalizationActive = theme.appTheme == "12" && theme.enableDeepPersonalization,
         secondaryThemeColor = theme.secondaryThemeColor,
         secondaryThemeColorNight = theme.secondaryThemeColorNight,
