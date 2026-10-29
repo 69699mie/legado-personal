@@ -47,6 +47,12 @@ object PreferKey {
     const val prevKeys = "prevKeyCodes"
     const val nextKeys = "nextKeyCodes"
     const val showHome = "showHome"
+    
+    // ➕ 新增：影视与关闭状态的控制 Key
+    const val showBookshelf = "showBookshelf"
+    const val showVideo = "showVideo"
+    const val showMy = "showMy"
+    
     const val showDiscovery = "showDiscovery"
     const val enableReview = "enableReview"
     const val showRss = "showRss"
@@ -459,6 +465,10 @@ object PreferKey {
     const val navIconExploreSelected = "navIconExploreSelected"
     const val navIconRssSelected = "navIconRssSelected"
     const val navIconMySelected = "navIconMySelected"
+    
+    // ➕ 新增：影视的自定义图标 Key
+    const val navIconVideo = "navIconVideo"
+    const val navIconVideoSelected = "navIconVideoSelected"
 
     // Translation
     const val llmTranslateEnabled = "llmTranslateEnabled"
