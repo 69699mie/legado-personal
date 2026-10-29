@@ -100,8 +100,8 @@ private fun buildMainUiState(
         when (it) {
             MainDestination.Home -> appShell.showHome
             MainDestination.Explore -> appShell.showDiscovery
-            MainDestination.Rss -> false // 💡 Rss 依然在底层永久隐藏
-            MainDestination.Video -> appShell.showVideo // ➕ 使用专属开关
+            MainDestination.Video -> appShell.showVideo // ➕ 绑定独立的 showVideo
+            MainDestination.Rss -> false
             else -> true
         }
     }
