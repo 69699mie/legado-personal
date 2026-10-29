@@ -287,54 +287,36 @@ class ThemeConfigViewModel(
     }
 
     private fun setMainDestinationVisible(intent: ThemeConfigIntent.SetMainDestinationVisible) {
-        val transform: (AppShellSettings) -> AppShellSettings = when (intent.route) {
-            MainDestination.Home.route -> { current ->
-                current.copy(
-                    showHome = intent.visible,
-                    defaultHomePage = current.fallbackHomePage(intent),
-                )
+        val transform: (AppShellSettings) -> AppShellSettings = { current ->
+            // 1. 更新显隐状态
+            var next = when (intent.route) {
+                MainDestination.Home.route -> current.copy(showHome = intent.visible)
+                MainDestination.Bookshelf.route -> current.copy(showBookshelf = intent.visible)
+                MainDestination.Explore.route -> current.copy(showDiscovery = intent.visible)
+                MainDestination.Video.route -> current.copy(showVideo = intent.visible)
+                MainDestination.My.route -> current.copy(showMy = intent.visible)
+                MainDestination.Rss.route -> current.copy(showRss = intent.visible)
+                else -> current
             }
-            MainDestination.Bookshelf.route -> { current ->
-                current.copy(
-                    showBookshelf = intent.visible, // ➕ 修复：保存书架开关
-                    defaultHomePage = current.fallbackHomePage(intent),
-                )
+
+            // 2. 如果关闭，同时原子化修改顺序，将其移至末尾（解决并发覆盖问题）
+            if (!intent.visible) {
+                val orderList = next.mainNavigationOrder.split(',').map { it.trim() }.toMutableList()
+                if (orderList.contains(intent.route)) {
+                    orderList.remove(intent.route)
+                    orderList.add(intent.route)
+                    next = next.copy(mainNavigationOrder = orderList.joinToString(","))
+                }
             }
-            MainDestination.Explore.route -> { current ->
-                current.copy(
-                    showDiscovery = intent.visible,
-                    defaultHomePage = current.fallbackHomePage(intent),
-                )
+
+            // 3. 如果关闭的是当前默认主页，回退到书架
+            if (!intent.visible && next.defaultHomePage == intent.route) {
+                next = next.copy(defaultHomePage = MainDestination.Bookshelf.route)
             }
-            MainDestination.Video.route -> { current ->
-                current.copy(
-                    showVideo = intent.visible,     // ➕ 修复：保存影视开关
-                    defaultHomePage = current.fallbackHomePage(intent),
-                )
-            }
-            MainDestination.My.route -> { current ->
-                current.copy(
-                    showMy = intent.visible,        // ➕ 修复：保存我的开关
-                    defaultHomePage = current.fallbackHomePage(intent),
-                )
-            }
-            MainDestination.Rss.route -> { current ->
-                current.copy(
-                    showRss = intent.visible,
-                    defaultHomePage = current.fallbackHomePage(intent),
-                )
-            }
-            else -> return
+
+            next
         }
         updateAppShell(transform = transform)
-    }
-
-    private fun AppShellSettings.fallbackHomePage(
-        intent: ThemeConfigIntent.SetMainDestinationVisible,
-    ): String = if (!intent.visible && defaultHomePage == intent.route) {
-        MainDestination.Bookshelf.route
-    } else {
-        defaultHomePage
     }
 
     private fun selectLauncherIcon(value: String) {
@@ -369,22 +351,18 @@ class ThemeConfigViewModel(
             "${MainDestination.Home.route}:selected" -> { settings ->
                 settings.copy(navIconHomeSelected = intent.path)
             }
-
             "${MainDestination.Bookshelf.route}:selected" -> { settings ->
                 settings.copy(navIconBookshelfSelected = intent.path)
             }
-
             "${MainDestination.Explore.route}:selected" -> { settings ->
                 settings.copy(navIconExploreSelected = intent.path)
             }
-
             "${MainDestination.Video.route}:selected" -> { settings ->
                 settings.copy(navIconVideoSelected = intent.path)
             }
             "${MainDestination.Rss.route}:selected" -> { settings ->
                 settings.copy(navIconRssSelected = intent.path)
             }
-
             "${MainDestination.My.route}:selected" -> { settings ->
                 settings.copy(navIconMySelected = intent.path)
             }
