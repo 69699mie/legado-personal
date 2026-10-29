@@ -215,7 +215,6 @@ class ThemeConfigViewModel(
                 .map(::File)
                 .filter { it.absolutePath.startsWith(appCtx.externalFiles.absolutePath) }
                 .forEach { it.delete() }
-            // 图标文件现在按内容摘要命名，直接清空整个目录
             File(appCtx.filesDir, "nav_icons").deleteRecursively()
             currentTheme.appFontPath?.let { path ->
                 File(path)
@@ -301,10 +300,9 @@ class ThemeConfigViewModel(
                     defaultHomePage = current.fallbackHomePage(intent),
                 )
             }
-            // ➕ 影视接管了原订阅的显隐配置
             MainDestination.Video.route -> { current ->
                 current.copy(
-                    showRss = intent.visible,
+                    showVideo = intent.visible, // ➕ 独立字段
                     defaultHomePage = current.fallbackHomePage(intent),
                 )
             }
@@ -347,9 +345,8 @@ class ThemeConfigViewModel(
             MainDestination.Explore.route -> { settings ->
                 settings.copy(navIconExplore = intent.path)
             }
-            // ➕ 影视借用 Rss 的图标保存字段
             MainDestination.Video.route -> { settings ->
-                settings.copy(navIconRss = intent.path)
+                settings.copy(navIconVideo = intent.path) // ➕ 独立字段
             }
             MainDestination.Rss.route -> { settings ->
                 settings.copy(navIconRss = intent.path)
@@ -360,23 +357,18 @@ class ThemeConfigViewModel(
             "${MainDestination.Home.route}:selected" -> { settings ->
                 settings.copy(navIconHomeSelected = intent.path)
             }
-
             "${MainDestination.Bookshelf.route}:selected" -> { settings ->
                 settings.copy(navIconBookshelfSelected = intent.path)
             }
-
             "${MainDestination.Explore.route}:selected" -> { settings ->
                 settings.copy(navIconExploreSelected = intent.path)
             }
-
-            // ➕ 影视借用 Rss 的图标保存字段
             "${MainDestination.Video.route}:selected" -> { settings ->
-                settings.copy(navIconRssSelected = intent.path)
+                settings.copy(navIconVideoSelected = intent.path) // ➕ 独立字段
             }
             "${MainDestination.Rss.route}:selected" -> { settings ->
                 settings.copy(navIconRssSelected = intent.path)
             }
-
             "${MainDestination.My.route}:selected" -> { settings ->
                 settings.copy(navIconMySelected = intent.path)
             }
@@ -384,8 +376,6 @@ class ThemeConfigViewModel(
         }
         viewModelScope.launch(Dispatchers.IO) {
             runCatching {
-                // 文件按内容摘要命名，多个槽位可能引用同一文件；
-                // 只有不再被任何槽位引用时才删除，避免误删共享图片。
                 if (oldPath.isNotEmpty() && oldPath != intent.path &&
                     current.navIconFileUsage(oldPath) <= 1
                 ) {
@@ -401,13 +391,13 @@ class ThemeConfigViewModel(
         MainDestination.Bookshelf.route -> navIconBookshelf
         MainDestination.Explore.route -> navIconExplore
         MainDestination.Rss.route -> navIconRss
-        MainDestination.Video.route -> navIconRss // 借用
+        MainDestination.Video.route -> navIconVideo // ➕ 独立字段
         MainDestination.My.route -> navIconMy
         "${MainDestination.Home.route}:selected" -> navIconHomeSelected
         "${MainDestination.Bookshelf.route}:selected" -> navIconBookshelfSelected
         "${MainDestination.Explore.route}:selected" -> navIconExploreSelected
         "${MainDestination.Rss.route}:selected" -> navIconRssSelected
-        "${MainDestination.Video.route}:selected" -> navIconRssSelected // 借用
+        "${MainDestination.Video.route}:selected" -> navIconVideoSelected // ➕ 独立字段
         "${MainDestination.My.route}:selected" -> navIconMySelected
         else -> ""
     }
@@ -417,11 +407,13 @@ class ThemeConfigViewModel(
         navIconBookshelf,
         navIconExplore,
         navIconRss,
+        navIconVideo, // ➕
         navIconMy,
         navIconHomeSelected,
         navIconBookshelfSelected,
         navIconExploreSelected,
         navIconRssSelected,
+        navIconVideoSelected, // ➕
         navIconMySelected,
     ).count { it == path }
 
@@ -573,8 +565,6 @@ class ThemeConfigViewModel(
                 fileDoc.openInputStream().getOrThrow().use { input ->
                     FileOutputStream(temp).use(input::copyTo)
                 }
-                // 以内容摘要命名：同一字体无论导入多少次都指向同一路径，
-                // 既不会留下重复副本，字体缓存也能按路径命中。
                 val digest = temp.inputStream().use(MD5Utils::md5Encode)
                 File(fontDir, "app_font_$digest.$extension").also { target ->
                     if (target.isFile) {
@@ -588,7 +578,6 @@ class ThemeConfigViewModel(
                 temp.delete()
                 throw e
             }
-            // 复制期间可能已被新的选择或清除取代，此时不能写回路径。
             ensureActive()
             themeSettingsGateway.update { it.copy(appFontPath = target.absolutePath) }
             pruneCopiedFonts(keep = target)
@@ -602,10 +591,6 @@ class ThemeConfigViewModel(
         }
     }
 
-    /**
-     * 字体的选择与清除串行执行：新任务先取消并等待上一个结束，
-     * 避免未完成的复制晚于清除写回 appFontPath。
-     */
     private fun launchFontJob(block: suspend CoroutineScope.() -> Unit) {
         val previous = fontJob
         fontJob = viewModelScope.launch(Dispatchers.IO) {
@@ -617,10 +602,6 @@ class ThemeConfigViewModel(
 
     private fun appFontDir() = File(appCtx.filesDir, "fonts").apply { mkdirs() }
 
-    /**
-     * 清理私有目录里已经用不到的字体副本，只认本应用复制的 app_font 前缀，
-     * 不碰主题包导入的 theme_ 资源。
-     */
     private fun pruneCopiedFonts(keep: File? = null) {
         appFontDir().listFiles()?.forEach { file ->
             if (file.name.startsWith("app_font") && file != keep) file.delete()
