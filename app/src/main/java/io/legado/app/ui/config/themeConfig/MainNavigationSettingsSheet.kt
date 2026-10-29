@@ -44,7 +44,6 @@ fun MainNavigationSettingsSheet(
 ) {
     var showNavigationIcons by remember(show) { mutableStateOf(false) }
     
-    // 读取所有项，此时 mainDestinations 里已经没有 Rss 了
     var navigationItems by remember(show) {
         mutableStateOf(MainDestination.ordered(settings.mainNavigationOrder))
     }
@@ -64,8 +63,10 @@ fun MainNavigationSettingsSheet(
 
     fun isRouteVisible(route: String): Boolean = when (route) {
         MainDestination.Home.route -> settings.showHome
+        MainDestination.Bookshelf.route -> settings.showBookshelf
         MainDestination.Explore.route -> settings.showDiscovery
         MainDestination.Video.route -> settings.showVideo
+        MainDestination.My.route -> settings.showMy
         else -> true
     }
 
@@ -78,11 +79,9 @@ fun MainNavigationSettingsSheet(
         }
     }
 
-    // 💡 将可见项和隐藏项合并为一个列表，避免 LazyColumn 渲染与拖拽索引错位
-    val orderedItems = navigationItems.filter { isRouteVisible(it.route) } +
-            navigationItems.filter { !isRouteVisible(it.route) }
-            
-    val visibleItems = orderedItems.filter { isRouteVisible(it.route) }
+    val visibleItems = navigationItems.filter { isRouteVisible(it.route) }
+    val hiddenItems = navigationItems.filter { !isRouteVisible(it.route) }
+    
     val selectedDefault = settings.defaultHomePage.takeIf { route ->
         visibleItems.any { it.route == route }
     } ?: MainDestination.Bookshelf.route
@@ -116,12 +115,12 @@ fun MainNavigationSettingsSheet(
                 settings.navIconHome,
                 settings.navIconBookshelf,
                 settings.navIconExplore,
-                settings.navIconVideo, // 替换 Rss
+                settings.navIconVideo,
                 settings.navIconMy,
                 settings.navIconHomeSelected,
                 settings.navIconBookshelfSelected,
                 settings.navIconExploreSelected,
-                settings.navIconVideoSelected, // 替换 Rss
+                settings.navIconVideoSelected,
                 settings.navIconMySelected,
             ).count { it.isNotEmpty() }
             
@@ -144,31 +143,47 @@ fun MainNavigationSettingsSheet(
                 verticalArrangement = Arrangement.spacedBy(4.dp),
             ) {
                 items(
-                    items = orderedItems,
+                    items = visibleItems,
                     key = { it.route },
                 ) { destination ->
-                    val isVisible = isRouteVisible(destination.route)
                     ReorderableSelectionItem(
                         state = reorderableState,
                         key = destination.route,
-                        reorderIndex = orderedItems.indexOf(destination),
-                        reorderItemCount = orderedItems.size,
+                        reorderIndex = visibleItems.indexOf(destination),
+                        reorderItemCount = visibleItems.size,
                         onMoveItem = { from, to ->
-                            val fromItem = orderedItems[from]
-                            val toItem = orderedItems[to]
+                            val fromItem = visibleItems[from]
+                            val toItem = visibleItems[to]
                             navigationItems = navigationItems.toMutableList().apply {
                                 move(indexOf(fromItem), indexOf(toItem))
                             }
                             onSetOrder(navigationItems.joinToString(",") { it.route })
                         },
                         title = stringResource(destination.labelId),
-                        isEnabled = isVisible,
-                        canReorder = isVisible,
+                        isEnabled = true,
                         containerColor = LegadoTheme.colorScheme.onSheetContent,
-                        onEnabledChange = { enabled ->
-                            setVisibilityForRoute(destination.route, enabled)
+                        onEnabledChange = {
+                            setVisibilityForRoute(destination.route, false)
                         },
                     )
+                }
+                if (hiddenItems.isNotEmpty()) {
+                    items(
+                        items = hiddenItems,
+                        key = { it.route },
+                    ) { destination ->
+                        ReorderableSelectionItem(
+                            state = reorderableState,
+                            key = destination.route,
+                            title = stringResource(destination.labelId),
+                            isEnabled = false,
+                            canReorder = false,
+                            containerColor = LegadoTheme.colorScheme.onSheetContent,
+                            onEnabledChange = {
+                                setVisibilityForRoute(destination.route, true)
+                            },
+                        )
+                    }
                 }
             }
         }
