@@ -55,6 +55,8 @@ import io.legado.app.data.dao.SearchKeywordDao
 import io.legado.app.data.dao.ServerDao
 import io.legado.app.data.dao.TagGroupRuleDao
 import io.legado.app.data.dao.TxtTocRuleDao
+// ➕ 新增视频 DAO 导入
+import io.legado.app.data.dao.VideoDao
 import io.legado.app.data.entities.AiArtifact
 import io.legado.app.data.entities.AiChatConversation
 import io.legado.app.data.entities.AiChatMessage
@@ -121,6 +123,8 @@ import io.legado.app.data.entities.TxtTocRule
 import io.legado.app.data.entities.readRecord.ReadRecord
 import io.legado.app.data.entities.readRecord.ReadRecordDetail
 import io.legado.app.data.entities.readRecord.ReadRecordSession
+// ➕ 新增视频实体导入
+import io.legado.app.data.entities.VideoItem
 import io.legado.app.help.DefaultData
 import org.intellij.lang.annotations.Language
 import splitties.init.appCtx
@@ -136,7 +140,8 @@ val appDb by lazy {
 }
 
 @Database(
-    version = 130,
+    // ➕ 1. 版本号提升到 131
+    version = 131,
     exportSchema = true,
     entities = [Book::class, BookGroup::class, BookSource::class, BookChapter::class,
         ReplaceRule::class, SearchBook::class, SearchKeyword::class, Cookie::class,
@@ -158,7 +163,10 @@ val appDb by lazy {
         BgmTrackEntity::class,
         BgmPoolEntity::class, BgmPoolMember::class, BgmPoolGroupEntity::class,
         BgmSceneMark::class, VoiceEffectPreset::class,
-        BookMarking::class, ReadAloudAudioDownload::class, RegexCastRule::class, RegexCastGroup::class],
+        BookMarking::class, ReadAloudAudioDownload::class, RegexCastRule::class, RegexCastGroup::class,
+        // ➕ 2. 注册新的实体表
+        VideoItem::class
+    ],
     views = [BookSourcePart::class],
     autoMigrations = [
         AutoMigration(from = 43, to = 44),
@@ -273,6 +281,8 @@ val appDb by lazy {
         AutoMigration(from = 128, to = 129),
         // regex_cast_rules 新增 voiceEffect 列：命中的那段文字用哪个变声器预设念，默认空 = 不变声
         AutoMigration(from = 129, to = 130),
+        // ➕ 3. 添加 130 到 131 的自动迁移
+        AutoMigration(from = 130, to = 131),
     ]
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -325,6 +335,8 @@ abstract class AppDatabase : RoomDatabase() {
     abstract val aiChatDao: AiChatDao
     abstract val aiMemoryDao: AiMemoryDao
     abstract val aiPromptPresetDao: AiPromptPresetDao
+    // ➕ 4. 暴露 VideoDao
+    abstract val videoDao: VideoDao
 
     companion object {
 
