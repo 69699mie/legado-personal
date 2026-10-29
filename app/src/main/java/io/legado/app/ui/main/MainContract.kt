@@ -17,11 +17,13 @@ data class MainUiState(
     val navIconBookshelf: String = "",
     val navIconExplore: String = "",
     val navIconRss: String = "",
+    val navIconVideo: String = "", // ➕ 新增
     val navIconMy: String = "",
     val navIconHomeSelected: String = "",
     val navIconBookshelfSelected: String = "",
     val navIconExploreSelected: String = "",
     val navIconRssSelected: String = "",
+    val navIconVideoSelected: String = "", // ➕ 新增
     val navIconMySelected: String = "",
     val deepPersonalizationActive: Boolean = false,
     val secondaryThemeColor: Int = 0,
@@ -31,8 +33,7 @@ data class MainUiState(
         MainDestination.Home -> navIconHome
         MainDestination.Bookshelf -> navIconBookshelf
         MainDestination.Explore -> navIconExplore
-        // ➕ 影视借用 Rss 的自定义图标字段
-        MainDestination.Video -> navIconRss
+        MainDestination.Video -> navIconVideo // ➕ 使用独立字段
         MainDestination.Rss -> navIconRss
         MainDestination.My -> navIconMy
     }
@@ -41,8 +42,7 @@ data class MainUiState(
         MainDestination.Home -> navIconHomeSelected
         MainDestination.Bookshelf -> navIconBookshelfSelected
         MainDestination.Explore -> navIconExploreSelected
-        // ➕ 影视借用 Rss 的自定义图标字段
-        MainDestination.Video -> navIconRssSelected
+        MainDestination.Video -> navIconVideoSelected // ➕ 使用独立字段
         MainDestination.Rss -> navIconRssSelected
         MainDestination.My -> navIconMySelected
     }
