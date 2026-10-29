@@ -353,6 +353,8 @@ val appModule = module {
     single { get<AppDatabase>().searchContentHistoryDao }
     single { get<AppDatabase>().rssStarDao }
     single { get<AppDatabase>().ruleSubDao }
+    // ➕ 1. 新增 VideoDao 单例注册
+    single { get<AppDatabase>().videoDao }
 
     singleOf(::ReadRecordRepository)
     single<HomeDashboardGateway> { HomeDashboardRepository(get(), get()) }
