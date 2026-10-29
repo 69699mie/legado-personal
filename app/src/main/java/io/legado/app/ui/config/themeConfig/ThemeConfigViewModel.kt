@@ -294,6 +294,12 @@ class ThemeConfigViewModel(
                     defaultHomePage = current.fallbackHomePage(intent),
                 )
             }
+            MainDestination.Bookshelf.route -> { current ->
+                current.copy(
+                    showBookshelf = intent.visible, // ➕ 修复：保存书架开关
+                    defaultHomePage = current.fallbackHomePage(intent),
+                )
+            }
             MainDestination.Explore.route -> { current ->
                 current.copy(
                     showDiscovery = intent.visible,
@@ -302,7 +308,13 @@ class ThemeConfigViewModel(
             }
             MainDestination.Video.route -> { current ->
                 current.copy(
-                    showVideo = intent.visible, // ➕ 独立字段
+                    showVideo = intent.visible,     // ➕ 修复：保存影视开关
+                    defaultHomePage = current.fallbackHomePage(intent),
+                )
+            }
+            MainDestination.My.route -> { current ->
+                current.copy(
+                    showMy = intent.visible,        // ➕ 修复：保存我的开关
                     defaultHomePage = current.fallbackHomePage(intent),
                 )
             }
@@ -346,7 +358,7 @@ class ThemeConfigViewModel(
                 settings.copy(navIconExplore = intent.path)
             }
             MainDestination.Video.route -> { settings ->
-                settings.copy(navIconVideo = intent.path) // ➕ 独立字段
+                settings.copy(navIconVideo = intent.path)
             }
             MainDestination.Rss.route -> { settings ->
                 settings.copy(navIconRss = intent.path)
@@ -357,18 +369,22 @@ class ThemeConfigViewModel(
             "${MainDestination.Home.route}:selected" -> { settings ->
                 settings.copy(navIconHomeSelected = intent.path)
             }
+
             "${MainDestination.Bookshelf.route}:selected" -> { settings ->
                 settings.copy(navIconBookshelfSelected = intent.path)
             }
+
             "${MainDestination.Explore.route}:selected" -> { settings ->
                 settings.copy(navIconExploreSelected = intent.path)
             }
+
             "${MainDestination.Video.route}:selected" -> { settings ->
-                settings.copy(navIconVideoSelected = intent.path) // ➕ 独立字段
+                settings.copy(navIconVideoSelected = intent.path)
             }
             "${MainDestination.Rss.route}:selected" -> { settings ->
                 settings.copy(navIconRssSelected = intent.path)
             }
+
             "${MainDestination.My.route}:selected" -> { settings ->
                 settings.copy(navIconMySelected = intent.path)
             }
@@ -391,13 +407,13 @@ class ThemeConfigViewModel(
         MainDestination.Bookshelf.route -> navIconBookshelf
         MainDestination.Explore.route -> navIconExplore
         MainDestination.Rss.route -> navIconRss
-        MainDestination.Video.route -> navIconVideo // ➕ 独立字段
+        MainDestination.Video.route -> navIconVideo
         MainDestination.My.route -> navIconMy
         "${MainDestination.Home.route}:selected" -> navIconHomeSelected
         "${MainDestination.Bookshelf.route}:selected" -> navIconBookshelfSelected
         "${MainDestination.Explore.route}:selected" -> navIconExploreSelected
         "${MainDestination.Rss.route}:selected" -> navIconRssSelected
-        "${MainDestination.Video.route}:selected" -> navIconVideoSelected // ➕ 独立字段
+        "${MainDestination.Video.route}:selected" -> navIconVideoSelected
         "${MainDestination.My.route}:selected" -> navIconMySelected
         else -> ""
     }
@@ -407,13 +423,13 @@ class ThemeConfigViewModel(
         navIconBookshelf,
         navIconExplore,
         navIconRss,
-        navIconVideo, // ➕
+        navIconVideo,
         navIconMy,
         navIconHomeSelected,
         navIconBookshelfSelected,
         navIconExploreSelected,
         navIconRssSelected,
-        navIconVideoSelected, // ➕
+        navIconVideoSelected,
         navIconMySelected,
     ).count { it == path }
 
