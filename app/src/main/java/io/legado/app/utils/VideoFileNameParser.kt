@@ -10,8 +10,19 @@ data class ParsedVideoName(
 
 object VideoFileNameParser {
 
-    // 支持的视频后缀
     private val videoExts = listOf(".mp4", ".mkv", ".avi", ".ts", ".m3u8", ".mov", ".rmvb", ".flv")
+
+    // 借鉴 PTN 的规则链思路，定义需要剥离的噪声模式
+    private val noisePatterns = listOf(
+        Regex("(?i)\\b(2160p|1080p|720p|480p|4k|8k)\\b"),
+        Regex("(?i)\\b(hdr|sdr|dv|dolby\\s*vision)\\b"),
+        Regex("(?i)\\b(bluray|bdrip|web-?dl|webrip|hdtv|dvdrip)\\b"),
+        Regex("(?i)\\b(x264|x265|h264|h265|hevc|avc)\\b"),
+        Regex("(?i)\\b(aac|ac3|dts|ddp?\\d?\\.?\\d?|atmos|truehd)\\b"),
+        Regex("(?i)\\b(10bit|8bit|60fps|hfr)\\b"),
+        Regex("\\[.*?\\]|\\(.*?\\)|【.*?】"), // 移除各种括号及其内容
+        Regex("(?i)(电影|电视剧|动漫|动画|纪录片|综艺|剧场版|臻彩)") // 移除分类词
+    )
 
     fun parse(fileName: String): ParsedVideoName {
         val lowerName = fileName.lowercase()
@@ -20,56 +31,40 @@ object VideoFileNameParser {
         var name = fileName
 
         // 1. 剥离后缀
-        videoExts.forEach {
-            if (lowerName.endsWith(it)) {
-                name = name.dropLast(it.length)
-            }
-        }
+        videoExts.forEach { if (lowerName.endsWith(it)) { name = name.dropLast(it.length) } }
 
-        // 2. 提取季集 (例如 S01E01, 第一季第一集)
+        // 2. 提取季集 (S01E01, 第1季第1集)
         var season: Int? = null
         var episode: Int? = null
         val seRegex = Regex("(?i)s(\\d{1,2})e(\\d{1,3})")
-        val seMatch = seRegex.find(name)
-        if (seMatch != null) {
-            season = seMatch.groupValues[1].toIntOrNull()
-            episode = seMatch.groupValues[2].toIntOrNull()
-            // 把 S01E01 这部分从名字里删掉
-            name = name.replace(seMatch.value, " ")
-        } else {
-            // 尝试匹配单纯的 E01
+        seRegex.find(name)?.let {
+            season = it.groupValues[1].toIntOrNull()
+            episode = it.groupValues[2].toIntOrNull()
+            name = name.replace(it.value, " ")
+        } ?: run {
             val eRegex = Regex("(?i)(?:^|[^a-z])e(\\d{1,3})(?:[^a-z]|$)")
-            val eMatch = eRegex.find(name)
-            if (eMatch != null) {
-                episode = eMatch.groupValues[1].toIntOrNull()
-                name = name.replace(eMatch.value, " ")
+            eRegex.find(name)?.let {
+                episode = it.groupValues[1].toIntOrNull()
+                name = name.replace(it.value, " ")
             }
         }
 
-        // 3. 提取年份 (19xx 或 20xx)
+        // 3. 提取年份
         var year: Int? = null
         val yearRegex = Regex("(19|20)\\d{2}")
-        val yearMatch = yearRegex.find(name)
-        if (yearMatch != null) {
-            year = yearMatch.value.toIntOrNull()
-            name = name.replace(yearMatch.value, " ")
+        yearRegex.find(name)?.let {
+            year = it.value.toIntOrNull()
+            name = name.replace(it.value, " ")
         }
 
-        // 4. 剔除常见的画质、来源、编码等干扰词
-        val noiseRegex = Regex("(?i)(2160p|1080p|720p|4k|8k|hdr|web-dl|bluray|bdrip|hevc|x264|x265|aac|h264|60fps|10bit)")
-        name = name.replace(noiseRegex, " ")
+        // 4. 应用噪声清洗规则链
+        noisePatterns.forEach { pattern ->
+            name = name.replace(pattern, " ")
+        }
 
-        // 5. 清理中括号、前缀和多余的符号
-        name = name.replace(Regex("[\\[\\]【】()（）]"), " ") // 括号换成空格
-        name = name.replace(Regex("(?i)(电影|电视剧|动漫|动画|纪录片|综艺)"), " ") // 去掉分类词
-        
-        // 将多个空格合并为一个，并去掉首尾空格
+        // 5. 最终清理
         name = name.replace(Regex("\\s+"), " ").trim()
-        
-        // 如果清洗完变成了空字符串，就退回用原文件名
-        if (name.isBlank()) {
-            name = fileName.substringBeforeLast(".")
-        }
+        if (name.isBlank()) name = fileName.substringBeforeLast(".")
 
         return ParsedVideoName(name, year, season, episode, isVideo)
     }
