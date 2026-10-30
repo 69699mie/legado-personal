@@ -1,6 +1,6 @@
 package io.legado.app.ui.main.video
 
-import androidx.activity.compose.BackHandler // ➕ 新增引入
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -48,7 +48,7 @@ fun VideoRouteScreen(
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     var showSettingsDialog by remember { mutableStateOf(false) }
 
-    // ➕ 拦截系统返回手势/返回键
+    // 拦截系统返回手势/返回键
     BackHandler(enabled = uiState.currentFid != "0") {
         viewModel.goBack()
     }
@@ -126,7 +126,8 @@ fun VideoRouteScreen(
                                 if (info != null) {
                                     AppText(text = info.title, style = MaterialTheme.typography.titleMedium)
                                     val subText = buildString {
-                                        info.year?.let { append("$it年 ") }
+                                        // 💡 修复：使用花括号包裹变量，防止编译器将汉字误认为变量名的一部分
+                                        info.year?.let { append("${it}年 ") }
                                         info.season?.let { append("第${it}季 ") }
                                         info.episode?.let { append("第${it}集") }
                                     }
