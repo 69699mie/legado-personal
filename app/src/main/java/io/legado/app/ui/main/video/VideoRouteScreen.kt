@@ -21,11 +21,13 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import coil3.compose.AsyncImage
 import io.legado.app.ui.widget.components.text.AppText
 import org.koin.androidx.compose.koinViewModel
 
@@ -60,7 +62,6 @@ fun VideoRouteScreen(
                 }
             }
             
-            // 模式切换 Tab
             TabRow(
                 selectedTabIndex = if (uiState.isLibraryMode) 1 else 0,
                 modifier = Modifier.weight(1f).padding(horizontal = 8.dp),
@@ -132,7 +133,6 @@ fun VideoRouteScreen(
                                 }
                             }
                             
-                            // 只有文件夹才显示加入媒体库的星标
                             if (file.isFolder) {
                                 IconButton(onClick = { viewModel.toggleLibrary(file.fid) }) {
                                     Icon(
@@ -150,11 +150,11 @@ fun VideoRouteScreen(
             // 影视库模式 (海报墙)
             if (uiState.selectedLibraryFids.isEmpty()) {
                 Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                    AppText("请在网盘浏览中，点击右侧星标勾选你的媒体文件夹")
+                    AppText("请在网盘浏览中勾选你的媒体文件夹")
                 }
             } else if (uiState.libraryVideos.isEmpty()) {
                 Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                    AppText("选中的文件夹里没有找到视频")
+                    AppText("没有找到视频，请检查选中文件夹内部是否有视频")
                 }
             } else {
                 LazyVerticalGrid(
@@ -166,7 +166,7 @@ fun VideoRouteScreen(
                 ) {
                     items(uiState.libraryVideos) { video ->
                         Column(modifier = Modifier.fillMaxWidth()) {
-                            // 海报占位图 (2:3)
+                            // ➕ 使用 Coil 渲染网络海报，如果没有海报则显示灰底文字占位
                             Box(
                                 modifier = Modifier
                                     .fillMaxWidth()
@@ -174,11 +174,20 @@ fun VideoRouteScreen(
                                     .background(Color.LightGray),
                                 contentAlignment = Alignment.Center
                             ) {
-                                AppText("待刮削", color = Color.Gray)
+                                if (video.posterUrl != null) {
+                                    AsyncImage(
+                                        model = video.posterUrl,
+                                        contentDescription = video.parsedInfo?.title,
+                                        modifier = Modifier.fillMaxSize(),
+                                        contentScale = ContentScale.Crop
+                                    )
+                                } else {
+                                    AppText("无海报", color = Color.Gray, style = MaterialTheme.typography.bodySmall)
+                                }
                             }
                             AppText(
                                 text = video.parsedInfo?.title ?: video.name,
-                                maxLines = 1,
+                                maxLines = 2,
                                 overflow = TextOverflow.Ellipsis,
                                 modifier = Modifier.padding(top = 4.dp),
                                 style = MaterialTheme.typography.bodySmall
@@ -190,7 +199,7 @@ fun VideoRouteScreen(
         }
     }
 
-    // 设置弹窗 (Cookie + TMDB Key)
+    // 设置弹窗
     if (showSettingsDialog) {
         var inputCookie by remember { mutableStateOf(uiState.cookie) }
         var inputTmdbKey by remember { mutableStateOf(uiState.tmdbApiKey) }
@@ -211,7 +220,7 @@ fun VideoRouteScreen(
                     maxLines = 3
                 )
                 
-                AppText(text = "TMDB API Key (必须)")
+                AppText(text = "TMDB API Key (v3 auth)")
                 OutlinedTextField(
                     value = inputTmdbKey,
                     onValueChange = { inputTmdbKey = it },
