@@ -3,6 +3,8 @@ package io.legado.app.ui.main.video
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import io.legado.app.data.repository.VideoSettingsRepository
+import io.legado.app.utils.ParsedVideoName
+import io.legado.app.utils.VideoFileNameParser
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -14,11 +16,11 @@ import okhttp3.Request
 import org.json.JSONObject
 import java.util.concurrent.TimeUnit
 
-// 新增：夸克文件数据类
 data class QuarkFile(
     val fid: String,
     val name: String,
-    val isFolder: Boolean
+    val isFolder: Boolean,
+    val parsedInfo: ParsedVideoName? = null // ➕ 新增解析信息
 )
 
 class VideoScraperViewModel(
@@ -32,21 +34,25 @@ class VideoScraperViewModel(
 
     private val _uiState = MutableStateFlow(VideoUiState())
     val uiState = _uiState.asStateFlow()
-
-    // 记录文件夹路径历史（用于返回上一级）
+    
     private val pathHistory = mutableListOf<String>()
 
     init {
-        _uiState.update { it.copy(cookie = videoSettingsRepository.quarkCookie) }
+        _uiState.update { 
+            it.copy(
+                cookie = videoSettingsRepository.quarkCookie,
+                tmdbApiKey = videoSettingsRepository.tmdbApiKey
+            ) 
+        }
     }
 
-    fun saveCookie(cookie: String) {
+    fun saveSettings(cookie: String, tmdbKey: String) {
         val cleanCookie = cookie.replace("\n", "").replace("\r", "").trim()
         videoSettingsRepository.quarkCookie = cleanCookie
-        _uiState.update { it.copy(cookie = cleanCookie) }
+        videoSettingsRepository.tmdbApiKey = tmdbKey
+        _uiState.update { it.copy(cookie = cleanCookie, tmdbApiKey = tmdbKey) }
     }
 
-    // 默认请求根目录 fid="0"
     fun fetchQuarkFiles(fid: String = "0", isBack: Boolean = false) {
         val cookie = _uiState.value.cookie
         if (cookie.isBlank()) {
@@ -54,14 +60,10 @@ class VideoScraperViewModel(
             return
         }
 
-        // 处理路径历史
         if (fid == "0") {
             pathHistory.clear()
-        } else if (!isBack) {
-            // 如果是进入新目录，记录当前所在的父目录
-            if (_uiState.value.currentFid != fid) {
-                pathHistory.add(_uiState.value.currentFid)
-            }
+        } else if (!isBack && _uiState.value.currentFid != fid) {
+            pathHistory.add(_uiState.value.currentFid)
         }
 
         _uiState.update { 
@@ -80,9 +82,8 @@ class VideoScraperViewModel(
                     val request = Request.Builder()
                         .url(url)
                         .header("Cookie", cookie)
-                        .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+                        .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64)")
                         .header("Referer", "https://pan.quark.cn/")
-                        .header("Accept", "application/json, text/plain, */*")
                         .build()
 
                     val response = client.newCall(request).execute()
@@ -105,7 +106,14 @@ class VideoScraperViewModel(
                                 val fileName = item.optString("file_name")
                                 val fileFid = item.optString("fid")
                                 val isFolder = item.optBoolean("dir", false)
-                                files.add(QuarkFile(fileFid, fileName, isFolder))
+                                
+                                // ➕ 如果是文件，直接在这里做宽松解析
+                                val parsed = if (!isFolder) VideoFileNameParser.parse(fileName) else null
+                                
+                                // 如果是视频文件或文件夹才加入列表，过滤掉 apk、txt 等
+                                if (isFolder || (parsed != null && parsed.isVideo)) {
+                                    files.add(QuarkFile(fileFid, fileName, isFolder, parsed))
+                                }
                             }
                         }
                         _uiState.update { it.copy(isLoading = false, fileList = files) }
@@ -121,13 +129,11 @@ class VideoScraperViewModel(
         }
     }
 
-    // 返回上一级
     fun goBack() {
         if (pathHistory.isNotEmpty()) {
             val parentFid = pathHistory.removeAt(pathHistory.size - 1)
             fetchQuarkFiles(parentFid, isBack = true)
         } else {
-            // 已经到根目录了
             fetchQuarkFiles("0")
         }
     }
@@ -135,6 +141,7 @@ class VideoScraperViewModel(
 
 data class VideoUiState(
     val cookie: String = "",
+    val tmdbApiKey: String = "",
     val currentFid: String = "0",
     val isLoading: Boolean = false,
     val errorMsg: String? = null,
