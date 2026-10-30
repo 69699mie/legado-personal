@@ -12,10 +12,16 @@ class VideoSettingsRepository(context: Context) {
             prefs.edit().putString("quark_cookie", value).apply()
         }
 
-    // ➕ 新增：TMDB API Key 存储
     var tmdbApiKey: String
         get() = prefs.getString("tmdb_api_key", "") ?: ""
         set(value) {
             prefs.edit().putString("tmdb_api_key", value).apply()
+        }
+
+    // ➕ 新增：保存选中作为媒体库的文件夹 FID 列表 (逗号分隔)
+    var libraryFids: String
+        get() = prefs.getString("library_fids", "") ?: ""
+        set(value) {
+            prefs.edit().putString("library_fids", value).apply()
         }
 }
