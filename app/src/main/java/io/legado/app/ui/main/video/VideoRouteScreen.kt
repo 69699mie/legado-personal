@@ -3,7 +3,16 @@ package io.legado.app.ui.main.video
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
@@ -16,8 +25,19 @@ import androidx.compose.material.icons.filled.Movie
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.outlined.StarBorder
-import androidx.compose.material3.*
-import androidx.compose.runtime.*
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Tab
+import androidx.compose.material3.TabRow
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -64,7 +84,9 @@ fun VideoRouteScreen(
             
             TabRow(
                 selectedTabIndex = if (uiState.isLibraryMode) 1 else 0,
-                modifier = Modifier.weight(1f).padding(horizontal = 8.dp),
+                modifier = Modifier
+                    .weight(1f)
+                    .padding(horizontal = 8.dp),
                 containerColor = Color.Transparent,
                 contentColor = MaterialTheme.colorScheme.primary
             ) {
@@ -85,13 +107,22 @@ fun VideoRouteScreen(
             }
         }
 
-        if (uiState.isLoading) {
+        // 始终显示错误信息，不隐藏
+        if (uiState.errorMsg != null && !uiState.isLoading) {
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .background(Color(0xFFFFCDD2))
+                    .padding(8.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                AppText(uiState.errorMsg!!, color = Color.Red, style = MaterialTheme.typography.bodySmall)
+            }
+        }
+
+        if (uiState.isLoading && uiState.libraryVideos.isEmpty() && uiState.fileList.isEmpty()) {
             Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                 CircularProgressIndicator()
-            }
-        } else if (uiState.errorMsg != null) {
-            Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                AppText(uiState.errorMsg!!, color = Color.Red, modifier = Modifier.padding(16.dp))
             }
         } else if (!uiState.isLibraryMode) {
             // 网盘浏览模式
@@ -101,8 +132,8 @@ fun VideoRouteScreen(
                 }
             } else {
                 LazyColumn(
-                    modifier = Modifier.fillMaxSize(),
-                    contentPadding = PaddingValues(16.dp),
+                    modifier = Modifier.fillMaxSize(), 
+                    contentPadding = PaddingValues(16.dp), 
                     verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
                     items(uiState.fileList) { file ->
@@ -120,19 +151,15 @@ fun VideoRouteScreen(
                                 contentDescription = null,
                                 tint = if (file.isFolder) Color(0xFFFFB300) else Color.Gray
                             )
-                            Column(modifier = Modifier.padding(start = 12.dp).weight(1f)) {
+                            Column(modifier = Modifier
+                                .padding(start = 12.dp)
+                                .weight(1f)) {
                                 if (file.isFolder) {
                                     AppText(text = file.name)
                                 } else {
-                                    val info = file.parsedInfo
-                                    if (info != null) {
-                                        AppText(text = info.title, style = MaterialTheme.typography.titleMedium)
-                                    } else {
-                                        AppText(text = file.name)
-                                    }
+                                    AppText(text = file.parsedInfo?.title ?: file.name, style = MaterialTheme.typography.titleMedium)
                                 }
                             }
-                            
                             if (file.isFolder) {
                                 IconButton(onClick = { viewModel.toggleLibrary(file.fid) }) {
                                     Icon(
@@ -147,26 +174,32 @@ fun VideoRouteScreen(
                 }
             }
         } else {
-            // 影视库模式 (海报墙)
+            // 影视库模式
             if (uiState.selectedLibraryFids.isEmpty()) {
                 Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                    AppText("请在网盘浏览中勾选你的媒体文件夹")
+                    AppText("请勾选媒体文件夹")
                 }
             } else if (uiState.libraryVideos.isEmpty()) {
                 Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                    AppText("没有找到视频，请检查选中文件夹内部是否有视频")
+                    if (uiState.isLoading) {
+                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                            CircularProgressIndicator()
+                            AppText("正在深度扫描网盘...", modifier = Modifier.padding(top = 16.dp))
+                        }
+                    } else {
+                        AppText("没找到任何视频")
+                    }
                 }
             } else {
                 LazyVerticalGrid(
-                    columns = GridCells.Fixed(3),
+                    columns = GridCells.Fixed(3), 
                     modifier = Modifier.fillMaxSize(),
-                    contentPadding = PaddingValues(16.dp),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    contentPadding = PaddingValues(16.dp), 
+                    horizontalArrangement = Arrangement.spacedBy(8.dp), 
                     verticalArrangement = Arrangement.spacedBy(16.dp)
                 ) {
                     items(uiState.libraryVideos) { video ->
                         Column(modifier = Modifier.fillMaxWidth()) {
-                            // ➕ 使用 Coil 渲染网络海报，如果没有海报则显示灰底文字占位
                             Box(
                                 modifier = Modifier
                                     .fillMaxWidth()
@@ -176,9 +209,9 @@ fun VideoRouteScreen(
                             ) {
                                 if (video.posterUrl != null) {
                                     AsyncImage(
-                                        model = video.posterUrl,
-                                        contentDescription = video.parsedInfo?.title,
-                                        modifier = Modifier.fillMaxSize(),
+                                        model = video.posterUrl, 
+                                        contentDescription = null,
+                                        modifier = Modifier.fillMaxSize(), 
                                         contentScale = ContentScale.Crop
                                     )
                                 } else {
@@ -187,9 +220,9 @@ fun VideoRouteScreen(
                             }
                             AppText(
                                 text = video.parsedInfo?.title ?: video.name,
-                                maxLines = 2,
+                                maxLines = 2, 
                                 overflow = TextOverflow.Ellipsis,
-                                modifier = Modifier.padding(top = 4.dp),
+                                modifier = Modifier.padding(top = 4.dp), 
                                 style = MaterialTheme.typography.bodySmall
                             )
                         }
