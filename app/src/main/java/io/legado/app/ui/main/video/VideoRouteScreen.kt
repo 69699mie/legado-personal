@@ -7,6 +7,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.statusBarsPadding // ➕ 新增
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
@@ -40,7 +41,12 @@ fun VideoRouteScreen(
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     var showCookieDialog by remember { mutableStateOf(false) }
 
-    Column(modifier = modifier.fillMaxSize()) {
+    // 💡 修复：加上 statusBarsPadding()，防止内容与系统状态栏重叠
+    Column(
+        modifier = modifier
+            .fillMaxSize()
+            .statusBarsPadding() 
+    ) {
         // 顶部操作栏
         Box(
             modifier = Modifier
@@ -63,7 +69,12 @@ fun VideoRouteScreen(
             }
         } else if (uiState.errorMsg != null) {
             Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                AppText(text = uiState.errorMsg!!, color = Color.Red)
+                // 使用可滚动或换行的文本展示错误，因为错误信息可能很长
+                AppText(
+                    text = uiState.errorMsg!!, 
+                    color = Color.Red,
+                    modifier = Modifier.padding(16.dp)
+                )
             }
         } else if (uiState.fileList.isEmpty()) {
             Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
