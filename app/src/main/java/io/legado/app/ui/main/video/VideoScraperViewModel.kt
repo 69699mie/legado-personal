@@ -22,7 +22,7 @@ data class QuarkFile(
     val name: String,
     val isFolder: Boolean,
     val parsedInfo: ParsedVideoName? = null,
-    val posterUrl: String? = null // ➕ 存储刮削到的海报
+    val posterUrl: String? = null
 )
 
 class VideoScraperViewModel(
@@ -78,124 +78,133 @@ class VideoScraperViewModel(
         }
     }
 
-    // ➕ 扫描所有选中的文件夹（递归深搜）
     fun loadLibraryVideos() {
         val cookie = _uiState.value.cookie
         val apiKey = _uiState.value.tmdbApiKey
         val libs = _uiState.value.selectedLibraryFids
         
         if (libs.isEmpty()) {
-            _uiState.update { it.copy(libraryVideos = emptyList()) }
+            _uiState.update { it.copy(libraryVideos = emptyList(), errorMsg = "请先勾选文件夹") }
             return
         }
 
-        _uiState.update { it.copy(isLoading = true, errorMsg = null) }
+        _uiState.update { it.copy(isLoading = true, errorMsg = null, libraryVideos = emptyList()) }
 
         viewModelScope.launch {
             try {
-                val allVideos = withContext(Dispatchers.IO) {
-                    val results = mutableListOf<QuarkFile>()
+                val allVideos = mutableListOf<QuarkFile>()
+                withContext(Dispatchers.IO) {
                     for (fid in libs) {
-                        // 递归获取该文件夹下所有的视频文件
-                        results.addAll(fetchVideosRecursively(cookie, fid))
+                        // 递归遍历，有发现立刻更新 UI
+                        fetchVideosRecursively(cookie, fid, allVideos)
                     }
-                    results
                 }
                 
-                _uiState.update { it.copy(isLoading = false, libraryVideos = allVideos) }
+                _uiState.update { it.copy(libraryVideos = allVideos) }
                 
-                // ➕ 如果配置了 TMDB，开始异步刮削海报
                 if (apiKey.isNotBlank()) {
                     scrapePosters(allVideos, apiKey)
+                } else {
+                    _uiState.update { it.copy(isLoading = false, errorMsg = "未配置 TMDB API Key，无法获取海报") }
                 }
             } catch (e: Exception) {
-                _uiState.update { it.copy(isLoading = false, errorMsg = "获取媒体库失败: ${e.message}") }
+                _uiState.update { it.copy(isLoading = false, errorMsg = "扫描异常: ${e.message}") }
             }
         }
     }
 
-    // 递归解析网盘接口
-    private suspend fun fetchVideosRecursively(cookie: String, parentFid: String): List<QuarkFile> {
-        val result = mutableListOf<QuarkFile>()
-        val url = "https://drive-pc.quark.cn/1/clouddrive/file/sort?pr=ucpro&fr=pc&uc_param_str=&pdir_fid=$parentFid&_page=1&_size=100&_sort=file_type:asc,updated_at:desc"
-        val request = Request.Builder()
-            .url(url)
-            .header("Cookie", cookie)
-            .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64)")
-            .header("Referer", "https://pan.quark.cn/")
-            .build()
+    private suspend fun fetchVideosRecursively(cookie: String, parentFid: String, resultList: MutableList<QuarkFile>) {
+        withContext(Dispatchers.IO) {
+            val url = "https://drive-pc.quark.cn/1/clouddrive/file/sort?pr=ucpro&fr=pc&uc_param_str=&pdir_fid=$parentFid&_page=1&_size=100&_sort=file_type:asc,updated_at:desc"
+            val request = Request.Builder()
+                .url(url)
+                .header("Cookie", cookie)
+                .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64)")
+                .header("Referer", "https://pan.quark.cn/")
+                .build()
 
-        try {
-            val response = client.newCall(request).execute()
-            val body = response.body?.string()
-            if (!body.isNullOrBlank()) {
-                val json = JSONObject(body)
-                if (json.optInt("code", -1) == 0) {
-                    val list = json.optJSONObject("data")?.optJSONArray("list")
-                    if (list != null) {
-                        for (i in 0 until list.length()) {
-                            val item = list.getJSONObject(i)
-                            val fileName = item.optString("file_name")
-                            val fileFid = item.optString("fid")
-                            val isFolder = item.optBoolean("dir", false)
-                            
-                            if (isFolder) {
-                                // 如果是文件夹，继续往里钻
-                                result.addAll(fetchVideosRecursively(cookie, fileFid))
-                            } else {
-                                val parsed = VideoFileNameParser.parse(fileName)
-                                if (parsed.isVideo) {
-                                    result.add(QuarkFile(fileFid, fileName, false, parsed))
+            try {
+                client.newCall(request).execute().use { response ->
+                    val body = response.body?.string()
+                    if (!body.isNullOrBlank()) {
+                        val json = JSONObject(body)
+                        if (json.optInt("code", -1) == 0) {
+                            val list = json.optJSONObject("data")?.optJSONArray("list")
+                            if (list != null) {
+                                for (i in 0 until list.length()) {
+                                    val item = list.getJSONObject(i)
+                                    val fileName = item.optString("file_name")
+                                    val fileFid = item.optString("fid")
+                                    val isFolder = item.optBoolean("dir", false)
+                                    
+                                    if (isFolder) {
+                                        // 如果文件夹太深，可以限制层数，这里暂不限制
+                                        fetchVideosRecursively(cookie, fileFid, resultList)
+                                    } else {
+                                        val parsed = VideoFileNameParser.parse(fileName)
+                                        if (parsed.isVideo) {
+                                            val qf = QuarkFile(fileFid, fileName, false, parsed)
+                                            resultList.add(qf)
+                                            // 实时推送到 UI，让用户看到进度
+                                            withContext(Dispatchers.Main) {
+                                                _uiState.update { it.copy(libraryVideos = resultList.toList()) }
+                                            }
+                                        }
+                                    }
                                 }
                             }
                         }
                     }
                 }
+            } catch (e: Exception) {
+                e.printStackTrace()
             }
-        } catch (e: Exception) {
-            // 忽略单个子文件夹的报错，防止整个刮削中断
         }
-        return result
     }
 
-    // ➕ 请求 TMDB 替换海报
     private fun scrapePosters(videos: List<QuarkFile>, apiKey: String) {
         viewModelScope.launch(Dispatchers.IO) {
+            var failedCount = 0
             val updatedList = videos.map { video ->
                 val title = video.parsedInfo?.title ?: return@map video
                 try {
                     val query = URLEncoder.encode(title, "UTF-8")
                     val url = "https://api.themoviedb.org/3/search/multi?api_key=$apiKey&query=$query&language=zh-CN"
                     val request = Request.Builder().url(url).build()
-                    val response = client.newCall(request).execute()
-                    val body = response.body?.string()
                     
-                    if (!body.isNullOrBlank()) {
-                        val json = JSONObject(body)
-                        val results = json.optJSONArray("results")
-                        if (results != null && results.length() > 0) {
-                            // 取第一个匹配结果
-                            val first = results.getJSONObject(0)
-                            val posterPath = first.optString("poster_path")
-                            if (posterPath != null && posterPath != "null") {
-                                // TMDB 海报基础路径
-                                val posterUrl = "https://image.tmdb.org/t/p/w300$posterPath"
-                                return@map video.copy(posterUrl = posterUrl)
+                    client.newCall(request).execute().use { response ->
+                        val body = response.body?.string()
+                        if (!body.isNullOrBlank()) {
+                            val json = JSONObject(body)
+                            // 如果 TMDB 返回了错误状态码
+                            if (json.has("status_code")) {
+                                failedCount++
+                            } else {
+                                val results = json.optJSONArray("results")
+                                if (results != null && results.length() > 0) {
+                                    val first = results.getJSONObject(0)
+                                    val posterPath = first.optString("poster_path")
+                                    if (posterPath != null && posterPath != "null" && posterPath != "") {
+                                        val posterUrl = "https://image.tmdb.org/t/p/w300$posterPath"
+                                        return@map video.copy(posterUrl = posterUrl)
+                                    }
+                                }
                             }
                         }
                     }
                 } catch (e: Exception) {
-                    // 忽略网络异常
+                    failedCount++
                 }
                 video
             }
+            
             withContext(Dispatchers.Main) {
-                _uiState.update { it.copy(libraryVideos = updatedList) }
+                val error = if (failedCount > 0) "有 $failedCount 个视频 TMDB 请求失败（请检查网络/API Key）" else null
+                _uiState.update { it.copy(isLoading = false, libraryVideos = updatedList, errorMsg = error) }
             }
         }
     }
 
-    // 网盘浏览模式下的单层获取
     fun fetchQuarkFiles(fid: String = "0", isBack: Boolean = false) {
         val cookie = _uiState.value.cookie
         if (cookie.isBlank()) {
@@ -219,8 +228,9 @@ class VideoScraperViewModel(
                         .header("Referer", "https://pan.quark.cn/")
                         .build()
 
-                    val response = client.newCall(request).execute()
-                    Pair(response.isSuccessful, response.body?.string())
+                    client.newCall(request).execute().use { response ->
+                        Pair(response.isSuccessful, response.body?.string())
+                    }
                 }
 
                 val (isSuccessful, body) = result
