@@ -14,13 +14,15 @@ import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import org.json.JSONObject
+import java.net.URLEncoder
 import java.util.concurrent.TimeUnit
 
 data class QuarkFile(
     val fid: String,
     val name: String,
     val isFolder: Boolean,
-    val parsedInfo: ParsedVideoName? = null
+    val parsedInfo: ParsedVideoName? = null,
+    val posterUrl: String? = null // ➕ 存储刮削到的海报
 )
 
 class VideoScraperViewModel(
@@ -46,7 +48,6 @@ class VideoScraperViewModel(
                 selectedLibraryFids = savedLibs.toSet()
             ) 
         }
-        // ➕ 初始化时自动请求根目录
         fetchQuarkFiles("0")
     }
 
@@ -58,7 +59,6 @@ class VideoScraperViewModel(
         fetchQuarkFiles("0")
     }
 
-    // 切换文件夹是否加入媒体库
     fun toggleLibrary(fid: String) {
         val current = _uiState.value.selectedLibraryFids.toMutableSet()
         if (current.contains(fid)) current.remove(fid) else current.add(fid)
@@ -66,13 +66,11 @@ class VideoScraperViewModel(
         videoSettingsRepository.libraryFids = current.joinToString(",")
         _uiState.update { it.copy(selectedLibraryFids = current) }
         
-        // 如果当前在影视库页面，刷新一下
         if (_uiState.value.isLibraryMode) {
             loadLibraryVideos()
         }
     }
 
-    // 切换 UI 模式（网盘浏览 vs 影视库）
     fun setMode(isLibraryMode: Boolean) {
         _uiState.update { it.copy(isLibraryMode = isLibraryMode) }
         if (isLibraryMode) {
@@ -80,10 +78,12 @@ class VideoScraperViewModel(
         }
     }
 
-    // 扫描所有选中的文件夹，提取视频并放入海报墙列表
+    // ➕ 扫描所有选中的文件夹（递归深搜）
     fun loadLibraryVideos() {
         val cookie = _uiState.value.cookie
+        val apiKey = _uiState.value.tmdbApiKey
         val libs = _uiState.value.selectedLibraryFids
+        
         if (libs.isEmpty()) {
             _uiState.update { it.copy(libraryVideos = emptyList()) }
             return
@@ -93,50 +93,109 @@ class VideoScraperViewModel(
 
         viewModelScope.launch {
             try {
-                val allVideos = mutableListOf<QuarkFile>()
-                withContext(Dispatchers.IO) {
+                val allVideos = withContext(Dispatchers.IO) {
+                    val results = mutableListOf<QuarkFile>()
                     for (fid in libs) {
-                        val url = "https://drive-pc.quark.cn/1/clouddrive/file/sort?pr=ucpro&fr=pc&uc_param_str=&pdir_fid=$fid&_page=1&_size=100&_sort=file_type:asc,updated_at:desc"
-                        val request = Request.Builder()
-                            .url(url)
-                            .header("Cookie", cookie)
-                            .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64)")
-                            .header("Referer", "https://pan.quark.cn/")
-                            .build()
-
-                        val response = client.newCall(request).execute()
-                        val body = response.body?.string()
-
-                        if (body != null) {
-                            val json = JSONObject(body)
-                            if (json.optInt("code", -1) == 0) {
-                                val list = json.optJSONObject("data")?.optJSONArray("list")
-                                if (list != null) {
-                                    for (i in 0 until list.length()) {
-                                        val item = list.getJSONObject(i)
-                                        val fileName = item.optString("file_name")
-                                        val fileFid = item.optString("fid")
-                                        val isFolder = item.optBoolean("dir", false)
-                                        // 这里暂时只取直接包含的视频文件，不深度递归
-                                        if (!isFolder) {
-                                            val parsed = VideoFileNameParser.parse(fileName)
-                                            if (parsed.isVideo) {
-                                                allVideos.add(QuarkFile(fileFid, fileName, false, parsed))
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
+                        // 递归获取该文件夹下所有的视频文件
+                        results.addAll(fetchVideosRecursively(cookie, fid))
                     }
+                    results
                 }
+                
                 _uiState.update { it.copy(isLoading = false, libraryVideos = allVideos) }
+                
+                // ➕ 如果配置了 TMDB，开始异步刮削海报
+                if (apiKey.isNotBlank()) {
+                    scrapePosters(allVideos, apiKey)
+                }
             } catch (e: Exception) {
                 _uiState.update { it.copy(isLoading = false, errorMsg = "获取媒体库失败: ${e.message}") }
             }
         }
     }
 
+    // 递归解析网盘接口
+    private suspend fun fetchVideosRecursively(cookie: String, parentFid: String): List<QuarkFile> {
+        val result = mutableListOf<QuarkFile>()
+        val url = "https://drive-pc.quark.cn/1/clouddrive/file/sort?pr=ucpro&fr=pc&uc_param_str=&pdir_fid=$parentFid&_page=1&_size=100&_sort=file_type:asc,updated_at:desc"
+        val request = Request.Builder()
+            .url(url)
+            .header("Cookie", cookie)
+            .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64)")
+            .header("Referer", "https://pan.quark.cn/")
+            .build()
+
+        try {
+            val response = client.newCall(request).execute()
+            val body = response.body?.string()
+            if (!body.isNullOrBlank()) {
+                val json = JSONObject(body)
+                if (json.optInt("code", -1) == 0) {
+                    val list = json.optJSONObject("data")?.optJSONArray("list")
+                    if (list != null) {
+                        for (i in 0 until list.length()) {
+                            val item = list.getJSONObject(i)
+                            val fileName = item.optString("file_name")
+                            val fileFid = item.optString("fid")
+                            val isFolder = item.optBoolean("dir", false)
+                            
+                            if (isFolder) {
+                                // 如果是文件夹，继续往里钻
+                                result.addAll(fetchVideosRecursively(cookie, fileFid))
+                            } else {
+                                val parsed = VideoFileNameParser.parse(fileName)
+                                if (parsed.isVideo) {
+                                    result.add(QuarkFile(fileFid, fileName, false, parsed))
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        } catch (e: Exception) {
+            // 忽略单个子文件夹的报错，防止整个刮削中断
+        }
+        return result
+    }
+
+    // ➕ 请求 TMDB 替换海报
+    private fun scrapePosters(videos: List<QuarkFile>, apiKey: String) {
+        viewModelScope.launch(Dispatchers.IO) {
+            val updatedList = videos.map { video ->
+                val title = video.parsedInfo?.title ?: return@map video
+                try {
+                    val query = URLEncoder.encode(title, "UTF-8")
+                    val url = "https://api.themoviedb.org/3/search/multi?api_key=$apiKey&query=$query&language=zh-CN"
+                    val request = Request.Builder().url(url).build()
+                    val response = client.newCall(request).execute()
+                    val body = response.body?.string()
+                    
+                    if (!body.isNullOrBlank()) {
+                        val json = JSONObject(body)
+                        val results = json.optJSONArray("results")
+                        if (results != null && results.length() > 0) {
+                            // 取第一个匹配结果
+                            val first = results.getJSONObject(0)
+                            val posterPath = first.optString("poster_path")
+                            if (posterPath != null && posterPath != "null") {
+                                // TMDB 海报基础路径
+                                val posterUrl = "https://image.tmdb.org/t/p/w300$posterPath"
+                                return@map video.copy(posterUrl = posterUrl)
+                            }
+                        }
+                    }
+                } catch (e: Exception) {
+                    // 忽略网络异常
+                }
+                video
+            }
+            withContext(Dispatchers.Main) {
+                _uiState.update { it.copy(libraryVideos = updatedList) }
+            }
+        }
+    }
+
+    // 网盘浏览模式下的单层获取
     fun fetchQuarkFiles(fid: String = "0", isBack: Boolean = false) {
         val cookie = _uiState.value.cookie
         if (cookie.isBlank()) {
@@ -144,20 +203,10 @@ class VideoScraperViewModel(
             return
         }
 
-        if (fid == "0") {
-            pathHistory.clear()
-        } else if (!isBack && _uiState.value.currentFid != fid) {
-            pathHistory.add(_uiState.value.currentFid)
-        }
+        if (fid == "0") pathHistory.clear()
+        else if (!isBack && _uiState.value.currentFid != fid) pathHistory.add(_uiState.value.currentFid)
 
-        _uiState.update { 
-            it.copy(
-                currentFid = fid,
-                isLoading = true, 
-                errorMsg = null, 
-                fileList = emptyList()
-            ) 
-        }
+        _uiState.update { it.copy(currentFid = fid, isLoading = true, errorMsg = null, fileList = emptyList()) }
 
         viewModelScope.launch {
             try {
@@ -171,16 +220,13 @@ class VideoScraperViewModel(
                         .build()
 
                     val response = client.newCall(request).execute()
-                    val body = response.body?.string()
-                    Pair(response.isSuccessful, body)
+                    Pair(response.isSuccessful, response.body?.string())
                 }
 
                 val (isSuccessful, body) = result
-
                 if (isSuccessful && !body.isNullOrBlank()) {
                     val json = JSONObject(body)
-                    val code = json.optInt("code", -1)
-                    if (code == 0) {
+                    if (json.optInt("code", -1) == 0) {
                         val data = json.optJSONObject("data")
                         val list = data?.optJSONArray("list")
                         val files = mutableListOf<QuarkFile>()
@@ -190,9 +236,7 @@ class VideoScraperViewModel(
                                 val fileName = item.optString("file_name")
                                 val fileFid = item.optString("fid")
                                 val isFolder = item.optBoolean("dir", false)
-                                
                                 val parsed = if (!isFolder) VideoFileNameParser.parse(fileName) else null
-                                
                                 if (isFolder || (parsed != null && parsed.isVideo)) {
                                     files.add(QuarkFile(fileFid, fileName, isFolder, parsed))
                                 }
@@ -200,7 +244,7 @@ class VideoScraperViewModel(
                         }
                         _uiState.update { it.copy(isLoading = false, fileList = files) }
                     } else {
-                        _uiState.update { it.copy(isLoading = false, errorMsg = "获取失败 (Code: $code)") }
+                        _uiState.update { it.copy(isLoading = false, errorMsg = "获取失败 (Code: ${json.optInt("code")})") }
                     }
                 }
             } catch (e: Exception) {
@@ -226,7 +270,6 @@ data class VideoUiState(
     val isLoading: Boolean = false,
     val errorMsg: String? = null,
     val fileList: List<QuarkFile> = emptyList(),
-    // ➕ 新增媒体库相关状态
     val isLibraryMode: Boolean = false,
     val selectedLibraryFids: Set<String> = emptySet(),
     val libraryVideos: List<QuarkFile> = emptyList()
