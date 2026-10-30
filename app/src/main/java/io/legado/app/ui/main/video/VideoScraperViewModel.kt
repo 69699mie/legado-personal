@@ -14,6 +14,13 @@ import okhttp3.Request
 import org.json.JSONObject
 import java.util.concurrent.TimeUnit
 
+// 新增：夸克文件数据类
+data class QuarkFile(
+    val fid: String,
+    val name: String,
+    val isFolder: Boolean
+)
+
 class VideoScraperViewModel(
     private val videoSettingsRepository: VideoSettingsRepository
 ) : ViewModel() {
@@ -26,31 +33,50 @@ class VideoScraperViewModel(
     private val _uiState = MutableStateFlow(VideoUiState())
     val uiState = _uiState.asStateFlow()
 
+    // 记录文件夹路径历史（用于返回上一级）
+    private val pathHistory = mutableListOf<String>()
+
     init {
         _uiState.update { it.copy(cookie = videoSettingsRepository.quarkCookie) }
     }
 
     fun saveCookie(cookie: String) {
-        // 保存时去掉首尾可能存在的换行和空格
         val cleanCookie = cookie.replace("\n", "").replace("\r", "").trim()
         videoSettingsRepository.quarkCookie = cleanCookie
         _uiState.update { it.copy(cookie = cleanCookie) }
     }
 
-    fun fetchQuarkFiles() {
+    // 默认请求根目录 fid="0"
+    fun fetchQuarkFiles(fid: String = "0", isBack: Boolean = false) {
         val cookie = _uiState.value.cookie
         if (cookie.isBlank()) {
             _uiState.update { it.copy(errorMsg = "请先设置 Cookie") }
             return
         }
 
-        _uiState.update { it.copy(isLoading = true, errorMsg = null, fileList = emptyList()) }
+        // 处理路径历史
+        if (fid == "0") {
+            pathHistory.clear()
+        } else if (!isBack) {
+            // 如果是进入新目录，记录当前所在的父目录
+            if (_uiState.value.currentFid != fid) {
+                pathHistory.add(_uiState.value.currentFid)
+            }
+        }
+
+        _uiState.update { 
+            it.copy(
+                currentFid = fid,
+                isLoading = true, 
+                errorMsg = null, 
+                fileList = emptyList()
+            ) 
+        }
 
         viewModelScope.launch {
             try {
-                // 💡 修复：将阻塞的网络请求强制切换到 IO 线程
                 val result = withContext(Dispatchers.IO) {
-                    val url = "https://drive-pc.quark.cn/1/clouddrive/file/sort?pr=ucpro&fr=pc&uc_param_str=&pdir_fid=0&_page=1&_size=50&_sort=file_type:asc,updated_at:desc"
+                    val url = "https://drive-pc.quark.cn/1/clouddrive/file/sort?pr=ucpro&fr=pc&uc_param_str=&pdir_fid=$fid&_page=1&_size=100&_sort=file_type:asc,updated_at:desc"
                     val request = Request.Builder()
                         .url(url)
                         .header("Cookie", cookie)
@@ -72,32 +98,45 @@ class VideoScraperViewModel(
                     if (code == 0) {
                         val data = json.optJSONObject("data")
                         val list = data?.optJSONArray("list")
-                        val names = mutableListOf<String>()
+                        val files = mutableListOf<QuarkFile>()
                         if (list != null) {
                             for (i in 0 until list.length()) {
                                 val item = list.getJSONObject(i)
                                 val fileName = item.optString("file_name")
-                                names.add(fileName)
+                                val fileFid = item.optString("fid")
+                                val isFolder = item.optBoolean("dir", false)
+                                files.add(QuarkFile(fileFid, fileName, isFolder))
                             }
                         }
-                        _uiState.update { it.copy(isLoading = false, fileList = names) }
+                        _uiState.update { it.copy(isLoading = false, fileList = files) }
                     } else {
-                        _uiState.update { it.copy(isLoading = false, errorMsg = "获取失败，Cookie 可能已过期或缺少字段 (Code: $code)") }
+                        _uiState.update { it.copy(isLoading = false, errorMsg = "获取失败，Cookie 可能已过期 (Code: $code)") }
                     }
                 } else {
-                    _uiState.update { it.copy(isLoading = false, errorMsg = "网络请求失败，请检查网络或 Cookie 格式") }
+                    _uiState.update { it.copy(isLoading = false, errorMsg = "网络请求失败") }
                 }
             } catch (e: Exception) {
-                val errDetail = e.toString()
-                _uiState.update { it.copy(isLoading = false, errorMsg = "请求异常: $errDetail") }
+                _uiState.update { it.copy(isLoading = false, errorMsg = "请求异常: ${e.message}") }
             }
+        }
+    }
+
+    // 返回上一级
+    fun goBack() {
+        if (pathHistory.isNotEmpty()) {
+            val parentFid = pathHistory.removeAt(pathHistory.size - 1)
+            fetchQuarkFiles(parentFid, isBack = true)
+        } else {
+            // 已经到根目录了
+            fetchQuarkFiles("0")
         }
     }
 }
 
 data class VideoUiState(
     val cookie: String = "",
+    val currentFid: String = "0",
     val isLoading: Boolean = false,
     val errorMsg: String? = null,
-    val fileList: List<String> = emptyList()
+    val fileList: List<QuarkFile> = emptyList()
 )
