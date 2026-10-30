@@ -101,7 +101,9 @@ import io.legado.app.data.repository.WebDavReadingProgressRepository
 import io.legado.app.data.repository.manga.DefaultMangaReaderSession
 import io.legado.app.data.repository.manga.MangaReaderActionRepository
 import io.legado.app.data.repository.manga.MangaReaderDataRepository
-import io.legado.app.data.security.CloudTtsCredentialCipher
+// ➕ 新增视频模块的依赖导入
+import io.legado.app.data.repository.VideoSettingsRepository
+import io.legado.app.security.CloudTtsCredentialCipher
 import io.legado.app.domain.gateway.AiArtifactGateway
 import io.legado.app.domain.gateway.AiChatGateway
 import io.legado.app.domain.gateway.AiMemoryGateway
@@ -319,6 +321,8 @@ import io.legado.app.ui.main.home.HomeViewModel
 import io.legado.app.ui.main.homepage.HomepageViewModel
 import io.legado.app.ui.main.my.MyViewModel
 import io.legado.app.ui.main.rss.RssViewModel
+// ➕ 新增视频模块 ViewModel 导入
+import io.legado.app.ui.main.video.VideoScraperViewModel
 import io.legado.app.ui.replace.ReplaceEditRoute
 import io.legado.app.ui.replace.ReplaceRuleViewModel
 import io.legado.app.ui.replace.edit.ReplaceEditViewModel
@@ -353,7 +357,6 @@ val appModule = module {
     single { get<AppDatabase>().searchContentHistoryDao }
     single { get<AppDatabase>().rssStarDao }
     single { get<AppDatabase>().ruleSubDao }
-    // ➕ 1. 新增 VideoDao 单例注册
     single { get<AppDatabase>().videoDao }
 
     singleOf(::ReadRecordRepository)
@@ -371,6 +374,10 @@ val appModule = module {
     singleOf(::BookshelfRepository)
     singleOf(::DictRuleRepository)
     singleOf(::TxtTocRuleRepository)
+    
+    // ➕ 注册影视模块的配置存储
+    singleOf(::VideoSettingsRepository)
+
     single {
         SearchContentRepository(
             titleModeProvider = { io.legado.app.help.config.ReadBookConfig.titleMode },
@@ -622,6 +629,10 @@ val appModule = module {
     viewModelOf(::ReplaceRuleViewModel)
     viewModelOf(::AllBookmarkViewModel)
     viewModelOf(::TxtTocRuleViewModel)
+    
+    // ➕ 注册影视模块 ViewModel
+    viewModelOf(::VideoScraperViewModel)
+
     viewModel {
         TxtTocRulePreviewViewModel(
             app = get(),
