@@ -16,7 +16,6 @@ class VideoScraperViewModel(
     private val videoSettingsRepository: VideoSettingsRepository
 ) : ViewModel() {
 
-    // 影视模块专用的网络客户端，互不干扰
     private val client = OkHttpClient.Builder()
         .connectTimeout(15, TimeUnit.SECONDS)
         .readTimeout(15, TimeUnit.SECONDS)
@@ -26,13 +25,14 @@ class VideoScraperViewModel(
     val uiState = _uiState.asStateFlow()
 
     init {
-        // 初始化读取本地保存的 Cookie
         _uiState.update { it.copy(cookie = videoSettingsRepository.quarkCookie) }
     }
 
     fun saveCookie(cookie: String) {
-        videoSettingsRepository.quarkCookie = cookie
-        _uiState.update { it.copy(cookie = cookie) }
+        // 💡 保存时去掉首尾可能存在的换行和空格
+        val cleanCookie = cookie.replace("\n", "").replace("\r", "").trim()
+        videoSettingsRepository.quarkCookie = cleanCookie
+        _uiState.update { it.copy(cookie = cleanCookie) }
     }
 
     fun fetchQuarkFiles() {
@@ -46,12 +46,14 @@ class VideoScraperViewModel(
 
         viewModelScope.launch {
             try {
-                // 调用夸克网盘文件列表 API（根目录）
-                val url = "https://drive.quark.cn/1/clouddrive/file/sort?pr=ucpro&fr=pc&uc_param_str=&pdir_fid=0&_page=1&_size=50&_sort=file_type:asc,updated_at:desc"
+                // 💡 修复：使用 PC 端 API 地址
+                val url = "https://drive-pc.quark.cn/1/clouddrive/file/sort?pr=ucpro&fr=pc&uc_param_str=&pdir_fid=0&_page=1&_size=50&_sort=file_type:asc,updated_at:desc"
                 val request = Request.Builder()
                     .url(url)
                     .header("Cookie", cookie)
                     .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+                    .header("Referer", "https://pan.quark.cn/")
+                    .header("Accept", "application/json, text/plain, */*")
                     .build()
 
                 val response = client.newCall(request).execute()
@@ -68,7 +70,6 @@ class VideoScraperViewModel(
                             for (i in 0 until list.length()) {
                                 val item = list.getJSONObject(i)
                                 val fileName = item.optString("file_name")
-                                // 暂时把网盘里的所有文件名抓出来
                                 names.add(fileName)
                             }
                         }
@@ -80,7 +81,9 @@ class VideoScraperViewModel(
                     _uiState.update { it.copy(isLoading = false, errorMsg = "网络请求失败: ${response.code}") }
                 }
             } catch (e: Exception) {
-                _uiState.update { it.copy(isLoading = false, errorMsg = "请求异常: ${e.message}") }
+                // 💡 修复：使用 e.toString() 能显示具体的异常类型，比如是因为换行符还是网络不通
+                val errDetail = e.toString()
+                _uiState.update { it.copy(isLoading = false, errorMsg = "请求异常: $errDetail") }
             }
         }
     }
