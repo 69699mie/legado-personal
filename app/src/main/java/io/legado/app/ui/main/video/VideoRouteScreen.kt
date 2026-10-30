@@ -1,57 +1,123 @@
 package io.legado.app.ui.main.video
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.lazy.grid.GridCells
-import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
-import androidx.compose.foundation.lazy.grid.items
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.window.Dialog
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import io.legado.app.ui.widget.components.text.AppText
+import org.koin.androidx.compose.koinViewModel
 
 @Composable
 fun VideoRouteScreen(
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    viewModel: VideoScraperViewModel = koinViewModel()
 ) {
-    // 临时假数据，用于预览海报墙网格
-    val dummyList = List(10) { it }
+    val uiState by viewModel.uiState.collectAsStateWithLifecycle()
+    var showCookieDialog by remember { mutableStateOf(false) }
 
-    LazyVerticalGrid(
-        columns = GridCells.Fixed(3),
-        modifier = modifier.fillMaxSize(),
-        contentPadding = androidx.compose.foundation.layout.PaddingValues(16.dp)
-    ) {
-        items(dummyList) { index ->
+    Column(modifier = modifier.fillMaxSize()) {
+        // 顶部操作栏
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .background(Color(0xFFF5F5F5))
+                .padding(16.dp)
+        ) {
+            AppText(text = "夸克网盘文件列表 (测试连通性)")
+            IconButton(
+                onClick = { showCookieDialog = true },
+                modifier = Modifier.align(Alignment.CenterEnd)
+            ) {
+                Icon(imageVector = Icons.Default.Settings, contentDescription = "设置Cookie")
+            }
+        }
+
+        if (uiState.isLoading) {
+            Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                CircularProgressIndicator()
+            }
+        } else if (uiState.errorMsg != null) {
+            Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                AppText(text = uiState.errorMsg!!, color = Color.Red)
+            }
+        } else if (uiState.fileList.isEmpty()) {
+            Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    AppText("暂无数据或 Cookie 为空")
+                    OutlinedButton(
+                        onClick = { viewModel.fetchQuarkFiles() },
+                        modifier = Modifier.padding(top = 16.dp)
+                    ) {
+                        AppText("测试拉取网盘文件")
+                    }
+                }
+            }
+        } else {
+            LazyColumn(
+                modifier = Modifier.fillMaxSize(),
+                contentPadding = androidx.compose.foundation.layout.PaddingValues(16.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                items(uiState.fileList) { fileName ->
+                    AppText(text = fileName)
+                }
+            }
+        }
+    }
+
+    // Cookie 设置弹窗
+    if (showCookieDialog) {
+        var inputCookie by remember { mutableStateOf(uiState.cookie) }
+        Dialog(onDismissRequest = { showCookieDialog = false }) {
             Column(
                 modifier = Modifier
+                    .background(Color.White)
+                    .padding(16.dp)
                     .fillMaxWidth()
-                    .padding(4.dp)
             ) {
-                // 海报占位图（2:3 比例）
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .aspectRatio(2f / 3f)
-                        .background(Color.Gray),
-                    contentAlignment = Alignment.Center
-                ) {
-                    AppText("海报 $index")
-                }
-                // 标题占位
-                AppText(
-                    text = "影视名称 $index",
-                    modifier = Modifier.padding(top = 4.dp),
-                    maxLines = 1
+                AppText(text = "导入夸克网盘 Cookie")
+                OutlinedTextField(
+                    value = inputCookie,
+                    onValueChange = { inputCookie = it },
+                    modifier = Modifier.padding(vertical = 16.dp),
+                    visualTransformation = PasswordVisualTransformation(),
+                    maxLines = 5
                 )
+                OutlinedButton(
+                    onClick = {
+                        viewModel.saveCookie(inputCookie)
+                        showCookieDialog = false
+                        viewModel.fetchQuarkFiles()
+                    },
+                    modifier = Modifier.align(Alignment.End)
+                ) {
+                    AppText("保存并请求")
+                }
             }
         }
     }
