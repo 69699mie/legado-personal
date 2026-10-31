@@ -31,6 +31,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shadow
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.PasswordVisualTransformation
@@ -50,6 +51,7 @@ fun VideoRouteScreen(
     viewModel: VideoScraperViewModel = koinViewModel()
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
+    val context = LocalContext.current
     var showSettingsDialog by remember { mutableStateOf(false) }
     
     var showManualScrapeDialog by remember { mutableStateOf(false) }
@@ -70,7 +72,7 @@ fun VideoRouteScreen(
         MediaDetailScreen(
             series = uiState.currentSeries!!,
             onBack = { viewModel.selectSeries(null) },
-            onPlay = { /* 播放逻辑 */ },
+            onPlay = { file -> viewModel.playVideo(context, file) }, // ➕ 传入 context 播放
             onLongClickPoster = {
                 manualScrapeSeries = it
                 showManualScrapeDialog = true
@@ -246,21 +248,33 @@ fun VideoRouteScreen(
     }
     
     if (showManualScrapeDialog && manualScrapeSeries != null) {
-        var searchKeyword by remember { mutableStateOf(manualScrapeSeries!!.originalParsedTitle) }
+        // 初始化为当前的官方名（如果已经刮削过）或者原始名
+        var searchKeyword by remember { mutableStateOf(manualScrapeSeries!!.title) }
         var searchResults by remember { mutableStateOf<List<TmdbSearchResult>?>(null) }
         var categoryInput by remember { mutableStateOf(manualScrapeSeries!!.category) } 
         
         Dialog(onDismissRequest = { showManualScrapeDialog = false }) {
             Column(modifier = Modifier.background(Color.White).padding(16.dp).fillMaxWidth().heightIn(max = 600.dp)) {
                 AppText("手动修正刮削信息")
+                
                 Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(vertical = 8.dp)) {
                     AppText("分类：", modifier = Modifier.width(50.dp))
                     OutlinedTextField(value = categoryInput, onValueChange = { categoryInput = it }, modifier = Modifier.weight(1f), placeholder = { AppText("如：动漫、电影") })
                 }
+                
                 Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(bottom = 8.dp)) {
                     AppText("名称：", modifier = Modifier.width(50.dp))
                     OutlinedTextField(value = searchKeyword, onValueChange = { searchKeyword = it }, modifier = Modifier.weight(1f))
-                    OutlinedButton(onClick = { viewModel.searchTmdbManually(searchKeyword) { searchResults = it } }, modifier = Modifier.padding(start = 8.dp)) { AppText("搜索") }
+                    // ➕ 增加了“仅应用名称”按钮
+                    OutlinedButton(onClick = { 
+                        viewModel.applyManualScrape(manualScrapeSeries!!.id, null, categoryInput, searchKeyword)
+                        showManualScrapeDialog = false
+                    }, modifier = Modifier.padding(start = 8.dp)) { AppText("仅保存") }
+                }
+
+                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(bottom = 8.dp)) {
+                    Spacer(modifier = Modifier.width(50.dp))
+                    OutlinedButton(onClick = { viewModel.searchTmdbManually(searchKeyword) { searchResults = it } }, modifier = Modifier.fillMaxWidth()) { AppText("去 TMDB 搜索海报") }
                 }
                 
                 if (searchResults == null) {
@@ -272,7 +286,7 @@ fun VideoRouteScreen(
                         items(searchResults!!) { result ->
                             Row(
                                 modifier = Modifier.fillMaxWidth().clickable {
-                                    viewModel.applyManualScrape(manualScrapeSeries!!.id, result, categoryInput)
+                                    viewModel.applyManualScrape(manualScrapeSeries!!.id, result, categoryInput, result.title)
                                     showManualScrapeDialog = false
                                 }.padding(vertical = 8.dp),
                                 verticalAlignment = Alignment.CenterVertically
@@ -338,7 +352,7 @@ fun SeriesPosterCard(series: MediaSeries, onClick: () -> Unit, onLongClick: () -
 }
 
 @Composable
-fun MediaDetailScreen(series: MediaSeries, onBack: () -> Unit, onPlay: () -> Unit, onLongClickPoster: (MediaSeries) -> Unit) {
+fun MediaDetailScreen(series: MediaSeries, onBack: () -> Unit, onPlay: (QuarkFile) -> Unit, onLongClickPoster: (MediaSeries) -> Unit) {
     LazyColumn(modifier = Modifier.fillMaxSize().background(Color.White)) {
         item {
             Box(modifier = Modifier.fillMaxWidth().height(300.dp)) {
@@ -370,10 +384,12 @@ fun MediaDetailScreen(series: MediaSeries, onBack: () -> Unit, onPlay: () -> Uni
                     }
                     AppText(text = "${series.year ?: ""}", style = MaterialTheme.typography.bodyMedium)
                     AppText(text = " | ${series.category}", style = MaterialTheme.typography.bodyMedium, color = Color.Gray)
+                    AppText(text = " | 夸克网盘", style = MaterialTheme.typography.bodyMedium, color = Color(0xFF2196F3)) // ➕ 来源
                 }
                 
+                // 默认播放第一集
                 Button(
-                    onClick = onPlay,
+                    onClick = { onPlay(series.videos.firstOrNull() ?: return@Button) },
                     modifier = Modifier.fillMaxWidth().height(50.dp),
                     colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF333333))
                 ) {
@@ -395,7 +411,7 @@ fun MediaDetailScreen(series: MediaSeries, onBack: () -> Unit, onPlay: () -> Uni
                     val e = file.parsedInfo?.episode
                     val label = if (s != null && e != null) "S${s}E${e}" else if (e != null) "第${e}集" else file.name
                     
-                    Column(modifier = Modifier.width(140.dp).clickable { onPlay() }) {
+                    Column(modifier = Modifier.width(140.dp).clickable { onPlay(file) }) { // ➕ 点击传入 file
                         Box(modifier = Modifier.fillMaxWidth().aspectRatio(16f/9f).clip(RoundedCornerShape(8.dp)).background(Color.DarkGray), contentAlignment = Alignment.Center) {
                             Icon(Icons.Default.PlayArrow, null, tint = Color.White)
                         }
