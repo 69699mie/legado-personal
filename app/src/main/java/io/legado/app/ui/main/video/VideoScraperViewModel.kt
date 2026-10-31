@@ -69,7 +69,7 @@ class VideoScraperViewModel(
                 tmdbApiKey = videoSettingsRepository.tmdbApiKey,
                 tmdbBaseUrl = videoSettingsRepository.tmdbBaseUrl,
                 selectedLibraryFids = savedLibs.toSet(),
-                isLibraryMode = true // 默认影视库
+                isLibraryMode = true 
             ) 
         }
         fetchQuarkFiles("0")
@@ -195,7 +195,6 @@ class VideoScraperViewModel(
         return map
     }
 
-    // 递归时传入当前文件夹名称，用于辅助解析
     private suspend fun fetchVideosRecursively(cookie: String, parentFid: String, category: String, folderName: String?, resultList: MutableList<QuarkFile>) {
         withContext(Dispatchers.IO) {
             val url = "https://drive-pc.quark.cn/1/clouddrive/file/sort?pr=ucpro&fr=pc&uc_param_str=&pdir_fid=$parentFid&_page=1&_size=100&_sort=file_type:asc,updated_at:desc"
@@ -216,10 +215,8 @@ class VideoScraperViewModel(
                                     val isFolder = item.optBoolean("dir", false)
                                     
                                     if (isFolder) {
-                                        // 递归，把当前的文件夹名称传下去
                                         fetchVideosRecursively(cookie, fileFid, category, fileName, resultList)
                                     } else {
-                                        // 关键点：把 folderName 传进去做拼接辅助
                                         val parsed = VideoFileNameParser.parse(fileName, folderName)
                                         if (parsed.isVideo) {
                                             val qf = QuarkFile(fileFid, fileName, false, category, parsed)
@@ -291,7 +288,13 @@ class VideoScraperViewModel(
                             if (bestItem == null) bestItem = results.getJSONObject(0)
 
                             val posterPath = bestItem.optString("poster_path")
-                            val officialName = bestItem.optString("title").ifBlank { bestItem.optString("name") }
+                            var officialName = bestItem.optString("title").ifBlank { bestItem.optString("name") }
+                            
+                            // ➕ TMDB 返回的如果带英文，强制清洗
+                            if (Regex("[\\u4e00-\\u9fa5]").containsMatchIn(officialName)) {
+                                officialName = Regex("[\\u4e00-\\u9fa5]+").findAll(officialName).map { it.value }.joinToString("")
+                            }
+                            
                             val voteAverage = bestItem.optDouble("vote_average", 0.0)
                             val ratingStr = if (voteAverage > 0) String.format("%.1f", voteAverage) else null
                             
@@ -319,7 +322,13 @@ class VideoScraperViewModel(
         viewModelScope.launch(Dispatchers.IO) {
             val list = mutableListOf<TmdbSearchResult>()
             try {
-                val q = URLEncoder.encode(query, "UTF-8")
+                // ➕ 搜索前，如果输入框有英文且存在中文，也强制清洗成中文去搜
+                var cleanQuery = query
+                if (Regex("[\\u4e00-\\u9fa5]").containsMatchIn(query)) {
+                    cleanQuery = Regex("[\\u4e00-\\u9fa5]+").findAll(query).map { it.value }.joinToString("")
+                }
+                
+                val q = URLEncoder.encode(cleanQuery, "UTF-8")
                 val url = "$baseUrl/3/search/multi?api_key=$apiKey&query=$q&language=zh-CN"
                 val request = Request.Builder().url(url).build()
                 client.newCall(request).execute().use { response ->
@@ -330,9 +339,15 @@ class VideoScraperViewModel(
                         if (results != null) {
                             for (i in 0 until results.length()) {
                                 val item = results.getJSONObject(i)
-                                val title = item.optString("title").ifBlank { item.optString("name") }
+                                var title = item.optString("title").ifBlank { item.optString("name") }
                                 val posterPath = item.optString("poster_path")
                                 val voteAverage = item.optDouble("vote_average", 0.0)
+                                
+                                // ➕ 对返回列表的展示名称也做纯中文清洗
+                                if (Regex("[\\u4e00-\\u9fa5]").containsMatchIn(title)) {
+                                    title = Regex("[\\u4e00-\\u9fa5]+").findAll(title).map { it.value }.joinToString("")
+                                }
+
                                 list.add(
                                     TmdbSearchResult(
                                         id = item.optInt("id"),
