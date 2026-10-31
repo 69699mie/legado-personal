@@ -8,6 +8,9 @@ import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
+import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -25,11 +28,15 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Shadow
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import coil3.compose.AsyncImage
@@ -48,14 +55,20 @@ fun VideoRouteScreen(
     var showManualScrapeDialog by remember { mutableStateOf(false) }
     var manualScrapeSeries by remember { mutableStateOf<MediaSeries?>(null) }
 
-    BackHandler(enabled = uiState.currentSeries != null || (!uiState.isLibraryMode && uiState.currentFid != "0")) {
+    // 用于记录当前查看的全部分类
+    var viewAllCategory by remember { mutableStateOf<String?>(null) }
+
+    BackHandler(enabled = uiState.currentSeries != null || viewAllCategory != null || (!uiState.isLibraryMode && uiState.currentFid != "0")) {
         if (uiState.currentSeries != null) {
             viewModel.selectSeries(null)
+        } else if (viewAllCategory != null) {
+            viewAllCategory = null
         } else {
             viewModel.goBack()
         }
     }
 
+    // 详情页
     if (uiState.currentSeries != null) {
         MediaDetailScreen(
             series = uiState.currentSeries!!,
@@ -66,11 +79,47 @@ fun VideoRouteScreen(
                 showManualScrapeDialog = true
             }
         )
+    } else if (viewAllCategory != null) {
+        // 全部展示页
+        val categorySeries = uiState.seriesList.filter { it.category == viewAllCategory }
+        Column(modifier = Modifier.fillMaxSize().statusBarsPadding().background(Color.White)) {
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(16.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                IconButton(onClick = { viewAllCategory = null }) {
+                    Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "返回", tint = Color.Black)
+                }
+                AppText(
+                    text = viewAllCategory ?: "",
+                    style = MaterialTheme.typography.titleLarge,
+                    fontWeight = FontWeight.Bold,
+                    modifier = Modifier.padding(start = 8.dp)
+                )
+            }
+            LazyVerticalGrid(
+                columns = GridCells.Fixed(3),
+                contentPadding = PaddingValues(16.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalArrangement = Arrangement.spacedBy(16.dp)
+            ) {
+                items(categorySeries) { series ->
+                    SeriesPosterCard(
+                        series = series,
+                        onClick = { viewModel.selectSeries(series) },
+                        onLongClick = {
+                            manualScrapeSeries = series
+                            showManualScrapeDialog = true
+                        }
+                    )
+                }
+            }
+        }
     } else {
+        // 主界面
         Column(
             modifier = modifier.fillMaxSize().statusBarsPadding()
         ) {
-            // 顶部操作栏
             Row(
                 modifier = Modifier.fillMaxWidth().background(Color(0xFFF5F5F5)).padding(horizontal = 16.dp, vertical = 8.dp),
                 verticalAlignment = Alignment.CenterVertically
@@ -131,7 +180,7 @@ fun VideoRouteScreen(
                     }
                 }
             } else {
-                // 影视库（按分类聚合）
+                // 影视库
                 if (uiState.selectedLibraryFids.isEmpty()) {
                     Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { AppText("请先在网盘浏览中勾选媒体文件夹") }
                 } else if (uiState.seriesList.isEmpty() && !uiState.isLoading) {
@@ -151,7 +200,13 @@ fun VideoRouteScreen(
                                         verticalAlignment = Alignment.CenterVertically
                                     ) {
                                         AppText(text = categoryName, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-                                        AppText(text = "全部 ${seriesList.size} 部 >", style = MaterialTheme.typography.bodySmall, color = Color.Gray)
+                                        // ➕ 点击全部
+                                        AppText(
+                                            text = "全部 ${seriesList.size} 部 >", 
+                                            style = MaterialTheme.typography.bodySmall, 
+                                            color = Color.Gray,
+                                            modifier = Modifier.clickable { viewAllCategory = categoryName }
+                                        )
                                     }
                                 }
                                 item {
@@ -179,7 +234,7 @@ fun VideoRouteScreen(
         }
     }
 
-    // 设置弹窗 & 刮削弹窗 
+    // 弹窗（设置 & 刮削）
     if (showSettingsDialog) {
         var inputCookie by remember { mutableStateOf(uiState.cookie) }
         var inputTmdbKey by remember { mutableStateOf(uiState.tmdbApiKey) }
@@ -207,12 +262,10 @@ fun VideoRouteScreen(
         Dialog(onDismissRequest = { showManualScrapeDialog = false }) {
             Column(modifier = Modifier.background(Color.White).padding(16.dp).fillMaxWidth().heightIn(max = 600.dp)) {
                 AppText("手动修正刮削信息")
-                
                 Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(vertical = 8.dp)) {
                     AppText("分类：", modifier = Modifier.width(50.dp))
                     OutlinedTextField(value = categoryInput, onValueChange = { categoryInput = it }, modifier = Modifier.weight(1f), placeholder = { AppText("如：动漫、电影") })
                 }
-
                 Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(bottom = 8.dp)) {
                     AppText("名称：", modifier = Modifier.width(50.dp))
                     OutlinedTextField(value = searchKeyword, onValueChange = { searchKeyword = it }, modifier = Modifier.weight(1f))
@@ -269,22 +322,20 @@ fun SeriesPosterCard(series: MediaSeries, onClick: () -> Unit, onLongClick: () -
                 AppText("长按修正", color = Color.Gray, style = MaterialTheme.typography.bodySmall)
             }
             
-            // 💡 已修改：右下角，白底黑字评分
+            // 💡 已修改：图二风格，右下角白色粗体数字，带黑色阴影
             if (series.rating != null) {
-                Box(
+                AppText(
+                    text = series.rating,
+                    color = Color.White,
+                    fontSize = 14.sp,
+                    fontWeight = FontWeight.ExtraBold,
+                    style = TextStyle(
+                        shadow = Shadow(color = Color.Black, offset = Offset(1f, 1f), blurRadius = 3f)
+                    ),
                     modifier = Modifier
                         .align(Alignment.BottomEnd) // 右下角
-                        .padding(6.dp) // 边距
-                        .background(Color.White, RoundedCornerShape(4.dp)) // 白底，小圆角
-                        .padding(horizontal = 4.dp, vertical = 2.dp)
-                ) {
-                    AppText(
-                        text = series.rating,
-                        color = Color.Black, // 黑色数字
-                        style = MaterialTheme.typography.labelSmall,
-                        fontWeight = FontWeight.Bold
-                    )
-                }
+                        .padding(6.dp) 
+                )
             }
         }
         AppText(text = series.title, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 4.dp), style = MaterialTheme.typography.bodyMedium)
@@ -297,7 +348,7 @@ fun SeriesPosterCard(series: MediaSeries, onClick: () -> Unit, onLongClick: () -
     }
 }
 
-// 详情页
+// 详情页 (同上一版本，未改动)
 @Composable
 fun MediaDetailScreen(series: MediaSeries, onBack: () -> Unit, onPlay: () -> Unit, onLongClickPoster: (MediaSeries) -> Unit) {
     LazyColumn(modifier = Modifier.fillMaxSize().background(Color.White)) {
