@@ -49,13 +49,15 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.media3.common.MediaItem
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
-import androidx.media3.datasource.DefaultHttpDataSource
+import androidx.media3.datasource.okhttp.OkHttpDataSource
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.ui.PlayerView
 import coil3.compose.AsyncImage
 import io.legado.app.ui.widget.components.text.AppText
+import okhttp3.OkHttpClient
 import org.koin.androidx.compose.koinViewModel
+import java.util.concurrent.TimeUnit
 
 @OptIn(ExperimentalFoundationApi::class, ExperimentalMaterial3Api::class)
 @Composable
@@ -87,7 +89,7 @@ fun VideoRouteScreen(
         InternalVideoPlayer(
             url = uiState.playUrl!!,
             title = uiState.playTitle ?: "播放中",
-            cookie = uiState.cookie, // ➕ 传入 Cookie 用于播放器鉴权
+            cookie = uiState.cookie,
             onBack = { viewModel.stopPlaying() }
         )
     } else if (uiState.currentSeries != null) {
@@ -336,30 +338,38 @@ fun VideoRouteScreen(
     }
 }
 
-// ➕ 修复：为 ExoPlayer 注入 Cookie，并监听报错
+// ➕ 修复：使用 OkHttpDataSource 解决分片鉴权 403 问题
 @Composable
 fun InternalVideoPlayer(url: String, title: String, cookie: String, onBack: () -> Unit) {
     val context = LocalContext.current
     
     val exoPlayer = remember {
-        val httpDataSourceFactory = DefaultHttpDataSource.Factory()
+        // 构建专用的 OkHttpClient 用于流媒体请求
+        val okHttpClient = OkHttpClient.Builder()
+            .connectTimeout(15, TimeUnit.SECONDS)
+            .readTimeout(15, TimeUnit.SECONDS)
+            .build()
+
+        // 使用 OkHttpDataSource 并注入鉴权请求头
+        val okHttpDataSourceFactory = OkHttpDataSource.Factory(okHttpClient)
             .setUserAgent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) quark-cloud-drive/2.5.20 Chrome/100.0.4896.160 Electron/18.3.5.4-b478491100 Safari/537.36 Channel/pckk_other_ch")
             .setDefaultRequestProperties(
                 mapOf(
                     "Referer" to "https://pan.quark.cn/",
-                    "Cookie" to cookie // 必须带上 Cookie 才能拉取分片
+                    "Cookie" to cookie
                 )
             )
+            // 允许跨域重定向（夸克直链可能返回 302 跳转到真正的 CDN）
             .setAllowCrossProtocolRedirects(true)
 
         ExoPlayer.Builder(context)
-            .setMediaSourceFactory(DefaultMediaSourceFactory(httpDataSourceFactory))
+            .setMediaSourceFactory(DefaultMediaSourceFactory(okHttpDataSourceFactory))
             .build().apply {
                 setMediaItem(MediaItem.fromUri(url))
                 prepare()
                 playWhenReady = true
                 
-                // ➕ 监听错误并打印，防止静默黑屏
+                // 监听错误并打印
                 addListener(object : Player.Listener {
                     override fun onPlayerError(error: PlaybackException) {
                         super.onPlayerError(error)
