@@ -27,7 +27,7 @@ data class QuarkFile(
     val name: String,
     val isFolder: Boolean,
     val category: String = "其他",
-    val folderPath: List<String> = emptyList(), // 只包含父级文件夹路径
+    val folderPath: List<String> = emptyList(),
     val parsedInfo: ParsedVideoName? = null,
     val size: Long = 0L
 )
@@ -132,8 +132,8 @@ class VideoScraperViewModel(
                 withContext(Dispatchers.IO) {
                     val rootFiles = getRootFolderNames(cookie)
                     for (fid in libs) {
-                        // 取根目录名字，比如"电影"、"动漫"，作为分类
-                        val categoryName = rootFiles[fid] ?: "影视库"
+                        // 严格使用根目录名字做分类，绝不乱用"影视库"
+                        val categoryName = rootFiles[fid] ?: "未分类"
                         fetchVideosRecursively(cookie, fid, categoryName, listOf(categoryName), allVideos)
                     }
                 }
@@ -153,12 +153,9 @@ class VideoScraperViewModel(
         }
     }
     
-    // ➕ 严格按照你的规则重写归类：父级优先，季级追溯
     private fun aggregateToSeries(videos: List<QuarkFile>): List<MediaSeries> {
         val seriesMap = mutableMapOf<String, MediaSeries>()
-        
-        // 忽略的顶级根目录名
-        val ignoreFolders = setOf("电影", "动漫", "电视剧", "纪录片", "综艺", "影视库", "其他", "未分类")
+        val ignoreFolders = setOf("电影", "动漫", "电视剧", "纪录片", "综艺", "未分类", "其他")
 
         for (v in videos) {
             val parsed = v.parsedInfo ?: continue
@@ -166,18 +163,15 @@ class VideoScraperViewModel(
             var baseTitle = ""
             
             if (v.folderPath.size >= 2) {
-                val parentFolder = v.folderPath.last() // 直接父目录
-                val grandParentFolder = v.folderPath[v.folderPath.size - 2] // 爷爷目录
+                val parentFolder = v.folderPath.last()
+                val grandParentFolder = v.folderPath[v.folderPath.size - 2]
 
                 if (VideoFileNameParser.isSeasonFolder(parentFolder)) {
-                    // 如果父目录是“第1季”，往上找一级作为剧名
                     baseTitle = grandParentFolder
                 } else {
-                    // 如果父目录不是季，直接用它当剧名
                     baseTitle = parentFolder
                 }
             } else if (v.folderPath.isNotEmpty()) {
-                // 如果只有一级目录（直接放在“动漫”下面），说明是散件，用文件名解析出来的标题
                 baseTitle = v.folderPath.last()
                 if (ignoreFolders.contains(baseTitle)) {
                     baseTitle = parsed.title
@@ -186,7 +180,6 @@ class VideoScraperViewModel(
                 baseTitle = parsed.title
             }
             
-            // 极端兜底：如果剧名是无效的根目录名，或者为空，抛弃它
             if (baseTitle.isBlank() || ignoreFolders.contains(baseTitle)) {
                 baseTitle = parsed.title
                 if (baseTitle.isBlank() || baseTitle == "未知影视") continue
@@ -258,13 +251,11 @@ class VideoScraperViewModel(
                                     val size = item.optLong("size", 0L)
                                     
                                     if (isFolder) {
-                                        // 递归时路径增加当前文件夹
                                         fetchVideosRecursively(cookie, fileFid, category, currentPath + fileName, resultList)
                                     } else {
                                         val parentFolder = currentPath.lastOrNull()
                                         val parsed = VideoFileNameParser.parse(fileName, parentFolder)
                                         if (parsed.isVideo) {
-                                            // 记录当前路径（不包括文件本身）
                                             val qf = QuarkFile(fileFid, fileName, false, category, currentPath, parsed, size)
                                             resultList.add(qf)
                                         }
@@ -281,8 +272,14 @@ class VideoScraperViewModel(
     private fun scrapeSeriesPosters(seriesList: List<MediaSeries>, apiKey: String, baseUrl: String) {
         viewModelScope.launch(Dispatchers.IO) {
             val updatedList = seriesList.map { series ->
-                val match = searchTmdb(series.originalParsedTitle, series.year, apiKey, baseUrl)
+                val match = searchTmdbWithFallback(series.originalParsedTitle, series.year, apiKey, baseUrl)
                 if (match != null) {
+                    // 核心拦截：如果 TMDB 返回的是纯英文，且原文件夹是中文，强制保留原中文名！
+                    var finalTitle = match.title
+                    if (finalTitle.matches(Regex("^[a-zA-Z0-9\\s\\p{Punct}]+$")) && series.originalParsedTitle.any { it.code > 127 }) {
+                        finalTitle = series.originalParsedTitle
+                    }
+
                     var epTitles: Map<Int, String> = emptyMap()
                     val season = series.videos.firstOrNull()?.parsedInfo?.season ?: 1
                     if (series.videos.size > 1 || series.originalParsedTitle.contains("季")) {
@@ -290,7 +287,7 @@ class VideoScraperViewModel(
                     }
 
                     series.copy(
-                        title = match.title,
+                        title = finalTitle,
                         posterUrl = match.posterUrl,
                         overview = match.overview,
                         rating = match.rating,
@@ -307,57 +304,63 @@ class VideoScraperViewModel(
         }
     }
 
-    private fun searchTmdb(title: String, year: Int?, apiKey: String, baseUrl: String): TmdbSearchResult? {
-        val languages = listOf("zh-CN", "en-US")
+    private fun searchTmdbWithFallback(title: String, year: Int?, apiKey: String, baseUrl: String): TmdbSearchResult? {
+        val languages = listOf("zh-CN", "zh-SG", "en-US")
         for (lang in languages) {
-            try {
-                val query = URLEncoder.encode(title, "UTF-8")
-                val url = "$baseUrl/3/search/multi?api_key=$apiKey&query=$query&language=$lang"
-                val request = Request.Builder().url(url).build()
-                
-                client.newCall(request).execute().use { response ->
-                    val body = response.body?.string()
-                    if (!body.isNullOrBlank()) {
-                        val json = JSONObject(body)
-                        val results = json.optJSONArray("results")
-                        if (results != null && results.length() > 0) {
-                            var bestItem: JSONObject? = null
-                            var topScore = -1.0
-                            
-                            for (i in 0 until results.length()) {
-                                val item = results.getJSONObject(i)
-                                val officialTitle = item.optString("title").ifBlank { item.optString("name") }
-                                val releaseYear = item.optString("release_date").take(4).toIntOrNull() ?: item.optString("first_air_date").take(4).toIntOrNull()
-                                
-                                var score = 0.0
-                                if (officialTitle.contains(title) || title.contains(officialTitle)) score += 5.0
-                                if (year != null && releaseYear == year) score += 5.0
-                                
-                                if (score > topScore && score > 0) {
-                                    topScore = score
-                                    bestItem = item
-                                }
-                            }
-                            if (bestItem == null) bestItem = results.getJSONObject(0)
+            val result = searchTmdb(title, year, apiKey, baseUrl, lang)
+            if (result != null) return result
+        }
+        return null
+    }
 
-                            val posterPath = bestItem.optString("poster_path")
-                            val officialName = bestItem.optString("title").ifBlank { bestItem.optString("name") }
-                            val voteAverage = bestItem.optDouble("vote_average", 0.0)
-                            val ratingStr = if (voteAverage > 0) String.format("%.1f", voteAverage) else null
+    private fun searchTmdb(title: String, year: Int?, apiKey: String, baseUrl: String, language: String): TmdbSearchResult? {
+        try {
+            val query = URLEncoder.encode(title, "UTF-8")
+            val url = "$baseUrl/3/search/multi?api_key=$apiKey&query=$query&language=$language"
+            val request = Request.Builder().url(url).build()
+            
+            client.newCall(request).execute().use { response ->
+                val body = response.body?.string()
+                if (!body.isNullOrBlank()) {
+                    val json = JSONObject(body)
+                    val results = json.optJSONArray("results")
+                    if (results != null && results.length() > 0) {
+                        var bestItem: JSONObject? = null
+                        var topScore = -1.0
+                        
+                        for (i in 0 until results.length()) {
+                            val item = results.getJSONObject(i)
+                            val officialTitle = item.optString("title").ifBlank { item.optString("name") }
+                            val releaseYear = item.optString("release_date").take(4).toIntOrNull() ?: item.optString("first_air_date").take(4).toIntOrNull()
                             
-                            return TmdbSearchResult(
-                                id = bestItem.optInt("id"),
-                                title = officialName,
-                                year = (bestItem.optString("release_date").take(4).ifBlank { bestItem.optString("first_air_date").take(4) }),
-                                posterUrl = if (posterPath.isNotBlank() && posterPath != "null") "https://image.tmdb.org/t/p/w500$posterPath" else null,
-                                overview = bestItem.optString("overview"),
-                                rating = ratingStr
-                            )
+                            var score = 0.0
+                            if (officialTitle.contains(title) || title.contains(officialTitle)) score += 5.0
+                            if (year != null && releaseYear == year) score += 5.0
+                            
+                            if (score > topScore && score > 0) {
+                                topScore = score
+                                bestItem = item
+                            }
                         }
+                        if (bestItem == null) bestItem = results.getJSONObject(0)
+
+                        val posterPath = bestItem.optString("poster_path")
+                        val officialName = bestItem.optString("title").ifBlank { bestItem.optString("name") }
+                        val voteAverage = bestItem.optDouble("vote_average", 0.0)
+                        val ratingStr = if (voteAverage > 0) String.format("%.1f", voteAverage) else null
+                        
+                        return TmdbSearchResult(
+                            id = bestItem.optInt("id"),
+                            title = officialName,
+                            year = (bestItem.optString("release_date").take(4).ifBlank { bestItem.optString("first_air_date").take(4) }),
+                            posterUrl = if (posterPath.isNotBlank() && posterPath != "null") "https://image.tmdb.org/t/p/w500$posterPath" else null,
+                            overview = bestItem.optString("overview"),
+                            rating = ratingStr
+                        )
                     }
                 }
-            } catch (e: Exception) { }
-        }
+            }
+        } catch (e: Exception) { }
         return null
     }
 
@@ -481,6 +484,11 @@ class VideoScraperViewModel(
                                 val data = json.optJSONArray("data")
                                 if (data != null && data.length() > 0) {
                                     return@withContext data.getJSONObject(0).optString("download_url")
+                                }
+                            } else {
+                                val msg = json.optString("message")
+                                withContext(Dispatchers.Main) {
+                                    Toast.makeText(context, "接口报错: $msg", Toast.LENGTH_SHORT).show()
                                 }
                             }
                         }
