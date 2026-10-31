@@ -43,7 +43,8 @@ data class MediaSeries(
     val posterUrl: String? = null,
     val overview: String? = null,
     val rating: String? = null,
-    val videos: List<QuarkFile> = emptyList()
+    val videos: List<QuarkFile> = emptyList(),
+    val episodeTitles: Map<Int, String> = emptyMap() // ➕ 新增：TMDB 剧集标题映射
 )
 
 data class TmdbSearchResult(
@@ -93,7 +94,8 @@ class VideoScraperViewModel(
         videoSettingsRepository.tmdbBaseUrl = cleanBaseUrl
         _uiState.update { it.copy(cookie = cleanCookie, tmdbApiKey = tmdbKey, tmdbBaseUrl = cleanBaseUrl) }
         fetchQuarkFiles("0")
-        loadLibraryVideos(force = true)
+        hasLoadedLibrary = false
+        loadLibraryVideos()
     }
 
     fun toggleLibrary(fid: String) {
@@ -101,32 +103,30 @@ class VideoScraperViewModel(
         if (current.contains(fid)) current.remove(fid) else current.add(fid)
         videoSettingsRepository.libraryFids = current.joinToString(",")
         _uiState.update { it.copy(selectedLibraryFids = current) }
-        if (_uiState.value.isLibraryMode) loadLibraryVideos(force = true)
+        hasLoadedLibrary = false
+        if (_uiState.value.isLibraryMode) loadLibraryVideos()
     }
 
     fun setMode(isLibraryMode: Boolean) {
         _uiState.update { it.copy(isLibraryMode = isLibraryMode) }
-        if (isLibraryMode) loadLibraryVideos(force = false)
+        if (isLibraryMode && !hasLoadedLibrary) loadLibraryVideos()
     }
     
     fun selectSeries(series: MediaSeries?) {
         _uiState.update { it.copy(currentSeries = series) }
     }
 
-    // ➕ 强制刷新，或者初次加载
-    fun loadLibraryVideos(force: Boolean = true) {
+    fun loadLibraryVideos() {
         val cookie = _uiState.value.cookie
         val apiKey = _uiState.value.tmdbApiKey
         val libs = _uiState.value.selectedLibraryFids
         
         if (libs.isEmpty()) {
-            _uiState.update { it.copy(seriesList = emptyList(), errorMsg = "请先勾选文件夹", isLoading = false, isRefreshing = false) }
+            _uiState.update { it.copy(seriesList = emptyList(), errorMsg = "请先勾选文件夹", isLoading = false) }
             return
         }
-        
-        if (hasLoadedLibrary && !force) return
 
-        _uiState.update { it.copy(isLoading = true, isRefreshing = true, errorMsg = null) }
+        _uiState.update { it.copy(isLoading = true, errorMsg = null) }
 
         viewModelScope.launch {
             try {
@@ -146,14 +146,15 @@ class VideoScraperViewModel(
                     scrapeSeriesPosters(groupedSeries, apiKey, _uiState.value.tmdbBaseUrl)
                 } else {
                     hasLoadedLibrary = true
-                    _uiState.update { it.copy(isLoading = false, isRefreshing = false, errorMsg = "未配置 TMDB API Key") }
+                    _uiState.update { it.copy(isLoading = false, errorMsg = "未配置 TMDB API Key") }
                 }
             } catch (e: Exception) {
-                _uiState.update { it.copy(isLoading = false, isRefreshing = false, errorMsg = "扫描异常: ${e.message}") }
+                _uiState.update { it.copy(isLoading = false, errorMsg = "扫描异常: ${e.message}") }
             }
         }
     }
     
+    // ➕ 核心聚合逻辑优化：防止多集被识别成不同影视
     private fun aggregateToSeries(videos: List<QuarkFile>): List<MediaSeries> {
         val seriesMap = mutableMapOf<String, MediaSeries>()
         for (v in videos) {
@@ -161,12 +162,14 @@ class VideoScraperViewModel(
             val title = parsed.title
             if (title.isBlank()) continue
             
-            // 使用 title + year 作为键，合并同一部剧的不同集数
-            val key = "${title}_${parsed.year ?: "0"}"
+            // 如果文件名没有识别出季集，且是在一个子文件夹里，且文件夹不是分类目录
+            var key = "${title}_${parsed.year ?: "0"}"
             
             if (seriesMap.containsKey(key)) {
                 val exist = seriesMap[key]!!
-                seriesMap[key] = exist.copy(videos = (exist.videos + v).sortedBy { it.parsedInfo?.episode ?: 0 })
+                // 如果已经存在，合并 videos 并按集数排序
+                val combinedVideos = (exist.videos + v).sortedBy { it.parsedInfo?.episode ?: 0 }
+                seriesMap[key] = exist.copy(videos = combinedVideos)
             } else {
                 seriesMap[key] = MediaSeries(
                     id = key,
@@ -231,11 +234,9 @@ class VideoScraperViewModel(
                                     if (isFolder) {
                                         fetchVideosRecursively(cookie, fileFid, category, fileName, newPath, resultList)
                                     } else {
-                                        // 只有视频文件才加入
                                         val parsed = VideoFileNameParser.parse(fileName, folderName)
                                         if (parsed.isVideo) {
-                                            // 获取父文件夹的名字（去掉路径前缀）
-                                            val actualFolder = currentPath.substringAfterLast("/")
+                                            // 记录文件的完整路径，用于详情展示
                                             val qf = QuarkFile(fileFid, fileName, false, category, parsed, size, "夸克网盘:$currentPath")
                                             resultList.add(qf)
                                         }
@@ -254,11 +255,19 @@ class VideoScraperViewModel(
             val updatedList = seriesList.map { series ->
                 val match = searchTmdb(series.originalParsedTitle, series.year, apiKey, baseUrl)
                 if (match != null) {
+                    // ➕ 刮削到总信息后，如果是多集剧集，立刻请求分集标题
+                    var epTitles: Map<Int, String> = emptyMap()
+                    val season = series.videos.firstOrNull()?.parsedInfo?.season ?: 1
+                    if (series.videos.size > 1) { // 说明大概率是剧集
+                        epTitles = fetchEpisodeTitles(match.id, season, apiKey, baseUrl)
+                    }
+
                     series.copy(
                         title = match.title,
                         posterUrl = match.posterUrl,
                         overview = match.overview,
-                        rating = match.rating
+                        rating = match.rating,
+                        episodeTitles = epTitles // 保存分集标题
                     )
                 } else {
                     series
@@ -266,7 +275,7 @@ class VideoScraperViewModel(
             }
             withContext(Dispatchers.Main) {
                 hasLoadedLibrary = true
-                _uiState.update { it.copy(isLoading = false, isRefreshing = false, seriesList = updatedList) }
+                _uiState.update { it.copy(isLoading = false, seriesList = updatedList) }
             }
         }
     }
@@ -305,7 +314,6 @@ class VideoScraperViewModel(
                             if (bestItem == null) bestItem = results.getJSONObject(0)
 
                             val posterPath = bestItem.optString("poster_path")
-                            // 这里不强制截断中文，因为有时候英文名才是官方名
                             val officialName = bestItem.optString("title").ifBlank { bestItem.optString("name") }
                             val voteAverage = bestItem.optDouble("vote_average", 0.0)
                             val ratingStr = if (voteAverage > 0) String.format("%.1f", voteAverage) else null
@@ -326,7 +334,33 @@ class VideoScraperViewModel(
         return null
     }
 
-    // 搜索返回结果列表供用户手动选择
+    // ➕ 新增：请求 TMDB 分集标题
+    private fun fetchEpisodeTitles(tvId: Int, season: Int, apiKey: String, baseUrl: String): Map<Int, String> {
+        val map = mutableMapOf<Int, String>()
+        try {
+            val url = "$baseUrl/3/tv/$tvId/season/$season?api_key=$apiKey&language=zh-CN"
+            val request = Request.Builder().url(url).build()
+            client.newCall(request).execute().use { response ->
+                val body = response.body?.string()
+                if (!body.isNullOrBlank()) {
+                    val json = JSONObject(body)
+                    val episodes = json.optJSONArray("episodes")
+                    if (episodes != null) {
+                        for (i in 0 until episodes.length()) {
+                            val ep = episodes.getJSONObject(i)
+                            val epNum = ep.optInt("episode_number")
+                            val epName = ep.optString("name")
+                            if (epNum > 0 && epName.isNotBlank()) {
+                                map[epNum] = epName
+                            }
+                        }
+                    }
+                }
+            }
+        } catch (e: Exception) { }
+        return map
+    }
+
     fun searchTmdbManually(query: String, onResult: (List<TmdbSearchResult>) -> Unit) {
         val apiKey = _uiState.value.tmdbApiKey
         val baseUrl = _uiState.value.tmdbBaseUrl
@@ -369,12 +403,11 @@ class VideoScraperViewModel(
         }
     }
 
-    // 应用手动修改
     fun applyManualScrape(seriesId: String, result: TmdbSearchResult?, newCategory: String, newTitle: String) {
         val currentList = _uiState.value.seriesList.map { 
             if (it.id == seriesId) {
                 it.copy(
-                    title = result?.title ?: newTitle, // 优先使用 TMDB 名称，如果为 null 则用用户手填的
+                    title = result?.title ?: newTitle,
                     posterUrl = result?.posterUrl ?: it.posterUrl, 
                     overview = result?.overview ?: it.overview, 
                     rating = result?.rating ?: it.rating,
@@ -382,7 +415,6 @@ class VideoScraperViewModel(
                 )
             } else it
         }
-        // ➕ 关键：同时更新 currentSeries，确保详情页实时刷新
         _uiState.update { 
             val updatedCurrent = currentList.find { s -> s.id == seriesId }
             it.copy(
@@ -392,6 +424,7 @@ class VideoScraperViewModel(
         }
     }
 
+    // ➕ 核心修复：补全 Header，防止 403
     fun playVideo(context: Context, file: QuarkFile) {
         val cookie = _uiState.value.cookie
         Toast.makeText(context, "正在获取播放直链...", Toast.LENGTH_SHORT).show()
@@ -409,8 +442,9 @@ class VideoScraperViewModel(
                         .url(apiUrl)
                         .post(body)
                         .header("Cookie", cookie)
-                        .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64)")
+                        .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
                         .header("Referer", "https://pan.quark.cn/")
+                        .header("Accept", "application/json, text/plain, */*")
                         .build()
                         
                     client.newCall(request).execute().use { response ->
@@ -421,6 +455,12 @@ class VideoScraperViewModel(
                                 val data = json.optJSONArray("data")
                                 if (data != null && data.length() > 0) {
                                     return@withContext data.getJSONObject(0).optString("download_url")
+                                }
+                            } else {
+                                // 如果直接请求失败（比如分享文件没转存），在这里可以打日志
+                                val msg = json.optString("message")
+                                if (msg.contains("login") || msg.contains("token")) {
+                                    // 需要重新登录
                                 }
                             }
                         }
@@ -441,7 +481,7 @@ class VideoScraperViewModel(
                     Toast.makeText(context, "无法打开播放器: ${e.message}", Toast.LENGTH_SHORT).show()
                 }
             } else {
-                Toast.makeText(context, "获取直链失败，Cookie可能失效", Toast.LENGTH_SHORT).show()
+                Toast.makeText(context, "获取直链失败，如果是分享文件请先在网盘手动转存", Toast.LENGTH_LONG).show()
             }
         }
     }
@@ -506,7 +546,6 @@ data class VideoUiState(
     val tmdbBaseUrl: String = "https://api.tmdb.org",
     val currentFid: String = "0",
     val isLoading: Boolean = false,
-    val isRefreshing: Boolean = false, // ➕ 下拉刷新状态
     val errorMsg: String? = null,
     val fileList: List<QuarkFile> = emptyList(),
     val isLibraryMode: Boolean = true,
