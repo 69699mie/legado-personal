@@ -1,5 +1,7 @@
 package io.legado.app.ui.main.video
 
+import android.view.ViewGroup
+import android.widget.FrameLayout
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
@@ -15,6 +17,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.Movie
@@ -40,8 +43,12 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.window.Dialog
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.media3.common.MediaItem
+import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.ui.PlayerView
 import coil3.compose.AsyncImage
 import io.legado.app.ui.widget.components.text.AppText
 import org.koin.androidx.compose.koinViewModel
@@ -60,8 +67,11 @@ fun VideoRouteScreen(
     var manualScrapeSeries by remember { mutableStateOf<MediaSeries?>(null) }
     var viewAllCategory by remember { mutableStateOf<String?>(null) }
 
-    BackHandler(enabled = uiState.currentSeries != null || viewAllCategory != null || (!uiState.isLibraryMode && uiState.currentFid != "0")) {
-        if (uiState.currentSeries != null) {
+    // ➕ 拦截返回：如果正在播放，先关闭播放器
+    BackHandler(enabled = uiState.playUrl != null || uiState.currentSeries != null || viewAllCategory != null || (!uiState.isLibraryMode && uiState.currentFid != "0")) {
+        if (uiState.playUrl != null) {
+            viewModel.stopPlaying()
+        } else if (uiState.currentSeries != null) {
             viewModel.selectSeries(null)
         } else if (viewAllCategory != null) {
             viewAllCategory = null
@@ -70,7 +80,14 @@ fun VideoRouteScreen(
         }
     }
 
-    if (uiState.currentSeries != null) {
+    // ➕ 全屏内部播放器层
+    if (uiState.playUrl != null) {
+        InternalVideoPlayer(
+            url = uiState.playUrl!!,
+            title = uiState.playTitle ?: "播放中",
+            onBack = { viewModel.stopPlaying() }
+        )
+    } else if (uiState.currentSeries != null) {
         MediaDetailScreen(
             series = uiState.currentSeries!!,
             onBack = { viewModel.selectSeries(null) },
@@ -153,7 +170,6 @@ fun VideoRouteScreen(
             if (uiState.isLoading && uiState.seriesList.isEmpty() && uiState.fileList.isEmpty()) {
                 Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
             } else if (!uiState.isLibraryMode) {
-                // 网盘浏览模式
                 if (uiState.fileList.isEmpty()) {
                     Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { AppText("当前文件夹为空") }
                 } else {
@@ -179,7 +195,7 @@ fun VideoRouteScreen(
                     }
                 }
             } else {
-                // ➕ 恢复下拉刷新
+                // 下拉刷新恢复
                 PullToRefreshBox(
                     isRefreshing = uiState.isLoading,
                     onRefresh = { viewModel.loadLibraryVideos() },
@@ -314,6 +330,73 @@ fun VideoRouteScreen(
                     }
                 }
             }
+        }
+    }
+}
+
+// ➕ 纯 Compose 内部播放器
+@Composable
+fun InternalVideoPlayer(url: String, title: String, onBack: () -> Unit) {
+    val context = LocalContext.current
+    
+    // 使用 remember 初始化 ExoPlayer，退出时释放
+    val exoPlayer = remember {
+        ExoPlayer.Builder(context).build().apply {
+            setMediaItem(MediaItem.fromUri(url))
+            prepare()
+            playWhenReady = true
+        }
+    }
+
+    // 拦截返回键
+    BackHandler {
+        exoPlayer.release()
+        onBack()
+    }
+
+    DisposableEffect(Unit) {
+        onDispose {
+            exoPlayer.release()
+        }
+    }
+
+    Box(modifier = Modifier.fillMaxSize().background(Color.Black)) {
+        AndroidView(
+            factory = { ctx ->
+                PlayerView(ctx).apply {
+                    player = exoPlayer
+                    layoutParams = FrameLayout.LayoutParams(
+                        ViewGroup.LayoutParams.MATCH_PARENT,
+                        ViewGroup.LayoutParams.MATCH_PARENT
+                    )
+                    useController = true
+                }
+            },
+            modifier = Modifier.fillMaxSize()
+        )
+
+        // 顶栏
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .background(Brush.verticalGradient(listOf(Color(0xAA000000), Color.Transparent)))
+                .statusBarsPadding()
+                .padding(8.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            IconButton(onClick = {
+                exoPlayer.release()
+                onBack()
+            }) {
+                Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "返回", tint = Color.White)
+            }
+            AppText(
+                text = title,
+                color = Color.White,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.padding(start = 8.dp, end = 16.dp)
+            )
         }
     }
 }
