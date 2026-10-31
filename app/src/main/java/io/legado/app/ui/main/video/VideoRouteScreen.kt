@@ -54,8 +54,6 @@ fun VideoRouteScreen(
     
     var showManualScrapeDialog by remember { mutableStateOf(false) }
     var manualScrapeSeries by remember { mutableStateOf<MediaSeries?>(null) }
-
-    // 用于记录当前查看的全部分类
     var viewAllCategory by remember { mutableStateOf<String?>(null) }
 
     BackHandler(enabled = uiState.currentSeries != null || viewAllCategory != null || (!uiState.isLibraryMode && uiState.currentFid != "0")) {
@@ -68,7 +66,6 @@ fun VideoRouteScreen(
         }
     }
 
-    // 详情页
     if (uiState.currentSeries != null) {
         MediaDetailScreen(
             series = uiState.currentSeries!!,
@@ -80,7 +77,6 @@ fun VideoRouteScreen(
             }
         )
     } else if (viewAllCategory != null) {
-        // 全部展示页
         val categorySeries = uiState.seriesList.filter { it.category == viewAllCategory }
         Column(modifier = Modifier.fillMaxSize().statusBarsPadding().background(Color.White)) {
             Row(
@@ -116,7 +112,6 @@ fun VideoRouteScreen(
             }
         }
     } else {
-        // 主界面
         Column(
             modifier = modifier.fillMaxSize().statusBarsPadding()
         ) {
@@ -154,7 +149,6 @@ fun VideoRouteScreen(
             if (uiState.isLoading && uiState.seriesList.isEmpty() && uiState.fileList.isEmpty()) {
                 Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
             } else if (!uiState.isLibraryMode) {
-                // 网盘浏览
                 if (uiState.fileList.isEmpty()) {
                     Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { AppText("当前文件夹为空") }
                 } else {
@@ -180,7 +174,6 @@ fun VideoRouteScreen(
                     }
                 }
             } else {
-                // 影视库
                 if (uiState.selectedLibraryFids.isEmpty()) {
                     Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { AppText("请先在网盘浏览中勾选媒体文件夹") }
                 } else if (uiState.seriesList.isEmpty() && !uiState.isLoading) {
@@ -200,7 +193,6 @@ fun VideoRouteScreen(
                                         verticalAlignment = Alignment.CenterVertically
                                     ) {
                                         AppText(text = categoryName, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-                                        // ➕ 点击全部
                                         AppText(
                                             text = "全部 ${seriesList.size} 部 >", 
                                             style = MaterialTheme.typography.bodySmall, 
@@ -234,7 +226,6 @@ fun VideoRouteScreen(
         }
     }
 
-    // 弹窗（设置 & 刮削）
     if (showSettingsDialog) {
         var inputCookie by remember { mutableStateOf(uiState.cookie) }
         var inputTmdbKey by remember { mutableStateOf(uiState.tmdbApiKey) }
@@ -305,7 +296,6 @@ fun VideoRouteScreen(
     }
 }
 
-// 横向海报卡片
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun SeriesPosterCard(series: MediaSeries, onClick: () -> Unit, onLongClick: () -> Unit) {
@@ -322,7 +312,6 @@ fun SeriesPosterCard(series: MediaSeries, onClick: () -> Unit, onLongClick: () -
                 AppText("长按修正", color = Color.Gray, style = MaterialTheme.typography.bodySmall)
             }
             
-            // 💡 已修改：图二风格，右下角白色粗体数字，带黑色阴影
             if (series.rating != null) {
                 AppText(
                     text = series.rating,
@@ -333,7 +322,7 @@ fun SeriesPosterCard(series: MediaSeries, onClick: () -> Unit, onLongClick: () -
                         shadow = Shadow(color = Color.Black, offset = Offset(1f, 1f), blurRadius = 3f)
                     ),
                     modifier = Modifier
-                        .align(Alignment.BottomEnd) // 右下角
+                        .align(Alignment.BottomEnd) 
                         .padding(6.dp) 
                 )
             }
@@ -348,7 +337,6 @@ fun SeriesPosterCard(series: MediaSeries, onClick: () -> Unit, onLongClick: () -
     }
 }
 
-// 详情页 (同上一版本，未改动)
 @Composable
 fun MediaDetailScreen(series: MediaSeries, onBack: () -> Unit, onPlay: () -> Unit, onLongClickPoster: (MediaSeries) -> Unit) {
     LazyColumn(modifier = Modifier.fillMaxSize().background(Color.White)) {
