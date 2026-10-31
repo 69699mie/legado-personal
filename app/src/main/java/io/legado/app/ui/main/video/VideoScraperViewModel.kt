@@ -44,7 +44,7 @@ data class MediaSeries(
     val overview: String? = null,
     val rating: String? = null,
     val videos: List<QuarkFile> = emptyList(),
-    val episodeTitles: Map<Int, String> = emptyMap() // ➕ 新增：TMDB 剧集标题映射
+    val episodeTitles: Map<Int, String> = emptyMap()
 )
 
 data class TmdbSearchResult(
@@ -154,7 +154,6 @@ class VideoScraperViewModel(
         }
     }
     
-    // ➕ 核心聚合逻辑优化：防止多集被识别成不同影视
     private fun aggregateToSeries(videos: List<QuarkFile>): List<MediaSeries> {
         val seriesMap = mutableMapOf<String, MediaSeries>()
         for (v in videos) {
@@ -162,12 +161,10 @@ class VideoScraperViewModel(
             val title = parsed.title
             if (title.isBlank()) continue
             
-            // 如果文件名没有识别出季集，且是在一个子文件夹里，且文件夹不是分类目录
-            var key = "${title}_${parsed.year ?: "0"}"
+            val key = "${title}_${parsed.year ?: "0"}"
             
             if (seriesMap.containsKey(key)) {
                 val exist = seriesMap[key]!!
-                // 如果已经存在，合并 videos 并按集数排序
                 val combinedVideos = (exist.videos + v).sortedBy { it.parsedInfo?.episode ?: 0 }
                 seriesMap[key] = exist.copy(videos = combinedVideos)
             } else {
@@ -236,7 +233,6 @@ class VideoScraperViewModel(
                                     } else {
                                         val parsed = VideoFileNameParser.parse(fileName, folderName)
                                         if (parsed.isVideo) {
-                                            // 记录文件的完整路径，用于详情展示
                                             val qf = QuarkFile(fileFid, fileName, false, category, parsed, size, "夸克网盘:$currentPath")
                                             resultList.add(qf)
                                         }
@@ -255,10 +251,9 @@ class VideoScraperViewModel(
             val updatedList = seriesList.map { series ->
                 val match = searchTmdb(series.originalParsedTitle, series.year, apiKey, baseUrl)
                 if (match != null) {
-                    // ➕ 刮削到总信息后，如果是多集剧集，立刻请求分集标题
                     var epTitles: Map<Int, String> = emptyMap()
                     val season = series.videos.firstOrNull()?.parsedInfo?.season ?: 1
-                    if (series.videos.size > 1) { // 说明大概率是剧集
+                    if (series.videos.size > 1) {
                         epTitles = fetchEpisodeTitles(match.id, season, apiKey, baseUrl)
                     }
 
@@ -267,7 +262,7 @@ class VideoScraperViewModel(
                         posterUrl = match.posterUrl,
                         overview = match.overview,
                         rating = match.rating,
-                        episodeTitles = epTitles // 保存分集标题
+                        episodeTitles = epTitles
                     )
                 } else {
                     series
@@ -334,7 +329,6 @@ class VideoScraperViewModel(
         return null
     }
 
-    // ➕ 新增：请求 TMDB 分集标题
     private fun fetchEpisodeTitles(tvId: Int, season: Int, apiKey: String, baseUrl: String): Map<Int, String> {
         val map = mutableMapOf<Int, String>()
         try {
@@ -424,7 +418,7 @@ class VideoScraperViewModel(
         }
     }
 
-    // ➕ 核心修复：补全 Header，防止 403
+    // ➕ 修复：使用官方客户端 UA 获取自有文件直链
     fun playVideo(context: Context, file: QuarkFile) {
         val cookie = _uiState.value.cookie
         Toast.makeText(context, "正在获取播放直链...", Toast.LENGTH_SHORT).show()
@@ -432,17 +426,18 @@ class VideoScraperViewModel(
         viewModelScope.launch {
             val url = withContext(Dispatchers.IO) {
                 try {
-                    val apiUrl = "https://drive-pc.quark.cn/1/clouddrive/file/download?pr=ucpro&fr=pc"
+                    val apiUrl = "https://drive.quark.cn/1/clouddrive/file/download?pr=ucpro&fr=pc"
                     val jsonBody = JSONObject().apply {
                         put("fids", JSONArray().put(file.fid))
                     }
                     val body = jsonBody.toString().toRequestBody("application/json".toMediaType())
                     
+                    // 关键：伪装成夸克官方桌面客户端
                     val request = Request.Builder()
                         .url(apiUrl)
                         .post(body)
                         .header("Cookie", cookie)
-                        .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+                        .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) quark-cloud-drive/2.5.20 Chrome/100.0.4896.160 Electron/18.3.5.4-b478491100 Safari/537.36 Channel/pckk_other_ch")
                         .header("Referer", "https://pan.quark.cn/")
                         .header("Accept", "application/json, text/plain, */*")
                         .build()
@@ -455,12 +450,6 @@ class VideoScraperViewModel(
                                 val data = json.optJSONArray("data")
                                 if (data != null && data.length() > 0) {
                                     return@withContext data.getJSONObject(0).optString("download_url")
-                                }
-                            } else {
-                                // 如果直接请求失败（比如分享文件没转存），在这里可以打日志
-                                val msg = json.optString("message")
-                                if (msg.contains("login") || msg.contains("token")) {
-                                    // 需要重新登录
                                 }
                             }
                         }
@@ -481,7 +470,7 @@ class VideoScraperViewModel(
                     Toast.makeText(context, "无法打开播放器: ${e.message}", Toast.LENGTH_SHORT).show()
                 }
             } else {
-                Toast.makeText(context, "获取直链失败，如果是分享文件请先在网盘手动转存", Toast.LENGTH_LONG).show()
+                Toast.makeText(context, "获取直链失败，请检查 Cookie 是否有效", Toast.LENGTH_LONG).show()
             }
         }
     }
