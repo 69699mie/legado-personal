@@ -27,35 +27,21 @@ object VideoFileNameParser {
         var name = fileName
         videoExts.forEach { if (name.lowercase().endsWith(it)) { name = name.dropLast(it.length) } }
 
-        // 1. 提取季集
+        // 1. 提取年份
+        var year: Int? = null
+        val yearRegex = Regex("(19|20)\\d{2}")
+        yearRegex.find(name)?.let {
+            year = it.value.toIntOrNull()
+            name = name.replace(it.value, " ")
+        }
+
+        // 2. 提取季数 (S01)
         var season: Int? = null
-        var episode: Int? = null
-        
-        val seRegex = Regex("(?i)S(\\d{1,2})E(\\d{1,3})")
+        val seRegex = Regex("(?i)S(\\d{1,2})")
         seRegex.find(name)?.let {
             season = it.groupValues[1].toIntOrNull()
-            episode = it.groupValues[2].toIntOrNull()
             name = name.replace(it.value, " ")
-        } ?: run {
-            // 匹配 "第X集" 或者 "_01_" 结尾的纯数字
-            val eRegex = Regex("(?i)(?:^|[^a-z])E(\\d{1,3})(?:[^a-z]|$)")
-            eRegex.find(name)?.let {
-                episode = it.groupValues[1].toIntOrNull()
-                name = name.replace(it.value, " ")
-            }
-            val cnEpRegex = Regex("第(\\d{1,3})[集话]")
-            cnEpRegex.find(name)?.let {
-                episode = it.groupValues[1].toIntOrNull()
-                name = name.replace(it.value, " ")
-            }
-            // 针对 DaWangRaoMing_01_4K 这种
-            val underscoreEpRegex = Regex("(?:_)(\\d{1,3})(?:_|$)")
-            underscoreEpRegex.find(name)?.let {
-                episode = it.groupValues[1].toIntOrNull()
-                name = name.replace(it.value, " ")
-            }
         }
-        
         val cnSeasonRegex = Regex("第(\\d{1,2}|[一二三四五六七八九十])季")
         cnSeasonRegex.find(name)?.let {
             val sStr = it.groupValues[1]
@@ -67,15 +53,47 @@ object VideoFileNameParser {
             name = name.replace(it.value, " ")
         }
 
-        // 2. 提取年份
-        var year: Int? = null
-        val yearRegex = Regex("(19|20)\\d{2}")
-        yearRegex.find(name)?.let {
-            year = it.value.toIntOrNull()
+        // 3. 提取集数 (极其严谨，防误杀)
+        var episode: Int? = null
+        
+        // 3.1 优先匹配标准格式 S01E02 或 E02
+        val eRegex = Regex("(?i)E(\\d{1,3})")
+        eRegex.find(name)?.let {
+            episode = it.groupValues[1].toIntOrNull()
             name = name.replace(it.value, " ")
         }
+        
+        // 3.2 匹配中文格式 第2集、第2话
+        if (episode == null) {
+            val cnEpRegex = Regex("第(\\d{1,3})[集话]")
+            cnEpRegex.find(name)?.let {
+                episode = it.groupValues[1].toIntOrNull()
+                name = name.replace(it.value, " ")
+            }
+        }
 
-        // 3. 清理无意义标签
+        // 3.3 匹配下划线或空格边界格式 (如 _02_ 或 02 在末尾)
+        if (episode == null) {
+            // 匹配 [ _-]02[ _-] 或 结尾的 02
+            val boundaryEpRegex = Regex("(?:^|[ _-])(\\d{1,3})(?:[ _-]|$)")
+            val matches = boundaryEpRegex.findAll(name).toList()
+            // 从后往前找，因为集数通常靠后
+            for (match in matches.reversed()) {
+                val num = match.groupValues[1].toIntOrNull()
+                if (num != null) {
+                    // 黑名单防御：不能是年份，不能是分辨率
+                    val isYear = num in 1900..2099
+                    val isResolution = num in listOf(480, 720, 1080, 2160, 264, 265, 360)
+                    if (!isYear && !isResolution) {
+                        episode = num
+                        name = name.replace(match.value, " ")
+                        break
+                    }
+                }
+            }
+        }
+
+        // 4. 清理无意义标签
         var cleanName = name.replace(Regex("[._\\-\\[\\]()【】]"), " ")
         
         cleanName = cleanName.split(" ")
@@ -83,21 +101,19 @@ object VideoFileNameParser {
                 val w = word.trim()
                 w.isNotEmpty() && 
                 !noiseWords.contains(w.lowercase()) && 
-                w.toIntOrNull() == null && // 过滤孤立数字
-                !w.matches(Regex("^[a-zA-Z]{1,2}$")) // 过滤孤立单字母
+                w.toIntOrNull() == null && 
+                !w.matches(Regex("^[a-zA-Z]{1,2}$")) 
             }
             .joinToString(" ")
 
-        // 4. 终极兜底：如果清理完为空，或者只剩下少于2个字符的无效内容
+        // 5. 终极兜底：使用父文件夹名
         if (cleanName.isBlank() || cleanName.length < 2) {
             if (!parentFolder.isNullOrBlank() && parentFolder != "电影" && parentFolder != "动漫" && parentFolder != "电视剧") {
                 cleanName = parentFolder
             } else {
-                cleanName = "未知影视 " + (year ?: "")
+                cleanName = "未知影视"
             }
         }
-
-        cleanName = cleanName.replace(Regex("\\s+"), " ").trim()
 
         return ParsedVideoName(cleanName, year, season, episode, isVideo)
     }
