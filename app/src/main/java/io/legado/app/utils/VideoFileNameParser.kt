@@ -9,51 +9,24 @@ data class ParsedVideoName(
 )
 
 object VideoFileNameParser {
+    private val videoExts = listOf(".mp4", ".mkv", ".avi", ".ts", ".m3u8", ".mov", ".rmvb", ".flv", ".wmv")
 
-    private val videoExts = listOf(".mp4", ".mkv", ".avi", ".ts", ".m3u8", ".mov", ".rmvb", ".flv")
-
-    private val noisePatterns = listOf(
-        Regex("\\[.*?\\]|\\(.*?\\)|【.*?】"),
-        Regex("(?i)\\b(2160p|1080p|720p|480p|4k|8k)\\b"),
-        Regex("(?i)\\b(hdr|sdr|dv|dolby|vision|hdr10\\+?)\\b"),
-        Regex("(?i)\\b(bluray|bdrip|web-?dl|webrip|hdtv|dvdrip|remux)\\b"),
-        Regex("(?i)\\b(x264|x265|h264|h265|hevc|avc)\\b"),
-        Regex("(?i)\\b(aac|ac3|dts\\d*[\\s\\d]*|ddp?\\d*[\\s\\d]*|atmos|truehd|flac|falc\\d*[\\s\\d]*)\\b"),
-        Regex("(?i)\\b(10bit|8bit|60fps|25fps|24fps|120fps|hfr|hifi)\\b"),
-        Regex("(?i)\\b(audios|audio|video|hq|hd|ma|5 1|7 1|2 0)\\b"),
-        Regex("(?i)\\b(iTunes|QuickIO|PandaQT|臻彩)\\b")
+    private val noiseWords = listOf(
+        "2160p", "1080p", "720p", "480p", "4k", "8k", "hdr", "sdr", "dv", "dolby", "vision",
+        "bluray", "bdrip", "web-dl", "webrip", "hdtv", "dvdrip", "remux", "x264", "x265",
+        "h264", "h265", "hevc", "avc", "aac", "ac3", "dts", "ddp", "atmos", "truehd", "flac",
+        "10bit", "8bit", "60fps", "25fps", "24fps", "120fps", "hfr", "hifi", "audios", "audio",
+        "video", "hq", "hd", "ma", "itunes", "quickio", "pandaqt", "臻彩", "cuva", "vivid"
     )
-
-    // ➕ 提取中文辅助函数
-    private fun keepChineseOnly(text: String): String {
-        val chinesePattern = Regex("[\\u4e00-\\u9fa5]+")
-        val matches = chinesePattern.findAll(text).map { it.value }.toList()
-        return if (matches.isNotEmpty()) {
-            matches.joinToString("")
-        } else {
-            text // 如果没有任何中文，保留原样（比如纯英文电影）
-        }
-    }
 
     fun parse(fileName: String, parentFolder: String? = null): ParsedVideoName {
         val lowerName = fileName.lowercase()
         val isVideo = videoExts.any { lowerName.endsWith(it) }
         
-        var rawName = fileName
-        if (!parentFolder.isNullOrBlank()) {
-            val ignoreFolders = listOf("电影", "动漫", "电视剧", "纪录片", "综艺", "第一季", "第二季", "第三季", "Season 1", "Season 2")
-            
-            // ➕ 拼接前，先把父文件夹名强行过一遍纯中文提取
-            val cleanParent = keepChineseOnly(parentFolder)
-            
-            if (!ignoreFolders.contains(parentFolder) && !fileName.contains(cleanParent)) {
-                rawName = "$cleanParent $fileName"
-            }
-        }
-
-        var name = rawName
+        var name = fileName
         videoExts.forEach { if (name.lowercase().endsWith(it)) { name = name.dropLast(it.length) } }
 
+        // 1. 提取季集
         var season: Int? = null
         var episode: Int? = null
         
@@ -86,6 +59,7 @@ object VideoFileNameParser {
             name = name.replace(it.value, " ")
         }
 
+        // 2. 提取年份
         var year: Int? = null
         val yearRegex = Regex("(19|20)\\d{2}")
         yearRegex.find(name)?.let {
@@ -93,30 +67,33 @@ object VideoFileNameParser {
             name = name.replace(it.value, " ")
         }
 
-        noisePatterns.forEach { pattern ->
-            name = name.replace(pattern, " ")
-        }
-
-        name = name.replace(Regex("[._\\-]"), " ")
-        name = name.replace(Regex("\\s+"), " ").trim()
-
-        // ➕ 终极净化：如果存在中文，剔除所有英文和多余符号
-        name = keepChineseOnly(name)
+        // 3. 清理无意义标签
+        var cleanName = name.replace(Regex("[._\\-\\[\\]()【】]"), " ")
         
-        // 去除重复
-        val words = name.split(" ")
-        val uniqueWords = mutableListOf<String>()
-        for (w in words) {
-            if (!uniqueWords.contains(w) && w.isNotBlank()) {
-                uniqueWords.add(w)
+        // 按空格分割，过滤掉所有 noiseWords 以及纯数字、纯符号
+        cleanName = cleanName.split(" ")
+            .filter { word ->
+                val w = word.trim()
+                w.isNotEmpty() && 
+                !noiseWords.contains(w.lowercase()) && 
+                w.toIntOrNull() == null &&
+                !w.matches(Regex("^[a-zA-Z]{1,2}$")) // 过滤掉像 1Audio 拆分后剩下的单字母
+            }
+            .joinToString(" ")
+
+        // 4. 如果清理完为空，或者只剩下无意义的字符（如全是英文数字的垃圾）
+        if (cleanName.isBlank()) {
+            // 尝试使用父文件夹名
+            if (!parentFolder.isNullOrBlank() && parentFolder != "电影" && parentFolder != "动漫" && parentFolder != "电视剧") {
+                cleanName = parentFolder
+            } else {
+                cleanName = "未知影视 " + (year ?: "")
             }
         }
-        name = uniqueWords.joinToString("").trim() // 中文字符之间不需要空格
 
-        if (name.isBlank() || name.toIntOrNull() != null) {
-            name = if (!parentFolder.isNullOrBlank()) keepChineseOnly(parentFolder) else fileName.substringBeforeLast(".")
-        }
+        // 去除连续空格
+        cleanName = cleanName.replace(Regex("\\s+"), " ").trim()
 
-        return ParsedVideoName(name, year, season, episode, isVideo)
+        return ParsedVideoName(cleanName, year, season, episode, isVideo)
     }
 }
