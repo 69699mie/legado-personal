@@ -27,10 +27,9 @@ data class QuarkFile(
     val name: String,
     val isFolder: Boolean,
     val category: String = "其他",
-    val folderName: String? = null,
+    val folderPath: List<String> = emptyList(), // ➕ 记录完整路径层级
     val parsedInfo: ParsedVideoName? = null,
-    val size: Long = 0L,
-    val path: String = ""
+    val size: Long = 0L
 )
 
 data class MediaSeries(
@@ -134,7 +133,7 @@ class VideoScraperViewModel(
                     val rootFiles = getRootFolderNames(cookie)
                     for (fid in libs) {
                         val categoryName = rootFiles[fid] ?: "影视库"
-                        fetchVideosRecursively(cookie, fid, categoryName, null, "", allVideos)
+                        fetchVideosRecursively(cookie, fid, categoryName, listOf(categoryName), allVideos)
                     }
                 }
                 
@@ -153,21 +152,35 @@ class VideoScraperViewModel(
         }
     }
     
+    // ➕ 核心重构：多级目录回溯归类
     private fun aggregateToSeries(videos: List<QuarkFile>): List<MediaSeries> {
         val seriesMap = mutableMapOf<String, MediaSeries>()
-        val ignoreFolders = setOf("电影", "动漫", "电视剧", "纪录片", "综艺", "影视库", "其他", "未分类")
 
         for (v in videos) {
             val parsed = v.parsedInfo ?: continue
             
-            val baseTitle = if (!v.folderName.isNullOrBlank() && !ignoreFolders.contains(v.folderName)) {
-                v.folderName
-            } else {
-                parsed.title
+            // 从完整路径中倒序查找（忽略分类根目录），提取真正的剧名
+            // 例如路径：["电影", "刺杀小说家", "第1季"]
+            // 倒序遍历：第1季(被跳过) -> 刺杀小说家(命中)
+            var baseTitle = parsed.title
+            for (i in v.folderPath.indices.reversed()) {
+                val folder = v.folderPath[i]
+                // 如果是季目录、或者根分类目录，跳过
+                if (VideoFileNameParser.isSeasonFolder(folder) || i == 0) {
+                    continue
+                }
+                baseTitle = folder
+                break
             }
             
+            // 如果往上找完全没找到（比如直接放在根目录），就用文件名
+            if (baseTitle.isBlank() || baseTitle == "未知影视") {
+                baseTitle = parsed.title
+            }
+
             if (baseTitle.isBlank()) continue
             
+            // 用于合并的唯一 Key
             val key = baseTitle
             
             if (seriesMap.containsKey(key)) {
@@ -213,7 +226,7 @@ class VideoScraperViewModel(
         return map
     }
 
-    private suspend fun fetchVideosRecursively(cookie: String, parentFid: String, category: String, folderName: String?, currentPath: String, resultList: MutableList<QuarkFile>) {
+    private suspend fun fetchVideosRecursively(cookie: String, parentFid: String, category: String, currentPath: List<String>, resultList: MutableList<QuarkFile>) {
         withContext(Dispatchers.IO) {
             val url = "https://drive-pc.quark.cn/1/clouddrive/file/sort?pr=ucpro&fr=pc&uc_param_str=&pdir_fid=$parentFid&_page=1&_size=100&_sort=file_type:asc,updated_at:desc"
             val request = Request.Builder().url(url).header("Cookie", cookie).header("User-Agent", "Mozilla/5.0").build()
@@ -233,14 +246,15 @@ class VideoScraperViewModel(
                                     val isFolder = item.optBoolean("dir", false)
                                     val size = item.optLong("size", 0L)
                                     
-                                    val newPath = if (currentPath.isBlank()) "/$fileName" else "$currentPath/$fileName"
+                                    val newPath = currentPath + fileName
                                     
                                     if (isFolder) {
-                                        fetchVideosRecursively(cookie, fileFid, category, fileName, newPath, resultList)
+                                        fetchVideosRecursively(cookie, fileFid, category, newPath, resultList)
                                     } else {
-                                        val parsed = VideoFileNameParser.parse(fileName, folderName)
+                                        val parentFolder = currentPath.lastOrNull()
+                                        val parsed = VideoFileNameParser.parse(fileName, parentFolder)
                                         if (parsed.isVideo) {
-                                            val qf = QuarkFile(fileFid, fileName, false, category, folderName, parsed, size, "夸克网盘:$currentPath")
+                                            val qf = QuarkFile(fileFid, fileName, false, category, newPath, parsed, size)
                                             resultList.add(qf)
                                         }
                                     }
@@ -511,7 +525,7 @@ class VideoScraperViewModel(
                                 val isFolder = item.optBoolean("dir", false)
                                 val parsed = if (!isFolder) VideoFileNameParser.parse(fileName) else null
                                 if (isFolder || (parsed != null && parsed.isVideo)) {
-                                    files.add(QuarkFile(fileFid, fileName, isFolder, "", null, parsed))
+                                    files.add(QuarkFile(fileFid, fileName, isFolder, "", emptyList(), parsed))
                                 }
                             }
                         }
