@@ -15,6 +15,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.Edit // ➕ 补充缺失的 import
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.Movie
 import androidx.compose.material.icons.filled.PlayArrow
@@ -26,10 +27,10 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shadow
-import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.TextStyle
@@ -415,7 +416,6 @@ fun MediaDetailScreen(series: MediaSeries, onBack: () -> Unit, onPlay: (QuarkFil
                     val s = file.parsedInfo?.season
                     val e = file.parsedInfo?.episode
                     
-                    // ➕ 优先读取 TMDB 剧集名
                     val tmdbTitle = if (e != null) series.episodeTitles[e] else null
                     val label = if (e != null) {
                         "第${e}集" + if (!tmdbTitle.isNullOrBlank()) " $tmdbTitle" else ""
