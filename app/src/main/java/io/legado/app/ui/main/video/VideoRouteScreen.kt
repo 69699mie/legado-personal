@@ -2,6 +2,7 @@ package io.legado.app.ui.main.video
 
 import android.view.ViewGroup
 import android.widget.FrameLayout
+import android.widget.Toast
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
@@ -46,6 +47,8 @@ import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.window.Dialog
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.media3.common.MediaItem
+import androidx.media3.common.PlaybackException
+import androidx.media3.common.Player
 import androidx.media3.datasource.DefaultHttpDataSource
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
@@ -84,6 +87,7 @@ fun VideoRouteScreen(
         InternalVideoPlayer(
             url = uiState.playUrl!!,
             title = uiState.playTitle ?: "播放中",
+            cookie = uiState.cookie, // ➕ 传入 Cookie 用于播放器鉴权
             onBack = { viewModel.stopPlaying() }
         )
     } else if (uiState.currentSeries != null) {
@@ -332,16 +336,20 @@ fun VideoRouteScreen(
     }
 }
 
-// ➕ 修复：强制注入请求头解决 403 问题
+// ➕ 修复：为 ExoPlayer 注入 Cookie，并监听报错
 @Composable
-fun InternalVideoPlayer(url: String, title: String, onBack: () -> Unit) {
+fun InternalVideoPlayer(url: String, title: String, cookie: String, onBack: () -> Unit) {
     val context = LocalContext.current
     
     val exoPlayer = remember {
-        // 构建带有风控 Header 的 DataSource
         val httpDataSourceFactory = DefaultHttpDataSource.Factory()
             .setUserAgent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) quark-cloud-drive/2.5.20 Chrome/100.0.4896.160 Electron/18.3.5.4-b478491100 Safari/537.36 Channel/pckk_other_ch")
-            .setDefaultRequestProperties(mapOf("Referer" to "https://pan.quark.cn/"))
+            .setDefaultRequestProperties(
+                mapOf(
+                    "Referer" to "https://pan.quark.cn/",
+                    "Cookie" to cookie // 必须带上 Cookie 才能拉取分片
+                )
+            )
             .setAllowCrossProtocolRedirects(true)
 
         ExoPlayer.Builder(context)
@@ -350,6 +358,14 @@ fun InternalVideoPlayer(url: String, title: String, onBack: () -> Unit) {
                 setMediaItem(MediaItem.fromUri(url))
                 prepare()
                 playWhenReady = true
+                
+                // ➕ 监听错误并打印，防止静默黑屏
+                addListener(object : Player.Listener {
+                    override fun onPlayerError(error: PlaybackException) {
+                        super.onPlayerError(error)
+                        Toast.makeText(context, "播放失败: ${error.errorCodeName}", Toast.LENGTH_LONG).show()
+                    }
+                })
             }
     }
 
