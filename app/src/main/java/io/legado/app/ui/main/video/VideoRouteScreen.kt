@@ -15,10 +15,13 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.filled.*
+import androidx.compose.material.icons.filled.Folder
+import androidx.compose.material.icons.filled.Movie
+import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.outlined.StarBorder
 import androidx.compose.material3.*
-import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -41,7 +44,7 @@ import coil3.compose.AsyncImage
 import io.legado.app.ui.widget.components.text.AppText
 import org.koin.androidx.compose.koinViewModel
 
-@OptIn(ExperimentalFoundationApi::class, ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun VideoRouteScreen(
     modifier: Modifier = Modifier,
@@ -51,9 +54,8 @@ fun VideoRouteScreen(
     val context = LocalContext.current
     var showSettingsDialog by remember { mutableStateOf(false) }
     
-    // 编辑弹窗状态
-    var showEditDialog by remember { mutableStateOf(false) }
-    var editSeries by remember { mutableStateOf<MediaSeries?>(null) }
+    var showManualScrapeDialog by remember { mutableStateOf(false) }
+    var manualScrapeSeries by remember { mutableStateOf<MediaSeries?>(null) }
     var viewAllCategory by remember { mutableStateOf<String?>(null) }
 
     BackHandler(enabled = uiState.currentSeries != null || viewAllCategory != null || (!uiState.isLibraryMode && uiState.currentFid != "0")) {
@@ -71,9 +73,9 @@ fun VideoRouteScreen(
             series = uiState.currentSeries!!,
             onBack = { viewModel.selectSeries(null) },
             onPlay = { file -> viewModel.playVideo(context, file) },
-            onEdit = {
-                editSeries = it
-                showEditDialog = true
+            onLongClickPoster = {
+                manualScrapeSeries = it
+                showManualScrapeDialog = true
             }
         )
     } else if (viewAllCategory != null) {
@@ -104,8 +106,8 @@ fun VideoRouteScreen(
                         series = series,
                         onClick = { viewModel.selectSeries(series) },
                         onLongClick = {
-                            editSeries = series
-                            showEditDialog = true
+                            manualScrapeSeries = series
+                            showManualScrapeDialog = true
                         }
                     )
                 }
@@ -149,7 +151,6 @@ fun VideoRouteScreen(
             if (uiState.isLoading && uiState.seriesList.isEmpty() && uiState.fileList.isEmpty()) {
                 Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
             } else if (!uiState.isLibraryMode) {
-                // 网盘浏览
                 if (uiState.fileList.isEmpty()) {
                     Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { AppText("当前文件夹为空") }
                 } else {
@@ -175,54 +176,47 @@ fun VideoRouteScreen(
                     }
                 }
             } else {
-                // 影视库带下拉刷新
-                PullToRefreshBox(
-                    isRefreshing = uiState.isRefreshing,
-                    onRefresh = { viewModel.loadLibraryVideos(force = true) },
-                    modifier = Modifier.fillMaxSize()
-                ) {
-                    if (uiState.selectedLibraryFids.isEmpty()) {
-                        Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { AppText("请先在网盘浏览中勾选媒体文件夹") }
-                    } else if (uiState.seriesList.isEmpty() && !uiState.isLoading) {
-                        Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { AppText("没找到任何视频，下拉可刷新") }
-                    } else {
-                        val grouped = uiState.seriesList.groupBy { it.category }
-                        LazyColumn(
-                            modifier = Modifier.fillMaxSize(),
-                            contentPadding = PaddingValues(bottom = 16.dp)
-                        ) {
-                            grouped.forEach { (categoryName, seriesList) ->
-                                if (seriesList.isNotEmpty()) {
-                                    item {
-                                        Row(
-                                            modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp),
-                                            horizontalArrangement = Arrangement.SpaceBetween,
-                                            verticalAlignment = Alignment.CenterVertically
-                                        ) {
-                                            AppText(text = categoryName, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-                                            AppText(
-                                                text = "全部 ${seriesList.size} 部 >", 
-                                                style = MaterialTheme.typography.bodySmall, 
-                                                color = Color.Gray,
-                                                modifier = Modifier.clickable { viewAllCategory = categoryName }
-                                            )
-                                        }
+                if (uiState.selectedLibraryFids.isEmpty()) {
+                    Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { AppText("请先在网盘浏览中勾选媒体文件夹") }
+                } else if (uiState.seriesList.isEmpty() && !uiState.isLoading) {
+                    Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { AppText("没找到任何视频") }
+                } else {
+                    val grouped = uiState.seriesList.groupBy { it.category }
+                    LazyColumn(
+                        modifier = Modifier.fillMaxSize(),
+                        contentPadding = PaddingValues(bottom = 16.dp)
+                    ) {
+                        grouped.forEach { (categoryName, seriesList) ->
+                            if (seriesList.isNotEmpty()) {
+                                item {
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp),
+                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        AppText(text = categoryName, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                                        AppText(
+                                            text = "全部 ${seriesList.size} 部 >", 
+                                            style = MaterialTheme.typography.bodySmall, 
+                                            color = Color.Gray,
+                                            modifier = Modifier.clickable { viewAllCategory = categoryName }
+                                        )
                                     }
-                                    item {
-                                        LazyRow(
-                                            contentPadding = PaddingValues(horizontal = 16.dp),
-                                            horizontalArrangement = Arrangement.spacedBy(12.dp)
-                                        ) {
-                                            items(seriesList) { series ->
-                                                SeriesPosterCard(
-                                                    series = series,
-                                                    onClick = { viewModel.selectSeries(series) },
-                                                    onLongClick = {
-                                                        editSeries = series
-                                                        showEditDialog = true
-                                                    }
-                                                )
-                                            }
+                                }
+                                item {
+                                    LazyRow(
+                                        contentPadding = PaddingValues(horizontal = 16.dp),
+                                        horizontalArrangement = Arrangement.spacedBy(12.dp)
+                                    ) {
+                                        items(seriesList) { series ->
+                                            SeriesPosterCard(
+                                                series = series,
+                                                onClick = { viewModel.selectSeries(series) },
+                                                onLongClick = {
+                                                    manualScrapeSeries = series
+                                                    showManualScrapeDialog = true
+                                                }
+                                            )
                                         }
                                     }
                                 }
@@ -253,17 +247,67 @@ fun VideoRouteScreen(
         }
     }
     
-    // ➕ 爆米花式完整编辑弹窗
-    if (showEditDialog && editSeries != null) {
-        EditSeriesDialog(
-            series = editSeries!!,
-            viewModel = viewModel,
-            onDismiss = { showEditDialog = false }
-        )
+    if (showManualScrapeDialog && manualScrapeSeries != null) {
+        var searchKeyword by remember { mutableStateOf(manualScrapeSeries!!.title) }
+        var searchResults by remember { mutableStateOf<List<TmdbSearchResult>?>(null) }
+        var categoryInput by remember { mutableStateOf(manualScrapeSeries!!.category) } 
+        
+        Dialog(onDismissRequest = { showManualScrapeDialog = false }) {
+            Column(modifier = Modifier.background(Color.White).padding(16.dp).fillMaxWidth().heightIn(max = 600.dp)) {
+                AppText("手动修正刮削信息")
+                
+                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(vertical = 8.dp)) {
+                    AppText("分类：", modifier = Modifier.width(50.dp))
+                    OutlinedTextField(value = categoryInput, onValueChange = { categoryInput = it }, modifier = Modifier.weight(1f), placeholder = { AppText("如：动漫、电影") })
+                }
+                
+                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(bottom = 8.dp)) {
+                    AppText("名称：", modifier = Modifier.width(50.dp))
+                    OutlinedTextField(value = searchKeyword, onValueChange = { searchKeyword = it }, modifier = Modifier.weight(1f))
+                    OutlinedButton(onClick = { 
+                        viewModel.applyManualScrape(manualScrapeSeries!!.id, null, categoryInput, searchKeyword)
+                        showManualScrapeDialog = false
+                    }, modifier = Modifier.padding(start = 8.dp)) { AppText("仅保存") }
+                }
+
+                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(bottom = 8.dp)) {
+                    Spacer(modifier = Modifier.width(50.dp))
+                    OutlinedButton(onClick = { viewModel.searchTmdbManually(searchKeyword) { searchResults = it } }, modifier = Modifier.fillMaxWidth()) { AppText("去 TMDB 搜索海报") }
+                }
+                
+                if (searchResults == null) {
+                    Box(modifier = Modifier.fillMaxWidth().padding(24.dp), contentAlignment = Alignment.Center) { AppText("输入名称并搜索", color = Color.Gray) }
+                } else if (searchResults!!.isEmpty()) {
+                    Box(modifier = Modifier.fillMaxWidth().padding(24.dp), contentAlignment = Alignment.Center) { AppText("未找到", color = Color.Red) }
+                } else {
+                    LazyColumn(modifier = Modifier.weight(1f)) {
+                        items(searchResults!!) { result ->
+                            Row(
+                                modifier = Modifier.fillMaxWidth().clickable {
+                                    viewModel.applyManualScrape(manualScrapeSeries!!.id, result, categoryInput, result.title)
+                                    showManualScrapeDialog = false
+                                }.padding(vertical = 8.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                if (result.posterUrl != null) {
+                                    AsyncImage(model = result.posterUrl, contentDescription = null, modifier = Modifier.size(60.dp, 90.dp).clip(RoundedCornerShape(8.dp)), contentScale = ContentScale.Crop)
+                                } else {
+                                    Box(modifier = Modifier.size(60.dp, 90.dp).background(Color.LightGray).clip(RoundedCornerShape(8.dp)))
+                                }
+                                Column(modifier = Modifier.padding(start = 12.dp).weight(1f)) {
+                                    AppText(result.title, style = MaterialTheme.typography.titleMedium)
+                                    AppText(result.year, color = Color.Gray, style = MaterialTheme.typography.bodySmall)
+                                }
+                            }
+                            HorizontalDivider()
+                        }
+                    }
+                }
+            }
+        }
     }
 }
 
-// 海报卡片
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun SeriesPosterCard(series: MediaSeries, onClick: () -> Unit, onLongClick: () -> Unit) {
@@ -305,9 +349,8 @@ fun SeriesPosterCard(series: MediaSeries, onClick: () -> Unit, onLongClick: () -
     }
 }
 
-// 详情页
 @Composable
-fun MediaDetailScreen(series: MediaSeries, onBack: () -> Unit, onPlay: (QuarkFile) -> Unit, onEdit: (MediaSeries) -> Unit) {
+fun MediaDetailScreen(series: MediaSeries, onBack: () -> Unit, onPlay: (QuarkFile) -> Unit, onLongClickPoster: (MediaSeries) -> Unit) {
     LazyColumn(modifier = Modifier.fillMaxSize().background(Color.White)) {
         item {
             Box(modifier = Modifier.fillMaxWidth().height(350.dp)) {
@@ -329,8 +372,7 @@ fun MediaDetailScreen(series: MediaSeries, onBack: () -> Unit, onPlay: (QuarkFil
                     IconButton(onClick = onBack) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "返回", tint = Color.Black)
                     }
-                    // 模拟图一右上角菜单
-                    IconButton(onClick = { onEdit(series) }) {
+                    IconButton(onClick = { onLongClickPoster(series) }) {
                         Icon(Icons.Default.Edit, contentDescription = "编辑", tint = Color.Black)
                     }
                 }
@@ -372,8 +414,13 @@ fun MediaDetailScreen(series: MediaSeries, onBack: () -> Unit, onPlay: (QuarkFil
                 items(series.videos) { file ->
                     val s = file.parsedInfo?.season
                     val e = file.parsedInfo?.episode
-                    val label = if (s != null && e != null) "S${s}E${e}" else if (e != null) "第${e}集" else file.name
                     
+                    // ➕ 优先读取 TMDB 剧集名
+                    val tmdbTitle = if (e != null) series.episodeTitles[e] else null
+                    val label = if (e != null) {
+                        "第${e}集" + if (!tmdbTitle.isNullOrBlank()) " $tmdbTitle" else ""
+                    } else file.name
+
                     Column(modifier = Modifier.width(160.dp).clickable { onPlay(file) }) {
                         Box(modifier = Modifier.fillMaxWidth().aspectRatio(16f/9f).clip(RoundedCornerShape(8.dp)).background(Color.DarkGray), contentAlignment = Alignment.Center) {
                             Icon(Icons.Default.PlayArrow, null, tint = Color.White)
@@ -384,7 +431,6 @@ fun MediaDetailScreen(series: MediaSeries, onBack: () -> Unit, onPlay: (QuarkFil
             }
         }
         
-        // ➕ 参考图五的底部文件路径信息
         item {
             Column(modifier = Modifier.fillMaxWidth().background(Color(0xFFF5F5F5)).padding(16.dp).padding(top = 24.dp)) {
                 AppText(text = "文件信息", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
@@ -393,101 +439,6 @@ fun MediaDetailScreen(series: MediaSeries, onBack: () -> Unit, onPlay: (QuarkFil
                     AppText(text = firstFile.path, style = MaterialTheme.typography.bodySmall, color = Color.Gray, modifier = Modifier.padding(top = 4.dp))
                     val sizeMb = firstFile.size / (1024 * 1024)
                     AppText(text = "共 ${series.videos.size} 集 | ${sizeMb}MB (单集)", style = MaterialTheme.typography.bodySmall, color = Color.Gray, modifier = Modifier.padding(top = 4.dp))
-                }
-            }
-        }
-    }
-}
-
-// ➕ 独立的手动搜索/匹配界面
-@Composable
-fun EditSeriesDialog(series: MediaSeries, viewModel: VideoScraperViewModel, onDismiss: () -> Unit) {
-    var searchKeyword by remember { mutableStateOf(series.title) }
-    var searchResults by remember { mutableStateOf<List<TmdbSearchResult>?>(null) }
-    var categoryInput by remember { mutableStateOf(series.category) }
-    
-    Dialog(onDismissRequest = onDismiss) {
-        Surface(
-            modifier = Modifier.fillMaxWidth().fillMaxHeight(0.9f),
-            shape = RoundedCornerShape(16.dp),
-            color = Color.White
-        ) {
-            Column(modifier = Modifier.padding(16.dp)) {
-                Row(
-                    modifier = Modifier.fillMaxWidth().padding(bottom = 16.dp),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    AppText("编辑信息", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
-                    AppText("完成", color = Color.Blue, modifier = Modifier.clickable { onDismiss() })
-                }
-                
-                // 顶部显示原文件名（参考图二）
-                AppText("夸克/.../${series.originalParsedTitle}", style = MaterialTheme.typography.bodySmall, color = Color.Gray)
-                AppText(series.videos.firstOrNull()?.name ?: "等 ${series.videos.size} 个文件", style = MaterialTheme.typography.bodySmall, color = Color.Gray)
-                
-                HorizontalDivider(modifier = Modifier.padding(vertical = 12.dp))
-                
-                AppText("搜索并匹配影片", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-                
-                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(vertical = 8.dp)) {
-                    AppText("分类：", modifier = Modifier.width(50.dp))
-                    OutlinedTextField(value = categoryInput, onValueChange = { categoryInput = it }, modifier = Modifier.weight(1f), placeholder = { AppText("如：动漫、电影") })
-                }
-
-                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(bottom = 8.dp)) {
-                    AppText("名称：", modifier = Modifier.width(50.dp))
-                    OutlinedTextField(value = searchKeyword, onValueChange = { searchKeyword = it }, modifier = Modifier.weight(1f))
-                }
-
-                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(bottom = 16.dp)) {
-                    OutlinedButton(
-                        onClick = { 
-                            viewModel.applyManualScrape(series.id, null, categoryInput, searchKeyword)
-                            onDismiss()
-                        }, 
-                        modifier = Modifier.weight(1f)
-                    ) { AppText("仅保存名称") }
-                    
-                    Spacer(modifier = Modifier.width(16.dp))
-                    
-                    Button(
-                        onClick = { viewModel.searchTmdbManually(searchKeyword) { searchResults = it } }, 
-                        modifier = Modifier.weight(1f)
-                    ) { AppText("搜索 TMDB") }
-                }
-                
-                if (searchResults == null) {
-                    Box(modifier = Modifier.fillMaxWidth().weight(1f), contentAlignment = Alignment.Center) {
-                        AppText("输入名称并点击搜索，以匹配海报和剧集", color = Color.Gray)
-                    }
-                } else if (searchResults!!.isEmpty()) {
-                    Box(modifier = Modifier.fillMaxWidth().weight(1f), contentAlignment = Alignment.Center) {
-                        AppText("未找到结果", color = Color.Red)
-                    }
-                } else {
-                    LazyColumn(modifier = Modifier.weight(1f)) {
-                        items(searchResults!!) { result ->
-                            Row(
-                                modifier = Modifier.fillMaxWidth().clickable {
-                                    viewModel.applyManualScrape(series.id, result, categoryInput, result.title)
-                                    onDismiss()
-                                }.padding(vertical = 8.dp),
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                if (result.posterUrl != null) {
-                                    AsyncImage(model = result.posterUrl, contentDescription = null, modifier = Modifier.size(60.dp, 90.dp).clip(RoundedCornerShape(8.dp)), contentScale = ContentScale.Crop)
-                                } else {
-                                    Box(modifier = Modifier.size(60.dp, 90.dp).background(Color.LightGray).clip(RoundedCornerShape(8.dp)))
-                                }
-                                Column(modifier = Modifier.padding(start = 12.dp).weight(1f)) {
-                                    AppText(result.title, style = MaterialTheme.typography.titleMedium)
-                                    AppText(result.year, color = Color.Gray, style = MaterialTheme.typography.bodySmall)
-                                }
-                            }
-                            HorizontalDivider()
-                        }
-                    }
                 }
             }
         }
