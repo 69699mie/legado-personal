@@ -338,13 +338,12 @@ fun VideoRouteScreen(
     }
 }
 
-// ➕ 修复：使用 OkHttpDataSource 解决分片鉴权 403 问题
+// 播放器
 @Composable
 fun InternalVideoPlayer(url: String, title: String, cookie: String, onBack: () -> Unit) {
     val context = LocalContext.current
     
     val exoPlayer = remember {
-        // 构建专用的 OkHttpClient 用于流媒体请求，OkHttp 默认支持跨协议重定向
         val okHttpClient = OkHttpClient.Builder()
             .connectTimeout(15, TimeUnit.SECONDS)
             .readTimeout(15, TimeUnit.SECONDS)
@@ -352,7 +351,6 @@ fun InternalVideoPlayer(url: String, title: String, cookie: String, onBack: () -
             .followSslRedirects(true)
             .build()
 
-        // 使用 OkHttpDataSource 并注入鉴权请求头
         val okHttpDataSourceFactory = OkHttpDataSource.Factory(okHttpClient)
             .setUserAgent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) quark-cloud-drive/2.5.20 Chrome/100.0.4896.160 Electron/18.3.5.4-b478491100 Safari/537.36 Channel/pckk_other_ch")
             .setDefaultRequestProperties(
@@ -369,7 +367,6 @@ fun InternalVideoPlayer(url: String, title: String, cookie: String, onBack: () -
                 prepare()
                 playWhenReady = true
                 
-                // 监听错误并打印
                 addListener(object : Player.Listener {
                     override fun onPlayerError(error: PlaybackException) {
                         super.onPlayerError(error)
