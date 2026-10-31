@@ -344,10 +344,12 @@ fun InternalVideoPlayer(url: String, title: String, cookie: String, onBack: () -
     val context = LocalContext.current
     
     val exoPlayer = remember {
-        // 构建专用的 OkHttpClient 用于流媒体请求
+        // 构建专用的 OkHttpClient 用于流媒体请求，OkHttp 默认支持跨协议重定向
         val okHttpClient = OkHttpClient.Builder()
             .connectTimeout(15, TimeUnit.SECONDS)
             .readTimeout(15, TimeUnit.SECONDS)
+            .followRedirects(true)
+            .followSslRedirects(true)
             .build()
 
         // 使用 OkHttpDataSource 并注入鉴权请求头
@@ -359,8 +361,6 @@ fun InternalVideoPlayer(url: String, title: String, cookie: String, onBack: () -
                     "Cookie" to cookie
                 )
             )
-            // 允许跨域重定向（夸克直链可能返回 302 跳转到真正的 CDN）
-            .setAllowCrossProtocolRedirects(true)
 
         ExoPlayer.Builder(context)
             .setMediaSourceFactory(DefaultMediaSourceFactory(okHttpDataSourceFactory))
