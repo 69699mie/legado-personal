@@ -13,40 +13,37 @@ object VideoFileNameParser {
     private val videoExts = listOf(".mp4", ".mkv", ".avi", ".ts", ".m3u8", ".mov", ".rmvb", ".flv")
 
     private val noisePatterns = listOf(
-        Regex("\\[.*?\\]|\\(.*?\\)|【.*?】"), 
+        Regex("\\[.*?\\]|\\(.*?\\)|【.*?】"),
         Regex("(?i)\\b(2160p|1080p|720p|480p|4k|8k)\\b"),
-        Regex("(?i)\\b(hdr|sdr|dv|dolby|vision)\\b"),
+        Regex("(?i)\\b(hdr|sdr|dv|dolby|vision|hdr10\\+?)\\b"),
         Regex("(?i)\\b(bluray|bdrip|web-?dl|webrip|hdtv|dvdrip|remux)\\b"),
         Regex("(?i)\\b(x264|x265|h264|h265|hevc|avc)\\b"),
-        Regex("(?i)\\b(aac|ac3|dts|ddp?\\d?|atmos|truehd|flac)\\b"),
+        // 暴力清理各种音轨、压制格式
+        Regex("(?i)\\b(aac|ac3|dts\\d*[\\s\\d]*|ddp?\\d*[\\s\\d]*|atmos|truehd|flac|falc\\d*[\\s\\d]*)\\b"),
         Regex("(?i)\\b(10bit|8bit|60fps|25fps|24fps|120fps|hfr|hifi)\\b"),
-        Regex("(?i)\\b(audios|audio|video|hq|hd)\\b"),
+        Regex("(?i)\\b(audios|audio|video|hq|hd|ma|5 1|7 1|2 0)\\b"),
         Regex("(?i)\\b(iTunes|QuickIO|PandaQT|臻彩)\\b")
     )
 
-    // 支持传入父文件夹名称进行辅助解析
     fun parse(fileName: String, parentFolder: String? = null): ParsedVideoName {
         val lowerName = fileName.lowercase()
         val isVideo = videoExts.any { lowerName.endsWith(it) }
         
-        // 预处理：如果文件名叫 2026.2160p... 且父文件夹名为 恶意，拼起来就是：恶意 2026.2160p...
         var rawName = fileName
-        if (parentFolder != null && parentFolder.isNotBlank()) {
-            // 排除掉无意义的父文件夹名
+        if (!parentFolder.isNullOrBlank()) {
             val ignoreFolders = listOf("电影", "动漫", "电视剧", "纪录片", "综艺", "第一季", "第二季", "第三季", "Season 1", "Season 2")
-            if (!ignoreFolders.contains(parentFolder)) {
+            // 如果父文件夹名字已经包含在文件名里，就不拼接，防止重复
+            if (!ignoreFolders.contains(parentFolder) && !fileName.contains(parentFolder)) {
                 rawName = "$parentFolder $fileName"
             }
         }
 
         var name = rawName
-
         videoExts.forEach { if (name.lowercase().endsWith(it)) { name = name.dropLast(it.length) } }
 
         var season: Int? = null
         var episode: Int? = null
         
-        // 提取季集
         val seRegex = Regex("(?i)S(\\d{1,2})E(\\d{1,3})")
         seRegex.find(name)?.let {
             season = it.groupValues[1].toIntOrNull()
@@ -89,9 +86,21 @@ object VideoFileNameParser {
 
         name = name.replace(Regex("[._\\-]"), " ")
         name = name.replace(Regex("\\s+"), " ").trim()
+
+        // ➕ 去除孤立的纯数字（例如：恶意 Malice 0 中的 0）
+        name = name.split(" ").filter { it.length > 1 || it.toIntOrNull() == null }.joinToString(" ")
+
+        // ➕ 去除重复的词语（例如：盗墓大案 盗墓大案）
+        val words = name.split(" ")
+        val uniqueWords = mutableListOf<String>()
+        for (w in words) {
+            if (!uniqueWords.contains(w)) {
+                uniqueWords.add(w)
+            }
+        }
+        name = uniqueWords.joinToString(" ").trim()
         
-        // 如果清洗完太短或者全是数字，保底用原文件名或父文件夹
-        if (name.isBlank() || name.toIntOrNull() != null || name.length < 2) {
+        if (name.isBlank() || name.toIntOrNull() != null) {
             name = if (!parentFolder.isNullOrBlank()) parentFolder else fileName.substringBeforeLast(".")
         }
 
