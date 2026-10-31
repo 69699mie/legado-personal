@@ -1,8 +1,6 @@
 package io.legado.app.ui.main.video
 
 import android.content.Context
-import android.content.Intent
-import android.net.Uri
 import android.widget.Toast
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
@@ -29,6 +27,7 @@ data class QuarkFile(
     val name: String,
     val isFolder: Boolean,
     val category: String = "其他",
+    val folderName: String? = null, // ➕ 新增：记录父文件夹名，用于强归类
     val parsedInfo: ParsedVideoName? = null,
     val size: Long = 0L,
     val path: String = ""
@@ -154,14 +153,26 @@ class VideoScraperViewModel(
         }
     }
     
+    // ➕ 核心修复：强制根据父文件夹归类
     private fun aggregateToSeries(videos: List<QuarkFile>): List<MediaSeries> {
         val seriesMap = mutableMapOf<String, MediaSeries>()
+        // 需要忽略的顶级根目录名，这些不能作为剧名
+        val ignoreFolders = setOf("电影", "动漫", "电视剧", "纪录片", "综艺", "影视库", "其他", "未分类")
+
         for (v in videos) {
             val parsed = v.parsedInfo ?: continue
-            val title = parsed.title
-            if (title.isBlank()) continue
             
-            val key = "${title}_${parsed.year ?: "0"}"
+            // 判定核心标题：如果父文件夹存在且不是根分类，强制使用父文件夹名
+            val baseTitle = if (!v.folderName.isNullOrBlank() && !ignoreFolders.contains(v.folderName)) {
+                v.folderName
+            } else {
+                parsed.title
+            }
+            
+            if (baseTitle.isBlank()) continue
+            
+            // 如果是剧集文件夹，年份大概率在文件夹名里没有，所以用 "剧名_年份" 或者仅 "剧名" 做 Key
+            val key = baseTitle // 强制以文件夹名为唯一标识
             
             if (seriesMap.containsKey(key)) {
                 val exist = seriesMap[key]!!
@@ -170,8 +181,8 @@ class VideoScraperViewModel(
             } else {
                 seriesMap[key] = MediaSeries(
                     id = key,
-                    title = title,
-                    originalParsedTitle = title,
+                    title = baseTitle,
+                    originalParsedTitle = baseTitle,
                     year = parsed.year,
                     category = v.category,
                     videos = listOf(v)
@@ -229,11 +240,13 @@ class VideoScraperViewModel(
                                     val newPath = if (currentPath.isBlank()) "/$fileName" else "$currentPath/$fileName"
                                     
                                     if (isFolder) {
+                                        // 往下递归，记录当前的文件夹名字
                                         fetchVideosRecursively(cookie, fileFid, category, fileName, newPath, resultList)
                                     } else {
+                                        // 解析文件，把父目录名传进去
                                         val parsed = VideoFileNameParser.parse(fileName, folderName)
                                         if (parsed.isVideo) {
-                                            val qf = QuarkFile(fileFid, fileName, false, category, parsed, size, "夸克网盘:$currentPath")
+                                            val qf = QuarkFile(fileFid, fileName, false, category, folderName, parsed, size, "夸克网盘:$currentPath")
                                             resultList.add(qf)
                                         }
                                     }
@@ -253,7 +266,7 @@ class VideoScraperViewModel(
                 if (match != null) {
                     var epTitles: Map<Int, String> = emptyMap()
                     val season = series.videos.firstOrNull()?.parsedInfo?.season ?: 1
-                    if (series.videos.size > 1) {
+                    if (series.videos.size > 1 || series.originalParsedTitle.contains("季")) { // 剧集标识
                         epTitles = fetchEpisodeTitles(match.id, season, apiKey, baseUrl)
                     }
 
@@ -418,9 +431,10 @@ class VideoScraperViewModel(
         }
     }
 
-    // ➕ 修复：使用官方客户端 UA 获取自有文件直链
+    // ➕ 获取内部播放用的直链
     fun playVideo(context: Context, file: QuarkFile) {
         val cookie = _uiState.value.cookie
+        _uiState.update { it.copy(playUrl = null, playTitle = file.name) } // 先清空状态，准备播放
         Toast.makeText(context, "正在获取播放直链...", Toast.LENGTH_SHORT).show()
         
         viewModelScope.launch {
@@ -432,7 +446,6 @@ class VideoScraperViewModel(
                     }
                     val body = jsonBody.toString().toRequestBody("application/json".toMediaType())
                     
-                    // 关键：伪装成夸克官方桌面客户端
                     val request = Request.Builder()
                         .url(apiUrl)
                         .post(body)
@@ -461,18 +474,17 @@ class VideoScraperViewModel(
             }
             
             if (url != null) {
-                try {
-                    val intent = Intent(Intent.ACTION_VIEW)
-                    intent.setDataAndType(Uri.parse(url), "video/*")
-                    intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                    context.startActivity(intent)
-                } catch (e: Exception) {
-                    Toast.makeText(context, "无法打开播放器: ${e.message}", Toast.LENGTH_SHORT).show()
-                }
+                // ➕ 更新状态，让 UI 触发内部播放器
+                _uiState.update { it.copy(playUrl = url) }
             } else {
                 Toast.makeText(context, "获取直链失败，请检查 Cookie 是否有效", Toast.LENGTH_LONG).show()
             }
         }
+    }
+
+    // ➕ 关闭内部播放器
+    fun stopPlaying() {
+        _uiState.update { it.copy(playUrl = null, playTitle = null) }
     }
 
     fun fetchQuarkFiles(fid: String = "0", isBack: Boolean = false) {
@@ -508,7 +520,7 @@ class VideoScraperViewModel(
                                 val isFolder = item.optBoolean("dir", false)
                                 val parsed = if (!isFolder) VideoFileNameParser.parse(fileName) else null
                                 if (isFolder || (parsed != null && parsed.isVideo)) {
-                                    files.add(QuarkFile(fileFid, fileName, isFolder, "", parsed))
+                                    files.add(QuarkFile(fileFid, fileName, isFolder, "", null, parsed))
                                 }
                             }
                         }
@@ -540,5 +552,8 @@ data class VideoUiState(
     val isLibraryMode: Boolean = true,
     val selectedLibraryFids: Set<String> = emptySet(),
     val seriesList: List<MediaSeries> = emptyList(),
-    val currentSeries: MediaSeries? = null
+    val currentSeries: MediaSeries? = null,
+    // ➕ 新增播放状态
+    val playUrl: String? = null,
+    val playTitle: String? = null
 )
