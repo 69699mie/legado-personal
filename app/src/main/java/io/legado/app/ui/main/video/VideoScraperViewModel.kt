@@ -27,7 +27,7 @@ data class QuarkFile(
     val name: String,
     val isFolder: Boolean,
     val category: String = "其他",
-    val folderPath: List<String> = emptyList(), // ➕ 记录完整路径层级
+    val folderPath: List<String> = emptyList(), // 只包含父级文件夹路径，不含文件名
     val parsedInfo: ParsedVideoName? = null,
     val size: Long = 0L
 )
@@ -132,6 +132,7 @@ class VideoScraperViewModel(
                 withContext(Dispatchers.IO) {
                     val rootFiles = getRootFolderNames(cookie)
                     for (fid in libs) {
+                        // 修复：分类名优先取根目录真实名称，其次用所选文件夹名兜底
                         val categoryName = rootFiles[fid] ?: "影视库"
                         fetchVideosRecursively(cookie, fid, categoryName, listOf(categoryName), allVideos)
                     }
@@ -152,20 +153,17 @@ class VideoScraperViewModel(
         }
     }
     
-    // ➕ 核心重构：多级目录回溯归类
     private fun aggregateToSeries(videos: List<QuarkFile>): List<MediaSeries> {
         val seriesMap = mutableMapOf<String, MediaSeries>()
 
         for (v in videos) {
             val parsed = v.parsedInfo ?: continue
             
-            // 从完整路径中倒序查找（忽略分类根目录），提取真正的剧名
-            // 例如路径：["电影", "刺杀小说家", "第1季"]
-            // 倒序遍历：第1季(被跳过) -> 刺杀小说家(命中)
+            // 修复：回溯路径寻找有效剧名（路径不含文件名，只有父文件夹）
             var baseTitle = parsed.title
             for (i in v.folderPath.indices.reversed()) {
                 val folder = v.folderPath[i]
-                // 如果是季目录、或者根分类目录，跳过
+                // 跳过季文件夹和根分类目录
                 if (VideoFileNameParser.isSeasonFolder(folder) || i == 0) {
                     continue
                 }
@@ -173,14 +171,12 @@ class VideoScraperViewModel(
                 break
             }
             
-            // 如果往上找完全没找到（比如直接放在根目录），就用文件名
             if (baseTitle.isBlank() || baseTitle == "未知影视") {
                 baseTitle = parsed.title
             }
 
             if (baseTitle.isBlank()) continue
             
-            // 用于合并的唯一 Key
             val key = baseTitle
             
             if (seriesMap.containsKey(key)) {
@@ -246,15 +242,15 @@ class VideoScraperViewModel(
                                     val isFolder = item.optBoolean("dir", false)
                                     val size = item.optLong("size", 0L)
                                     
-                                    val newPath = currentPath + fileName
-                                    
                                     if (isFolder) {
-                                        fetchVideosRecursively(cookie, fileFid, category, newPath, resultList)
+                                        // 文件夹递归，路径加上当前文件夹名
+                                        fetchVideosRecursively(cookie, fileFid, category, currentPath + fileName, resultList)
                                     } else {
                                         val parentFolder = currentPath.lastOrNull()
                                         val parsed = VideoFileNameParser.parse(fileName, parentFolder)
                                         if (parsed.isVideo) {
-                                            val qf = QuarkFile(fileFid, fileName, false, category, newPath, parsed, size)
+                                            // 修复：构造 QuarkFile 时，folderPath 只传父级目录，不包含文件名
+                                            val qf = QuarkFile(fileFid, fileName, false, category, currentPath, parsed, size)
                                             resultList.add(qf)
                                         }
                                     }
@@ -471,6 +467,12 @@ class VideoScraperViewModel(
                                 if (data != null && data.length() > 0) {
                                     return@withContext data.getJSONObject(0).optString("download_url")
                                 }
+                            } else {
+                                // 打印真实错误
+                                val msg = json.optString("message")
+                                withContext(Dispatchers.Main) {
+                                    Toast.makeText(context, "接口报错: $msg", Toast.LENGTH_SHORT).show()
+                                }
                             }
                         }
                     }
@@ -483,7 +485,7 @@ class VideoScraperViewModel(
             if (url != null) {
                 _uiState.update { it.copy(playUrl = url) }
             } else {
-                Toast.makeText(context, "获取直链失败，请检查 Cookie 是否有效", Toast.LENGTH_LONG).show()
+                Toast.makeText(context, "获取直链失败，请检查 Cookie", Toast.LENGTH_LONG).show()
             }
         }
     }
