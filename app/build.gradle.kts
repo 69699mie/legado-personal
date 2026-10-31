@@ -205,6 +205,8 @@ dependencies {
     implementation(libs.lifecycle.service)
     implementation(libs.media.media)
     implementation(libs.media3.exoplayer)
+    // ➕ 新增：ExoPlayer 的 UI 模块，用于渲染播放控件（修复 PlayerView 报错）
+    implementation("androidx.media3:media3-ui:1.2.1")
     implementation(libs.media3.datasource.okhttp)
     implementation(libs.splitties.appctx)
     implementation(libs.splitties.systemservices)
