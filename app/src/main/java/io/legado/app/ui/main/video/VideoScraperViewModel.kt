@@ -27,7 +27,7 @@ data class QuarkFile(
     val name: String,
     val isFolder: Boolean,
     val category: String = "其他",
-    val folderPath: List<String> = emptyList(), // 只包含父级文件夹路径，不含文件名
+    val folderPath: List<String> = emptyList(), // 只包含父级文件夹路径
     val parsedInfo: ParsedVideoName? = null,
     val size: Long = 0L
 )
@@ -132,7 +132,7 @@ class VideoScraperViewModel(
                 withContext(Dispatchers.IO) {
                     val rootFiles = getRootFolderNames(cookie)
                     for (fid in libs) {
-                        // 修复：分类名优先取根目录真实名称，其次用所选文件夹名兜底
+                        // 取根目录名字，比如"电影"、"动漫"，作为分类
                         val categoryName = rootFiles[fid] ?: "影视库"
                         fetchVideosRecursively(cookie, fid, categoryName, listOf(categoryName), allVideos)
                     }
@@ -153,30 +153,45 @@ class VideoScraperViewModel(
         }
     }
     
+    // ➕ 严格按照你的规则重写归类：父级优先，季级追溯
     private fun aggregateToSeries(videos: List<QuarkFile>): List<MediaSeries> {
         val seriesMap = mutableMapOf<String, MediaSeries>()
+        
+        // 忽略的顶级根目录名
+        val ignoreFolders = setOf("电影", "动漫", "电视剧", "纪录片", "综艺", "影视库", "其他", "未分类")
 
         for (v in videos) {
             val parsed = v.parsedInfo ?: continue
             
-            // 修复：回溯路径寻找有效剧名（路径不含文件名，只有父文件夹）
-            var baseTitle = parsed.title
-            for (i in v.folderPath.indices.reversed()) {
-                val folder = v.folderPath[i]
-                // 跳过季文件夹和根分类目录
-                if (VideoFileNameParser.isSeasonFolder(folder) || i == 0) {
-                    continue
-                }
-                baseTitle = folder
-                break
-            }
+            var baseTitle = ""
             
-            if (baseTitle.isBlank() || baseTitle == "未知影视") {
+            if (v.folderPath.size >= 2) {
+                val parentFolder = v.folderPath.last() // 直接父目录
+                val grandParentFolder = v.folderPath[v.folderPath.size - 2] // 爷爷目录
+
+                if (VideoFileNameParser.isSeasonFolder(parentFolder)) {
+                    // 如果父目录是“第1季”，往上找一级作为剧名
+                    baseTitle = grandParentFolder
+                } else {
+                    // 如果父目录不是季，直接用它当剧名
+                    baseTitle = parentFolder
+                }
+            } else if (v.folderPath.isNotEmpty()) {
+                // 如果只有一级目录（直接放在“动漫”下面），说明是散件，用文件名解析出来的标题
+                baseTitle = v.folderPath.last()
+                if (ignoreFolders.contains(baseTitle)) {
+                    baseTitle = parsed.title
+                }
+            } else {
                 baseTitle = parsed.title
             }
-
-            if (baseTitle.isBlank()) continue
             
+            // 极端兜底：如果剧名是无效的根目录名，或者为空，抛弃它
+            if (baseTitle.isBlank() || ignoreFolders.contains(baseTitle)) {
+                baseTitle = parsed.title
+                if (baseTitle.isBlank() || baseTitle == "未知影视") continue
+            }
+
             val key = baseTitle
             
             if (seriesMap.containsKey(key)) {
@@ -243,13 +258,13 @@ class VideoScraperViewModel(
                                     val size = item.optLong("size", 0L)
                                     
                                     if (isFolder) {
-                                        // 文件夹递归，路径加上当前文件夹名
+                                        // 递归时路径增加当前文件夹
                                         fetchVideosRecursively(cookie, fileFid, category, currentPath + fileName, resultList)
                                     } else {
                                         val parentFolder = currentPath.lastOrNull()
                                         val parsed = VideoFileNameParser.parse(fileName, parentFolder)
                                         if (parsed.isVideo) {
-                                            // 修复：构造 QuarkFile 时，folderPath 只传父级目录，不包含文件名
+                                            // 记录当前路径（不包括文件本身）
                                             val qf = QuarkFile(fileFid, fileName, false, category, currentPath, parsed, size)
                                             resultList.add(qf)
                                         }
@@ -466,12 +481,6 @@ class VideoScraperViewModel(
                                 val data = json.optJSONArray("data")
                                 if (data != null && data.length() > 0) {
                                     return@withContext data.getJSONObject(0).optString("download_url")
-                                }
-                            } else {
-                                // 打印真实错误
-                                val msg = json.optString("message")
-                                withContext(Dispatchers.Main) {
-                                    Toast.makeText(context, "接口报错: $msg", Toast.LENGTH_SHORT).show()
                                 }
                             }
                         }
