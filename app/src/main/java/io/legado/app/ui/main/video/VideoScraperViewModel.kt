@@ -51,7 +51,8 @@ data class TmdbSearchResult(
     val year: String,
     val posterUrl: String?,
     val overview: String,
-    val rating: String?
+    val rating: String?,
+    val genreIds: List<Int> = emptyList() // 新增：保存题材ID
 )
 
 class VideoScraperViewModel(
@@ -132,7 +133,6 @@ class VideoScraperViewModel(
                 withContext(Dispatchers.IO) {
                     val rootFiles = getRootFolderNames(cookie)
                     for (fid in libs) {
-                        // 严格使用根目录名字做分类，绝不乱用"影视库"
                         val categoryName = rootFiles[fid] ?: "未分类"
                         fetchVideosRecursively(cookie, fid, categoryName, listOf(categoryName), allVideos)
                     }
@@ -155,32 +155,26 @@ class VideoScraperViewModel(
     
     private fun aggregateToSeries(videos: List<QuarkFile>): List<MediaSeries> {
         val seriesMap = mutableMapOf<String, MediaSeries>()
-        val ignoreFolders = setOf("电影", "动漫", "电视剧", "纪录片", "综艺", "未分类", "其他")
+        val ignoreFolders = setOf("电影", "动漫", "电视剧", "纪录片", "综艺", "未分类", "其他", "未观看", "已观看")
 
         for (v in videos) {
             val parsed = v.parsedInfo ?: continue
-            
             var baseTitle = ""
             
-            if (v.folderPath.size >= 2) {
-                val parentFolder = v.folderPath.last()
-                val grandParentFolder = v.folderPath[v.folderPath.size - 2]
-
-                if (VideoFileNameParser.isSeasonFolder(parentFolder)) {
-                    baseTitle = grandParentFolder
-                } else {
-                    baseTitle = parentFolder
+            // 智能推断父文件夹名
+            if (v.folderPath.isNotEmpty()) {
+                // 从倒数第一个开始找，跳过无意义的分类词和季文件夹
+                for (i in v.folderPath.indices.reversed()) {
+                    val folder = v.folderPath[i]
+                    if (!ignoreFolders.contains(folder) && !VideoFileNameParser.isSeasonFolder(folder)) {
+                        baseTitle = folder
+                        break
+                    }
                 }
-            } else if (v.folderPath.isNotEmpty()) {
-                baseTitle = v.folderPath.last()
-                if (ignoreFolders.contains(baseTitle)) {
-                    baseTitle = parsed.title
-                }
-            } else {
-                baseTitle = parsed.title
             }
             
-            if (baseTitle.isBlank() || ignoreFolders.contains(baseTitle)) {
+            // 如果没找到合适的文件夹名，退而求其次用解析出的名字
+            if (baseTitle.isBlank()) {
                 baseTitle = parsed.title
                 if (baseTitle.isBlank() || baseTitle == "未知影视") continue
             }
@@ -274,10 +268,18 @@ class VideoScraperViewModel(
             val updatedList = seriesList.map { series ->
                 val match = searchTmdbWithFallback(series.originalParsedTitle, series.year, apiKey, baseUrl)
                 if (match != null) {
-                    // 核心拦截：如果 TMDB 返回的是纯英文，且原文件夹是中文，强制保留原中文名！
+                    // 核心拦截：如果原文件夹是纯中文，无视TMDB返回，直接强制保留原中文名
                     var finalTitle = match.title
-                    if (finalTitle.matches(Regex("^[a-zA-Z0-9\\s\\p{Punct}]+$")) && series.originalParsedTitle.any { it.code > 127 }) {
+                    if (series.originalParsedTitle.matches(Regex("^[\\u4e00-\\u9fa5]+$"))) {
                         finalTitle = series.originalParsedTitle
+                    }
+
+                    // 根据 TMDB 类型 ID 强制分类
+                    var finalCategory = series.category
+                    if (match.genreIds.contains(16)) {
+                        finalCategory = "动漫"
+                    } else if (match.genreIds.isNotEmpty()) {
+                        finalCategory = if (series.videos.size > 1) "剧集" else "电影"
                     }
 
                     var epTitles: Map<Int, String> = emptyMap()
@@ -288,6 +290,7 @@ class VideoScraperViewModel(
 
                     series.copy(
                         title = finalTitle,
+                        category = finalCategory,
                         posterUrl = match.posterUrl,
                         overview = match.overview,
                         rating = match.rating,
@@ -344,6 +347,14 @@ class VideoScraperViewModel(
                         }
                         if (bestItem == null) bestItem = results.getJSONObject(0)
 
+                        val genreIdsArray = bestItem.optJSONArray("genre_ids")
+                        val genreIds = mutableListOf<Int>()
+                        if (genreIdsArray != null) {
+                            for (i in 0 until genreIdsArray.length()) {
+                                genreIds.add(genreIdsArray.getInt(i))
+                            }
+                        }
+
                         val posterPath = bestItem.optString("poster_path")
                         val officialName = bestItem.optString("title").ifBlank { bestItem.optString("name") }
                         val voteAverage = bestItem.optDouble("vote_average", 0.0)
@@ -355,7 +366,8 @@ class VideoScraperViewModel(
                             year = (bestItem.optString("release_date").take(4).ifBlank { bestItem.optString("first_air_date").take(4) }),
                             posterUrl = if (posterPath.isNotBlank() && posterPath != "null") "https://image.tmdb.org/t/p/w500$posterPath" else null,
                             overview = bestItem.optString("overview"),
-                            rating = ratingStr
+                            rating = ratingStr,
+                            genreIds = genreIds
                         )
                     }
                 }
@@ -412,6 +424,13 @@ class VideoScraperViewModel(
                                 val title = item.optString("title").ifBlank { item.optString("name") }
                                 val posterPath = item.optString("poster_path")
                                 val voteAverage = item.optDouble("vote_average", 0.0)
+                                val genreIdsArray = item.optJSONArray("genre_ids")
+                                val genreIds = mutableListOf<Int>()
+                                if (genreIdsArray != null) {
+                                    for (j in 0 until genreIdsArray.length()) {
+                                        genreIds.add(genreIdsArray.getInt(j))
+                                    }
+                                }
                                 list.add(
                                     TmdbSearchResult(
                                         id = item.optInt("id"),
@@ -419,7 +438,8 @@ class VideoScraperViewModel(
                                         year = item.optString("release_date").take(4).ifBlank { item.optString("first_air_date").take(4) },
                                         posterUrl = if (posterPath.isNotBlank() && posterPath != "null") "https://image.tmdb.org/t/p/w300$posterPath" else null,
                                         overview = item.optString("overview"),
-                                        rating = if (voteAverage > 0) String.format("%.1f", voteAverage) else null
+                                        rating = if (voteAverage > 0) String.format("%.1f", voteAverage) else null,
+                                        genreIds = genreIds
                                     )
                                 )
                             }
@@ -456,14 +476,17 @@ class VideoScraperViewModel(
     fun playVideo(context: Context, file: QuarkFile) {
         val cookie = _uiState.value.cookie
         _uiState.update { it.copy(playUrl = null, playTitle = file.name) }
-        Toast.makeText(context, "正在获取播放直链...", Toast.LENGTH_SHORT).show()
+        Toast.makeText(context, "正在获取原画直链...", Toast.LENGTH_SHORT).show()
         
         viewModelScope.launch {
             val url = withContext(Dispatchers.IO) {
                 try {
-                    val apiUrl = "https://drive.quark.cn/1/clouddrive/file/download?pr=ucpro&fr=pc"
+                    // 使用官方转码/云播接口，支持最高4K，彻底解决 MKV/DDP 导致的 IO_BAD_HTTP_STATUS
+                    val apiUrl = "https://drive.quark.cn/1/clouddrive/file/v2/play?pr=ucpro&fr=pc"
                     val jsonBody = JSONObject().apply {
-                        put("fids", JSONArray().put(file.fid))
+                        put("fid", file.fid)
+                        put("resolutions", "normal,low,high,super,2k,4k")
+                        put("supports", "fmp4,m3u8")
                     }
                     val body = jsonBody.toString().toRequestBody("application/json".toMediaType())
                     
@@ -481,14 +504,25 @@ class VideoScraperViewModel(
                         if (!resBody.isNullOrBlank()) {
                             val json = JSONObject(resBody)
                             if (json.optInt("code", -1) == 0) {
-                                val data = json.optJSONArray("data")
-                                if (data != null && data.length() > 0) {
-                                    return@withContext data.getJSONObject(0).optString("download_url")
+                                val data = json.optJSONObject("data")
+                                val videoList = data?.optJSONArray("video_list")
+                                if (videoList != null && videoList.length() > 0) {
+                                    // 通常返回的列表按可用性和清晰度排列，找第一个可以播放的
+                                    for (i in 0 until videoList.length()) {
+                                        val videoItem = videoList.getJSONObject(i)
+                                        if (videoItem.optBoolean("accessable", false)) {
+                                            val videoInfo = videoItem.optJSONObject("video_info")
+                                            val playUrl = videoInfo?.optString("url")
+                                            if (!playUrl.isNullOrBlank()) {
+                                                return@withContext playUrl
+                                            }
+                                        }
+                                    }
                                 }
                             } else {
                                 val msg = json.optString("message")
                                 withContext(Dispatchers.Main) {
-                                    Toast.makeText(context, "接口报错: $msg", Toast.LENGTH_SHORT).show()
+                                    Toast.makeText(context, "获取播放直链失败: $msg", Toast.LENGTH_SHORT).show()
                                 }
                             }
                         }
@@ -502,7 +536,8 @@ class VideoScraperViewModel(
             if (url != null) {
                 _uiState.update { it.copy(playUrl = url) }
             } else {
-                Toast.makeText(context, "获取直链失败，请检查 Cookie", Toast.LENGTH_LONG).show()
+                Toast.makeText(context, "解析播放地址失败，请检查 Cookie 是否过期", Toast.LENGTH_LONG).show()
+                _uiState.update { it.copy(playUrl = null, playTitle = null) }
             }
         }
     }
