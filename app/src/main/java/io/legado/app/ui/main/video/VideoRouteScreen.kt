@@ -17,7 +17,6 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.Movie
@@ -47,7 +46,9 @@ import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.window.Dialog
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.media3.common.MediaItem
+import androidx.media3.datasource.DefaultHttpDataSource
 import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.ui.PlayerView
 import coil3.compose.AsyncImage
 import io.legado.app.ui.widget.components.text.AppText
@@ -67,7 +68,6 @@ fun VideoRouteScreen(
     var manualScrapeSeries by remember { mutableStateOf<MediaSeries?>(null) }
     var viewAllCategory by remember { mutableStateOf<String?>(null) }
 
-    // ➕ 拦截返回：如果正在播放，先关闭播放器
     BackHandler(enabled = uiState.playUrl != null || uiState.currentSeries != null || viewAllCategory != null || (!uiState.isLibraryMode && uiState.currentFid != "0")) {
         if (uiState.playUrl != null) {
             viewModel.stopPlaying()
@@ -80,7 +80,6 @@ fun VideoRouteScreen(
         }
     }
 
-    // ➕ 全屏内部播放器层
     if (uiState.playUrl != null) {
         InternalVideoPlayer(
             url = uiState.playUrl!!,
@@ -195,7 +194,6 @@ fun VideoRouteScreen(
                     }
                 }
             } else {
-                // 下拉刷新恢复
                 PullToRefreshBox(
                     isRefreshing = uiState.isLoading,
                     onRefresh = { viewModel.loadLibraryVideos() },
@@ -334,21 +332,27 @@ fun VideoRouteScreen(
     }
 }
 
-// ➕ 纯 Compose 内部播放器
+// ➕ 修复：强制注入请求头解决 403 问题
 @Composable
 fun InternalVideoPlayer(url: String, title: String, onBack: () -> Unit) {
     val context = LocalContext.current
     
-    // 使用 remember 初始化 ExoPlayer，退出时释放
     val exoPlayer = remember {
-        ExoPlayer.Builder(context).build().apply {
-            setMediaItem(MediaItem.fromUri(url))
-            prepare()
-            playWhenReady = true
-        }
+        // 构建带有风控 Header 的 DataSource
+        val httpDataSourceFactory = DefaultHttpDataSource.Factory()
+            .setUserAgent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) quark-cloud-drive/2.5.20 Chrome/100.0.4896.160 Electron/18.3.5.4-b478491100 Safari/537.36 Channel/pckk_other_ch")
+            .setDefaultRequestProperties(mapOf("Referer" to "https://pan.quark.cn/"))
+            .setAllowCrossProtocolRedirects(true)
+
+        ExoPlayer.Builder(context)
+            .setMediaSourceFactory(DefaultMediaSourceFactory(httpDataSourceFactory))
+            .build().apply {
+                setMediaItem(MediaItem.fromUri(url))
+                prepare()
+                playWhenReady = true
+            }
     }
 
-    // 拦截返回键
     BackHandler {
         exoPlayer.release()
         onBack()
@@ -375,7 +379,6 @@ fun InternalVideoPlayer(url: String, title: String, onBack: () -> Unit) {
             modifier = Modifier.fillMaxSize()
         )
 
-        // 顶栏
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -528,7 +531,8 @@ fun MediaDetailScreen(series: MediaSeries, onBack: () -> Unit, onPlay: (QuarkFil
                 AppText(text = "文件信息", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
                 series.videos.firstOrNull()?.let { firstFile ->
                     AppText(text = firstFile.name, style = MaterialTheme.typography.bodySmall, color = Color.Gray, modifier = Modifier.padding(top = 8.dp))
-                    AppText(text = firstFile.path, style = MaterialTheme.typography.bodySmall, color = Color.Gray, modifier = Modifier.padding(top = 4.dp))
+                    val pathStr = firstFile.folderPath.joinToString(" / ")
+                    AppText(text = "夸克网盘: /$pathStr", style = MaterialTheme.typography.bodySmall, color = Color.Gray, modifier = Modifier.padding(top = 4.dp))
                     val sizeMb = firstFile.size / (1024 * 1024)
                     AppText(text = "共 ${series.videos.size} 集 | ${sizeMb}MB (单集)", style = MaterialTheme.typography.bodySmall, color = Color.Gray, modifier = Modifier.padding(top = 4.dp))
                 }
