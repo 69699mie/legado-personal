@@ -1,5 +1,9 @@
 package io.legado.app.ui.main.video
 
+import android.content.Context
+import android.content.Intent
+import android.net.Uri
+import android.widget.Toast
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import io.legado.app.data.repository.VideoSettingsRepository
@@ -11,8 +15,11 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import okhttp3.RequestBody.Companion.toRequestBody
+import org.json.JSONArray
 import org.json.JSONObject
 import java.net.URLEncoder
 import java.util.concurrent.TimeUnit
@@ -290,7 +297,6 @@ class VideoScraperViewModel(
                             val posterPath = bestItem.optString("poster_path")
                             var officialName = bestItem.optString("title").ifBlank { bestItem.optString("name") }
                             
-                            // ➕ TMDB 返回的如果带英文，强制清洗
                             if (Regex("[\\u4e00-\\u9fa5]").containsMatchIn(officialName)) {
                                 officialName = Regex("[\\u4e00-\\u9fa5]+").findAll(officialName).map { it.value }.joinToString("")
                             }
@@ -322,7 +328,6 @@ class VideoScraperViewModel(
         viewModelScope.launch(Dispatchers.IO) {
             val list = mutableListOf<TmdbSearchResult>()
             try {
-                // ➕ 搜索前，如果输入框有英文且存在中文，也强制清洗成中文去搜
                 var cleanQuery = query
                 if (Regex("[\\u4e00-\\u9fa5]").containsMatchIn(query)) {
                     cleanQuery = Regex("[\\u4e00-\\u9fa5]+").findAll(query).map { it.value }.joinToString("")
@@ -343,7 +348,6 @@ class VideoScraperViewModel(
                                 val posterPath = item.optString("poster_path")
                                 val voteAverage = item.optDouble("vote_average", 0.0)
                                 
-                                // ➕ 对返回列表的展示名称也做纯中文清洗
                                 if (Regex("[\\u4e00-\\u9fa5]").containsMatchIn(title)) {
                                     title = Regex("[\\u4e00-\\u9fa5]+").findAll(title).map { it.value }.joinToString("")
                                 }
@@ -368,15 +372,16 @@ class VideoScraperViewModel(
         }
     }
 
-    fun applyManualScrape(seriesId: String, result: TmdbSearchResult, newCategory: String? = null) {
+    // ➕ 应用手动修改：如果传入了 result，则使用 TMDB 信息；如果没传，只改名称和分类
+    fun applyManualScrape(seriesId: String, result: TmdbSearchResult?, newCategory: String, newTitle: String) {
         val currentList = _uiState.value.seriesList.map { 
             if (it.id == seriesId) {
                 it.copy(
-                    title = result.title, 
-                    posterUrl = result.posterUrl, 
-                    overview = result.overview, 
-                    rating = result.rating,
-                    category = newCategory ?: it.category 
+                    title = result?.title ?: newTitle, 
+                    posterUrl = result?.posterUrl ?: it.posterUrl, 
+                    overview = result?.overview ?: it.overview, 
+                    rating = result?.rating ?: it.rating,
+                    category = newCategory
                 )
             } else it
         }
@@ -385,6 +390,61 @@ class VideoScraperViewModel(
                 seriesList = currentList,
                 currentSeries = currentList.find { s -> s.id == seriesId }
             ) 
+        }
+    }
+
+    // ➕ 获取直链并播放
+    fun playVideo(context: Context, file: QuarkFile) {
+        val cookie = _uiState.value.cookie
+        Toast.makeText(context, "正在获取播放直链...", Toast.LENGTH_SHORT).show()
+        
+        viewModelScope.launch {
+            val url = withContext(Dispatchers.IO) {
+                try {
+                    val apiUrl = "https://drive-pc.quark.cn/1/clouddrive/file/download?pr=ucpro&fr=pc"
+                    val jsonBody = JSONObject().apply {
+                        put("fids", JSONArray().put(file.fid))
+                    }
+                    val body = jsonBody.toString().toRequestBody("application/json".toMediaType())
+                    
+                    val request = Request.Builder()
+                        .url(apiUrl)
+                        .post(body)
+                        .header("Cookie", cookie)
+                        .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64)")
+                        .header("Referer", "https://pan.quark.cn/")
+                        .build()
+                        
+                    client.newCall(request).execute().use { response ->
+                        val resBody = response.body?.string()
+                        if (!resBody.isNullOrBlank()) {
+                            val json = JSONObject(resBody)
+                            if (json.optInt("code", -1) == 0) {
+                                val data = json.optJSONArray("data")
+                                if (data != null && data.length() > 0) {
+                                    return@withContext data.getJSONObject(0).optString("download_url")
+                                }
+                            }
+                        }
+                    }
+                } catch (e: Exception) {
+                    e.printStackTrace()
+                }
+                null
+            }
+            
+            if (url != null) {
+                try {
+                    val intent = Intent(Intent.ACTION_VIEW)
+                    intent.setDataAndType(Uri.parse(url), "video/*")
+                    intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                    context.startActivity(intent)
+                } catch (e: Exception) {
+                    Toast.makeText(context, "无法打开播放器: ${e.message}", Toast.LENGTH_SHORT).show()
+                }
+            } else {
+                Toast.makeText(context, "获取直链失败，Cookie可能失效", Toast.LENGTH_SHORT).show()
+            }
         }
     }
 
