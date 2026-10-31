@@ -9,14 +9,15 @@ data class ParsedVideoName(
 )
 
 object VideoFileNameParser {
-    private val videoExts = listOf(".mp4", ".mkv", ".avi", ".ts", ".m3u8", ".mov", ".rmvb", ".flv", ".wmv")
+
+    private val videoExts = listOf(".mp4", ".mkv", ".avi", ".ts", ".m3u8", ".mov", ".rmvb", ".flv")
 
     private val noiseWords = listOf(
         "2160p", "1080p", "720p", "480p", "4k", "8k", "hdr", "sdr", "dv", "dolby", "vision",
         "bluray", "bdrip", "web-dl", "webrip", "hdtv", "dvdrip", "remux", "x264", "x265",
         "h264", "h265", "hevc", "avc", "aac", "ac3", "dts", "ddp", "atmos", "truehd", "flac",
         "10bit", "8bit", "60fps", "25fps", "24fps", "120fps", "hfr", "hifi", "audios", "audio",
-        "video", "hq", "hd", "ma", "itunes", "quickio", "pandaqt", "臻彩", "cuva", "vivid"
+        "video", "hq", "hd", "ma", "itunes", "quickio", "pandaqt", "臻彩", "cuva", "vivid", "web"
     )
 
     fun parse(fileName: String, parentFolder: String? = null): ParsedVideoName {
@@ -36,6 +37,7 @@ object VideoFileNameParser {
             episode = it.groupValues[2].toIntOrNull()
             name = name.replace(it.value, " ")
         } ?: run {
+            // 匹配 "第X集" 或者 "_01_" 结尾的纯数字
             val eRegex = Regex("(?i)(?:^|[^a-z])E(\\d{1,3})(?:[^a-z]|$)")
             eRegex.find(name)?.let {
                 episode = it.groupValues[1].toIntOrNull()
@@ -43,6 +45,12 @@ object VideoFileNameParser {
             }
             val cnEpRegex = Regex("第(\\d{1,3})[集话]")
             cnEpRegex.find(name)?.let {
+                episode = it.groupValues[1].toIntOrNull()
+                name = name.replace(it.value, " ")
+            }
+            // 针对 DaWangRaoMing_01_4K 这种
+            val underscoreEpRegex = Regex("(?:_)(\\d{1,3})(?:_|$)")
+            underscoreEpRegex.find(name)?.let {
                 episode = it.groupValues[1].toIntOrNull()
                 name = name.replace(it.value, " ")
             }
@@ -70,20 +78,18 @@ object VideoFileNameParser {
         // 3. 清理无意义标签
         var cleanName = name.replace(Regex("[._\\-\\[\\]()【】]"), " ")
         
-        // 按空格分割，过滤掉所有 noiseWords 以及纯数字、纯符号
         cleanName = cleanName.split(" ")
             .filter { word ->
                 val w = word.trim()
                 w.isNotEmpty() && 
                 !noiseWords.contains(w.lowercase()) && 
-                w.toIntOrNull() == null &&
-                !w.matches(Regex("^[a-zA-Z]{1,2}$")) // 过滤掉像 1Audio 拆分后剩下的单字母
+                w.toIntOrNull() == null && // 过滤孤立数字
+                !w.matches(Regex("^[a-zA-Z]{1,2}$")) // 过滤孤立单字母
             }
             .joinToString(" ")
 
-        // 4. 如果清理完为空，或者只剩下无意义的字符（如全是英文数字的垃圾）
-        if (cleanName.isBlank()) {
-            // 尝试使用父文件夹名
+        // 4. 终极兜底：如果清理完为空，或者只剩下少于2个字符的无效内容
+        if (cleanName.isBlank() || cleanName.length < 2) {
             if (!parentFolder.isNullOrBlank() && parentFolder != "电影" && parentFolder != "动漫" && parentFolder != "电视剧") {
                 cleanName = parentFolder
             } else {
@@ -91,7 +97,6 @@ object VideoFileNameParser {
             }
         }
 
-        // 去除连续空格
         cleanName = cleanName.replace(Regex("\\s+"), " ").trim()
 
         return ParsedVideoName(cleanName, year, season, episode, isVideo)
