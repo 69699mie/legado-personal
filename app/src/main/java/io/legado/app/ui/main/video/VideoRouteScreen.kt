@@ -15,7 +15,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.filled.Edit // ➕ 补充缺失的 import
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.Movie
 import androidx.compose.material.icons.filled.PlayArrow
@@ -23,6 +23,7 @@ import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.outlined.StarBorder
 import androidx.compose.material3.*
+import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -45,7 +46,7 @@ import coil3.compose.AsyncImage
 import io.legado.app.ui.widget.components.text.AppText
 import org.koin.androidx.compose.koinViewModel
 
-@OptIn(ExperimentalFoundationApi::class)
+@OptIn(ExperimentalFoundationApi::class, ExperimentalMaterial3Api::class)
 @Composable
 fun VideoRouteScreen(
     modifier: Modifier = Modifier,
@@ -152,6 +153,7 @@ fun VideoRouteScreen(
             if (uiState.isLoading && uiState.seriesList.isEmpty() && uiState.fileList.isEmpty()) {
                 Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
             } else if (!uiState.isLibraryMode) {
+                // 网盘浏览模式
                 if (uiState.fileList.isEmpty()) {
                     Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { AppText("当前文件夹为空") }
                 } else {
@@ -177,47 +179,54 @@ fun VideoRouteScreen(
                     }
                 }
             } else {
-                if (uiState.selectedLibraryFids.isEmpty()) {
-                    Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { AppText("请先在网盘浏览中勾选媒体文件夹") }
-                } else if (uiState.seriesList.isEmpty() && !uiState.isLoading) {
-                    Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { AppText("没找到任何视频") }
-                } else {
-                    val grouped = uiState.seriesList.groupBy { it.category }
-                    LazyColumn(
-                        modifier = Modifier.fillMaxSize(),
-                        contentPadding = PaddingValues(bottom = 16.dp)
-                    ) {
-                        grouped.forEach { (categoryName, seriesList) ->
-                            if (seriesList.isNotEmpty()) {
-                                item {
-                                    Row(
-                                        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp),
-                                        horizontalArrangement = Arrangement.SpaceBetween,
-                                        verticalAlignment = Alignment.CenterVertically
-                                    ) {
-                                        AppText(text = categoryName, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-                                        AppText(
-                                            text = "全部 ${seriesList.size} 部 >", 
-                                            style = MaterialTheme.typography.bodySmall, 
-                                            color = Color.Gray,
-                                            modifier = Modifier.clickable { viewAllCategory = categoryName }
-                                        )
-                                    }
-                                }
-                                item {
-                                    LazyRow(
-                                        contentPadding = PaddingValues(horizontal = 16.dp),
-                                        horizontalArrangement = Arrangement.spacedBy(12.dp)
-                                    ) {
-                                        items(seriesList) { series ->
-                                            SeriesPosterCard(
-                                                series = series,
-                                                onClick = { viewModel.selectSeries(series) },
-                                                onLongClick = {
-                                                    manualScrapeSeries = series
-                                                    showManualScrapeDialog = true
-                                                }
+                // ➕ 恢复下拉刷新
+                PullToRefreshBox(
+                    isRefreshing = uiState.isLoading,
+                    onRefresh = { viewModel.loadLibraryVideos() },
+                    modifier = Modifier.fillMaxSize()
+                ) {
+                    if (uiState.selectedLibraryFids.isEmpty()) {
+                        Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { AppText("请先在网盘浏览中勾选媒体文件夹") }
+                    } else if (uiState.seriesList.isEmpty() && !uiState.isLoading) {
+                        Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { AppText("没找到任何视频，下拉可刷新") }
+                    } else {
+                        val grouped = uiState.seriesList.groupBy { it.category }
+                        LazyColumn(
+                            modifier = Modifier.fillMaxSize(),
+                            contentPadding = PaddingValues(bottom = 16.dp)
+                        ) {
+                            grouped.forEach { (categoryName, seriesList) ->
+                                if (seriesList.isNotEmpty()) {
+                                    item {
+                                        Row(
+                                            modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp),
+                                            horizontalArrangement = Arrangement.SpaceBetween,
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            AppText(text = categoryName, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                                            AppText(
+                                                text = "全部 ${seriesList.size} 部 >", 
+                                                style = MaterialTheme.typography.bodySmall, 
+                                                color = Color.Gray,
+                                                modifier = Modifier.clickable { viewAllCategory = categoryName }
                                             )
+                                        }
+                                    }
+                                    item {
+                                        LazyRow(
+                                            contentPadding = PaddingValues(horizontal = 16.dp),
+                                            horizontalArrangement = Arrangement.spacedBy(12.dp)
+                                        ) {
+                                            items(seriesList) { series ->
+                                                SeriesPosterCard(
+                                                    series = series,
+                                                    onClick = { viewModel.selectSeries(series) },
+                                                    onLongClick = {
+                                                        manualScrapeSeries = series
+                                                        showManualScrapeDialog = true
+                                                    }
+                                                )
+                                            }
                                         }
                                     }
                                 }
