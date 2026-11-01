@@ -1,6 +1,7 @@
 package io.legado.app.ui.main.video
 
 import android.annotation.SuppressLint
+import android.util.Log
 import android.view.ViewGroup
 import android.webkit.CookieManager
 import android.webkit.WebView
@@ -53,6 +54,7 @@ import androidx.compose.ui.window.DialogProperties
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MediaMetadata
+import androidx.media3.common.MimeTypes
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
 import androidx.media3.datasource.okhttp.OkHttpDataSource
@@ -63,6 +65,7 @@ import coil3.compose.AsyncImage
 import io.legado.app.ui.widget.components.text.AppText
 import okhttp3.Interceptor
 import okhttp3.OkHttpClient
+import okhttp3.Protocol
 import okhttp3.Response
 import org.koin.androidx.compose.koinViewModel
 import java.util.concurrent.TimeUnit
@@ -266,7 +269,6 @@ fun VideoRouteScreen(
         }
     }
 
-    // 设置弹窗
     if (showSettingsDialog) {
         var inputCookie by remember { mutableStateOf(uiState.cookie) }
         var inputTmdbKey by remember { mutableStateOf(uiState.tmdbApiKey) }
@@ -298,7 +300,6 @@ fun VideoRouteScreen(
         }
     }
 
-    // 网页扫码登录弹窗
     if (showWebLoginDialog) {
         Dialog(
             onDismissRequest = { showWebLoginDialog = false },
@@ -375,14 +376,11 @@ fun VideoRouteScreen(
     }
 }
 
-// 内嵌网页登录组件
 @SuppressLint("SetJavaScriptEnabled")
 @Composable
 fun WebLoginView(onLoginSuccess: (String) -> Unit, onCancel: () -> Unit) {
     val context = LocalContext.current
     var webViewRef by remember { mutableStateOf<WebView?>(null) }
-
-    // 【核心修复】强制使用 PC 桌面端 UA，防止被夸克识别为移动端跳转下载页
     val desktopUserAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
 
     DisposableEffect(Unit) {
@@ -393,7 +391,6 @@ fun WebLoginView(onLoginSuccess: (String) -> Unit, onCancel: () -> Unit) {
     }
 
     Column(modifier = Modifier.fillMaxSize()) {
-        // 简易标题栏
         Row(
             modifier = Modifier.fillMaxWidth().background(Color(0xFFF5F5F5)).padding(8.dp),
             verticalAlignment = Alignment.CenterVertically,
@@ -419,7 +416,6 @@ fun WebLoginView(onLoginSuccess: (String) -> Unit, onCancel: () -> Unit) {
                     settings.javaScriptEnabled = true
                     settings.domStorageEnabled = true
                     settings.databaseEnabled = true
-                    // 【核心修复】强制设置桌面端 User-Agent
                     settings.userAgentString = desktopUserAgent
                     
                     CookieManager.getInstance().setAcceptCookie(true)
@@ -428,7 +424,6 @@ fun WebLoginView(onLoginSuccess: (String) -> Unit, onCancel: () -> Unit) {
                     webViewClient = object : WebViewClient() {
                         override fun onPageFinished(view: WebView?, url: String?) {
                             super.onPageFinished(view, url)
-                            // 每次页面加载完毕，静默检测一次 Cookie 是否已生成
                             val cookie = CookieManager.getInstance().getCookie("https://pan.quark.cn/")
                             if (!cookie.isNullOrBlank() && cookie.contains("__uid=") && cookie.contains("__puus=")) {
                                 onLoginSuccess(cookie)
@@ -453,6 +448,8 @@ fun InternalVideoPlayer(url: String, title: String, cookie: String, onBack: () -
             .readTimeout(15, TimeUnit.SECONDS)
             .followRedirects(true)
             .followSslRedirects(true)
+            // 【核心修复】强制 HTTP/1.1，规避部分 CDN HTTP/2 握手导致的黑屏挂起
+            .protocols(listOf(Protocol.HTTP_1_1))
             .addInterceptor(object : Interceptor {
                 override fun intercept(chain: Interceptor.Chain): Response {
                     val originalRequest = chain.request()
@@ -471,21 +468,35 @@ fun InternalVideoPlayer(url: String, title: String, cookie: String, onBack: () -
         ExoPlayer.Builder(context)
             .setMediaSourceFactory(DefaultMediaSourceFactory(okHttpDataSourceFactory))
             .build().apply {
-                // 【修复标题】构建 MediaItem 时，明确设置 MediaMetadata
+                // 【核心修复】显式指定 MimeType 为 m3u8，强制使用 HlsMediaSource 解析
                 val mediaItem = MediaItem.Builder()
                     .setUri(url)
+                    .setMimeType(MimeTypes.APPLICATION_M3U8)
                     .setMediaMetadata(
                         MediaMetadata.Builder()
-                            .setTitle(title) // 这里设置为完整的 "狂飙 第1集"
+                            .setTitle(title)
                             .build()
                     )
                     .build()
+                    
                 setMediaItem(mediaItem)
                 prepare()
                 playWhenReady = true
+                
+                // 【调试修复】加入详细日志，并处理黑屏
                 addListener(object : Player.Listener {
+                    override fun onPlaybackStateChanged(playbackState: Int) {
+                        Log.d("ExoPlayer", "PlaybackState: $playbackState")
+                        if (playbackState == Player.STATE_READY) {
+                            // 如果触发了 READY 但画面黑屏，可能是渲染器 Surface 未绑定
+                        }
+                    }
+                    override fun onIsLoadingChanged(isLoading: Boolean) {
+                        Log.d("ExoPlayer", "IsLoading: $isLoading")
+                    }
                     override fun onPlayerError(error: PlaybackException) {
                         super.onPlayerError(error)
+                        Log.e("ExoPlayer", "Error: ${error.errorCodeName}", error)
                         val msg = if (error.cause is androidx.media3.datasource.HttpDataSource.InvalidResponseCodeException) {
                             val httpError = error.cause as androidx.media3.datasource.HttpDataSource.InvalidResponseCodeException
                             "播放失败: HTTP ${httpError.responseCode}"
