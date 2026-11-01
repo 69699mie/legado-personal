@@ -1,6 +1,7 @@
 package io.legado.app.ui.main.video
 
 import android.annotation.SuppressLint
+import android.net.Uri
 import android.util.Log
 import android.view.ViewGroup
 import android.webkit.CookieManager
@@ -56,19 +57,15 @@ import androidx.media3.common.MediaItem
 import androidx.media3.common.MediaMetadata
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
-import androidx.media3.datasource.okhttp.OkHttpDataSource
+import androidx.media3.datasource.DefaultHttpDataSource
+import androidx.media3.datasource.HttpDataSource
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.hls.HlsMediaSource
-import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
+import androidx.media3.exoplayer.source.ProgressiveMediaSource
 import androidx.media3.ui.PlayerView
 import coil3.compose.AsyncImage
 import io.legado.app.ui.widget.components.text.AppText
-import okhttp3.Interceptor
-import okhttp3.OkHttpClient
-import okhttp3.Protocol
-import okhttp3.Response
 import org.koin.androidx.compose.koinViewModel
-import java.util.concurrent.TimeUnit
 
 @OptIn(ExperimentalFoundationApi::class, ExperimentalMaterial3Api::class)
 @Composable
@@ -442,71 +439,64 @@ fun InternalVideoPlayer(url: String, title: String, cookie: String, onBack: () -
     val context = LocalContext.current
     val exoPlayer = remember {
         val cleanCookie = cookie.replace("\n", "").replace("\r", "").trim()
-        
-        val okHttpClient = OkHttpClient.Builder()
-            .connectTimeout(15, TimeUnit.SECONDS)
-            .readTimeout(15, TimeUnit.SECONDS)
-            .followRedirects(true)
-            .followSslRedirects(true)
-            .protocols(listOf(Protocol.HTTP_1_1)) // 强制 HTTP/1.1，规避部分 CDN 的 HTTP/2 兼容性问题
-            .addInterceptor(object : Interceptor {
-                override fun intercept(chain: Interceptor.Chain): Response {
-                    val originalRequest = chain.request()
-                    val newRequest = originalRequest.newBuilder()
-                        .header("Referer", "https://pan.quark.cn/")
-                        .header("Cookie", cleanCookie)
-                        .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) quark-cloud-drive/2.5.20 Chrome/100.0.4896.160 Electron/18.3.5.4-b478491100 Safari/537.36 Channel/pckk_other_ch")
-                        .build()
-                    return chain.proceed(newRequest)
-                }
-            })
-            .build()
 
-        val okHttpDataSourceFactory = OkHttpDataSource.Factory(okHttpClient)
+        // 1. 构建统一的请求头，注入到所有网络请求中
+        val defaultRequestProperties = mapOf(
+            "Referer" to "https://pan.quark.cn/",
+            "Cookie" to cleanCookie,
+            "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) quark-cloud-drive/2.5.20 Chrome/100.0.4896.160 Electron/18.3.5.4-b478491100 Safari/537.36 Channel/pckk_other_ch"
+        )
 
-        // 【核心修复】不再强制指定 MimeType，让 ExoPlayer 根据链接内容自动判断
-        val mediaItem = MediaItem.Builder()
+        val dataSourceFactory = DefaultHttpDataSource.Factory()
+            .setDefaultRequestProperties(defaultRequestProperties)
+            .setAllowCrossProtocolRedirects(true) // 允许夸克 CDN 可能发生的跨协议重定向
+            .setConnectTimeoutMs(15000)
+            .setReadTimeoutMs(15000)
+
+        val mediaItemBuilder = MediaItem.Builder()
             .setUri(url)
-            .setMediaMetadata(
-                MediaMetadata.Builder()
-                    .setTitle(title)
-                    .build()
-            )
-            .build()
+            .setMediaMetadata(MediaMetadata.Builder().setTitle(title).build())
 
-        // 【核心修复】显式创建 HlsMediaSource，并设置允许重定向
-        val hlsMediaSource = HlsMediaSource.Factory(okHttpDataSourceFactory)
-            .setAllowChunklessPreparation(true) // 针对夸克转码流的优化
-            .createMediaSource(mediaItem)
+        // 2. 【核心修复】使用 Uri 解析路径，正确判断是否为 HLS 流
+        // 这解决了链接带查询参数（如 ?token=xxx）时 endsWith(".m3u8") 判断失效的问题
+        val isHls = try {
+            Uri.parse(url).path?.contains(".m3u8") == true
+        } catch (e: Exception) {
+            url.contains(".m3u8") // 解析失败时回退到简单判断
+        }
 
-        val exoPlayer = ExoPlayer.Builder(context)
+        val mediaSource = if (isHls) {
+            // HLS 流：使用 HlsMediaSource，并开启 chunkless 优化以兼容非标准清单
+            HlsMediaSource.Factory(dataSourceFactory)
+                .setAllowChunklessPreparation(true)
+                .createMediaSource(mediaItemBuilder.build())
+        } else {
+            // 普通视频流（MP4 等）：使用 ProgressiveMediaSource
+            ProgressiveMediaSource.Factory(dataSourceFactory)
+                .createMediaSource(mediaItemBuilder.build())
+        }
+
+        ExoPlayer.Builder(context)
             .build()
             .apply {
-                setMediaSource(hlsMediaSource)
+                setMediaSource(mediaSource)
                 prepare()
                 playWhenReady = true
 
                 addListener(object : Player.Listener {
-                    override fun onPlaybackStateChanged(playbackState: Int) {
-                        Log.d("ExoPlayer", "PlaybackState: $playbackState")
-                    }
-                    override fun onIsLoadingChanged(isLoading: Boolean) {
-                        Log.d("ExoPlayer", "IsLoading: $isLoading")
-                    }
                     override fun onPlayerError(error: PlaybackException) {
                         super.onPlayerError(error)
                         Log.e("ExoPlayer", "Error: ${error.errorCodeName}", error)
-                        val msg = if (error.cause is androidx.media3.datasource.HttpDataSource.InvalidResponseCodeException) {
-                            val httpError = error.cause as androidx.media3.datasource.HttpDataSource.InvalidResponseCodeException
-                            "播放失败: HTTP ${httpError.responseCode}"
-                        } else {
-                            "播放失败: ${error.errorCodeName}"
+
+                        val msg = when (val cause = error.cause) {
+                            is HttpDataSource.InvalidResponseCodeException ->
+                                "播放失败: HTTP ${cause.responseCode}"
+                            else -> "播放失败: ${error.errorCodeName}"
                         }
                         Toast.makeText(context, msg, Toast.LENGTH_LONG).show()
                     }
                 })
             }
-        exoPlayer
     }
 
     BackHandler {
