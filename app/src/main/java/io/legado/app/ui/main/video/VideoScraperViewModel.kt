@@ -17,6 +17,7 @@ import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
+import org.json.JSONArray
 import org.json.JSONObject
 import java.net.URLEncoder
 import java.util.concurrent.TimeUnit
@@ -41,7 +42,8 @@ data class MediaSeries(
     val overview: String? = null,
     val rating: String? = null,
     val videos: List<QuarkFile> = emptyList(),
-    val episodeTitles: Map<Int, String> = emptyMap()
+    val episodeTitles: Map<Int, String> = emptyMap(),
+    val episodeStills: Map<Int, String> = emptyMap() // 新增：单集截图
 )
 
 data class TmdbSearchResult(
@@ -86,7 +88,6 @@ class VideoScraperViewModel(
             it.copy(
                 cookie = videoSettingsRepository.quarkCookie,
                 tmdbApiKey = videoSettingsRepository.tmdbApiKey,
-                // 默认值改为常用代理，如果不填就用这个
                 tmdbBaseUrl = videoSettingsRepository.tmdbBaseUrl.ifBlank { "https://tmdbimg.quarkalist.xyz" },
                 selectedLibraryFids = fids,
                 isLibraryMode = true
@@ -271,7 +272,6 @@ class VideoScraperViewModel(
         }
     }
 
-    // 【核心修复：完美适配代理，并利用 TMDB 兜底分类】
     private fun scrapeSeriesPosters(seriesList: List<MediaSeries>, apiKey: String, baseUrl: String) {
         viewModelScope.launch(Dispatchers.IO) {
             val updatedList = seriesList.map { series ->
@@ -283,7 +283,6 @@ class VideoScraperViewModel(
                     }
 
                     var finalCategory = series.category
-                    // 【核心修复】如果路径没有分类，通过 TMDB 智能分类
                     if (finalCategory == "未分类") {
                         finalCategory = when {
                             match.mediaType == "movie" -> "电影"
@@ -294,10 +293,12 @@ class VideoScraperViewModel(
                     }
 
                     var epTitles: Map<Int, String> = emptyMap()
+                    var epStills: Map<Int, String> = emptyMap()
                     val season = series.videos.firstOrNull()?.parsedInfo?.season ?: 1
-                    // 只要 TMDB 识别出来了，且不是电影，就去拉取单集标题
                     if (match.mediaType != "movie" && (series.videos.size > 1 || series.originalParsedTitle.contains("季"))) {
-                        epTitles = fetchEpisodeTitles(match.id, season, apiKey, baseUrl)
+                        val pair = fetchEpisodeData(match.id, season, apiKey, baseUrl)
+                        epTitles = pair.first
+                        epStills = pair.second
                     }
                     series.copy(
                         title = finalTitle,
@@ -305,7 +306,8 @@ class VideoScraperViewModel(
                         posterUrl = match.posterUrl,
                         overview = match.overview,
                         rating = match.rating,
-                        episodeTitles = epTitles
+                        episodeTitles = epTitles,
+                        episodeStills = epStills
                     )
                 } else {
                     series
@@ -330,7 +332,6 @@ class VideoScraperViewModel(
     private fun searchTmdb(title: String, year: Int?, apiKey: String, baseUrl: String, language: String): TmdbSearchResult? {
         try {
             val query = URLEncoder.encode(title, "UTF-8")
-            // 智能判断是否为代理地址，拼接正确的 API 路径
             val isProxy = baseUrl.contains("quarkalist") || baseUrl.contains("proxy")
             val apiPath = if (isProxy) "/api/3/search/multi" else "/3/search/multi"
             val url = "$baseUrl$apiPath?api_key=$apiKey&query=$query&language=$language"
@@ -372,7 +373,6 @@ class VideoScraperViewModel(
                             }
                         }
 
-                        // 智能拼接图片地址
                         val posterUrl = if (posterPath.isNotBlank() && posterPath != "null") {
                             if (isProxy) "$baseUrl/img/t/p/w500$posterPath" else "https://image.tmdb.org/t/p/w500$posterPath"
                         } else null
@@ -394,8 +394,10 @@ class VideoScraperViewModel(
         return null
     }
 
-    private fun fetchEpisodeTitles(tvId: Int, season: Int, apiKey: String, baseUrl: String): Map<Int, String> {
-        val map = mutableMapOf<Int, String>()
+    // 返回单集标题和截图
+    private fun fetchEpisodeData(tvId: Int, season: Int, apiKey: String, baseUrl: String): Pair<Map<Int, String>, Map<Int, String>> {
+        val titles = mutableMapOf<Int, String>()
+        val stills = mutableMapOf<Int, String>()
         try {
             val isProxy = baseUrl.contains("quarkalist") || baseUrl.contains("proxy")
             val apiPath = if (isProxy) "/api/3/tv/$tvId/season/$season" else "/3/tv/$tvId/season/$season"
@@ -412,15 +414,20 @@ class VideoScraperViewModel(
                             val ep = episodes.getJSONObject(i)
                             val epNum = ep.optInt("episode_number")
                             val epName = ep.optString("name")
-                            if (epNum > 0 && epName.isNotBlank()) {
-                                map[epNum] = epName
+                            val stillPath = ep.optString("still_path")
+                            
+                            if (epNum > 0) {
+                                if (epName.isNotBlank()) titles[epNum] = epName
+                                if (stillPath.isNotBlank() && stillPath != "null") {
+                                    stills[epNum] = if (isProxy) "$baseUrl/img/t/p/w300$stillPath" else "https://image.tmdb.org/t/p/w300$stillPath"
+                                }
                             }
                         }
                     }
                 }
             }
         } catch (e: Exception) {}
-        return map
+        return Pair(titles, stills)
     }
 
     fun searchTmdbManually(query: String, onResult: (List<TmdbSearchResult>) -> Unit) {
@@ -491,19 +498,25 @@ class VideoScraperViewModel(
         }
     }
 
-    fun playVideo(context: Context, file: QuarkFile) {
+    // 修复播放逻辑：改用 /file/download 接口拿原画直链，并且传入 series 拼接漂亮标题
+    fun playVideo(context: Context, series: MediaSeries, file: QuarkFile) {
         val cookie = _uiState.value.cookie
-        _uiState.update { it.copy(playUrl = null, playTitle = file.name) }
+        val epNum = file.parsedInfo?.episode
+        val titleText = if (epNum != null) {
+            "${series.title} 第${epNum}集"
+        } else {
+            file.name
+        }
+        
+        _uiState.update { it.copy(playUrl = null, playTitle = titleText) }
         Toast.makeText(context, "正在获取播放直链...", Toast.LENGTH_SHORT).show()
 
         viewModelScope.launch {
             val url = withContext(Dispatchers.IO) {
                 try {
-                    val apiUrl = "https://drive.quark.cn/1/clouddrive/file/v2/play?pr=ucpro&fr=pc"
+                    val apiUrl = "https://drive.quark.cn/1/clouddrive/file/download?pr=ucpro&fr=pc"
                     val jsonBody = JSONObject().apply {
-                        put("fid", file.fid)
-                        put("resolutions", "normal,low,high,super,2k,4k")
-                        put("supports", "fmp4,m3u8")
+                        put("fids", JSONArray().put(file.fid))
                     }
                     val body = jsonBody.toString().toRequestBody("application/json".toMediaType())
                     val request = Request.Builder()
@@ -520,21 +533,14 @@ class VideoScraperViewModel(
                         if (!resBody.isNullOrBlank()) {
                             val json = JSONObject(resBody)
                             if (json.optInt("code", -1) == 0) {
-                                val videoList = json.optJSONObject("data")?.optJSONArray("video_list")
-                                if (videoList != null && videoList.length() > 0) {
-                                    var bestUrl: String? = null
-                                    for (i in 0 until videoList.length()) {
-                                        val video = videoList.getJSONObject(i)
-                                        if (video.optBoolean("accessable", false)) {
-                                            val videoInfo = video.optJSONObject("video_info")
-                                            val videoUrl = videoInfo?.optString("url")
-                                            if (!videoUrl.isNullOrBlank()) {
-                                                bestUrl = videoUrl
-                                                break
-                                            }
-                                        }
-                                    }
-                                    if (bestUrl != null) return@withContext bestUrl
+                                val data = json.optJSONArray("data")
+                                if (data != null && data.length() > 0) {
+                                    return@withContext data.getJSONObject(0).optString("download_url")
+                                }
+                            } else {
+                                val msg = json.optString("message")
+                                withContext(Dispatchers.Main) {
+                                    Toast.makeText(context, "接口报错: $msg", Toast.LENGTH_SHORT).show()
                                 }
                             }
                         }
