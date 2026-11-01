@@ -1,30 +1,10 @@
-def cronetVersion = project.hasProperty("CronetVersion") ? project.property("CronetVersion") : "128.0.6613.40"
-def cronetMainVersion = project.hasProperty("CronetMainVersion") ? project.property("CronetMainVersion") : "128.0.6613.40"
-
-def cronetDir = file("${projectDir}/cronetlib")
-if (!cronetDir.exists()) {
-    cronetDir.mkdirs()
-}
-
-def baseUrl = "https://raw.githubusercontent.com/gedoor/legado/master/app/cronetlib/"
-def cronetJar = new File(cronetDir, "cronet-api-${cronetVersion}.jar")
-def cronetAar = new File(cronetDir, "cronet-impl-${cronetMainVersion}.aar")
+// app/download.gradle
+// 由于原版 GitHub 下载链接可能失效（404），且项目本地已包含 cronetlib 文件
+// 这里直接跳过下载逻辑，避免云端 CI 构建因网络问题失败
 
 tasks.register("downloadCronet") {
     doLast {
-        // 直接在这里写下载逻辑，不调用外部函数，彻底解决作用域报错
-        if (!cronetJar.exists()) {
-            println "Downloading ${cronetJar.name}..."
-            new URL(baseUrl + cronetJar.name).withInputStream { i ->
-                cronetJar.withOutputStream { o -> o << i }
-            }
-        }
-        if (!cronetAar.exists()) {
-            println "Downloading ${cronetAar.name}..."
-            new URL(baseUrl + cronetAar.name).withInputStream { i ->
-                cronetAar.withOutputStream { o -> o << i }
-            }
-        }
+        println "Skipping cronet download. Using existing files in app/cronetlib."
     }
 }
 
