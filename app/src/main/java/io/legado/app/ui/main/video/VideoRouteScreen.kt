@@ -54,11 +54,11 @@ import androidx.compose.ui.window.DialogProperties
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MediaMetadata
-import androidx.media3.common.MimeTypes
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
 import androidx.media3.datasource.okhttp.OkHttpDataSource
 import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.exoplayer.hls.HlsMediaSource
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.ui.PlayerView
 import coil3.compose.AsyncImage
@@ -448,8 +448,7 @@ fun InternalVideoPlayer(url: String, title: String, cookie: String, onBack: () -
             .readTimeout(15, TimeUnit.SECONDS)
             .followRedirects(true)
             .followSslRedirects(true)
-            // 【核心修复】强制 HTTP/1.1，规避部分 CDN HTTP/2 握手导致的黑屏挂起
-            .protocols(listOf(Protocol.HTTP_1_1))
+            .protocols(listOf(Protocol.HTTP_1_1)) // 强制 HTTP/1.1，规避部分 CDN 的 HTTP/2 兼容性问题
             .addInterceptor(object : Interceptor {
                 override fun intercept(chain: Interceptor.Chain): Response {
                     val originalRequest = chain.request()
@@ -465,31 +464,31 @@ fun InternalVideoPlayer(url: String, title: String, cookie: String, onBack: () -
 
         val okHttpDataSourceFactory = OkHttpDataSource.Factory(okHttpClient)
 
-        ExoPlayer.Builder(context)
-            .setMediaSourceFactory(DefaultMediaSourceFactory(okHttpDataSourceFactory))
-            .build().apply {
-                // 【核心修复】显式指定 MimeType 为 m3u8，强制使用 HlsMediaSource 解析
-                val mediaItem = MediaItem.Builder()
-                    .setUri(url)
-                    .setMimeType(MimeTypes.APPLICATION_M3U8)
-                    .setMediaMetadata(
-                        MediaMetadata.Builder()
-                            .setTitle(title)
-                            .build()
-                    )
+        // 【核心修复】不再强制指定 MimeType，让 ExoPlayer 根据链接内容自动判断
+        val mediaItem = MediaItem.Builder()
+            .setUri(url)
+            .setMediaMetadata(
+                MediaMetadata.Builder()
+                    .setTitle(title)
                     .build()
-                    
-                setMediaItem(mediaItem)
+            )
+            .build()
+
+        // 【核心修复】显式创建 HlsMediaSource，并设置允许重定向
+        val hlsMediaSource = HlsMediaSource.Factory(okHttpDataSourceFactory)
+            .setAllowChunklessPreparation(true) // 针对夸克转码流的优化
+            .createMediaSource(mediaItem)
+
+        val exoPlayer = ExoPlayer.Builder(context)
+            .build()
+            .apply {
+                setMediaSource(hlsMediaSource)
                 prepare()
                 playWhenReady = true
-                
-                // 【调试修复】加入详细日志，并处理黑屏
+
                 addListener(object : Player.Listener {
                     override fun onPlaybackStateChanged(playbackState: Int) {
                         Log.d("ExoPlayer", "PlaybackState: $playbackState")
-                        if (playbackState == Player.STATE_READY) {
-                            // 如果触发了 READY 但画面黑屏，可能是渲染器 Surface 未绑定
-                        }
                     }
                     override fun onIsLoadingChanged(isLoading: Boolean) {
                         Log.d("ExoPlayer", "IsLoading: $isLoading")
@@ -507,6 +506,7 @@ fun InternalVideoPlayer(url: String, title: String, cookie: String, onBack: () -
                     }
                 })
             }
+        exoPlayer
     }
 
     BackHandler {
