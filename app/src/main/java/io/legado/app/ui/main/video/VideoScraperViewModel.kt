@@ -513,7 +513,13 @@ class VideoScraperViewModel(
         val cookie = _uiState.value.cookie
         val epNum = file.parsedInfo?.episode
         val titleText = if (epNum != null) {
-            "${series.title} 第${epNum}集"
+            // 【修改点】优先使用 TMDB 的集数标题
+            val tmdbEpTitle = series.episodeTitles[epNum]
+            if (!tmdbEpTitle.isNullOrBlank()) {
+                "${series.title} $tmdbEpTitle"
+            } else {
+                "${series.title} 第${epNum}集"
+            }
         } else {
             file.name
         }
