@@ -15,7 +15,7 @@ import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.lazy.itemsIndexed // 新增导入
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
@@ -90,7 +90,6 @@ fun VideoRouteScreen(
         InternalVideoPlayer(
             url = uiState.playUrl!!,
             title = uiState.playTitle ?: "播放中",
-            cookie = uiState.cookie,
             onBack = { viewModel.stopPlaying() }
         )
     } else if (uiState.currentSeries != null) {
@@ -341,26 +340,17 @@ fun VideoRouteScreen(
 
 // 播放器
 @Composable
-fun InternalVideoPlayer(url: String, title: String, cookie: String, onBack: () -> Unit) {
+fun InternalVideoPlayer(url: String, title: String, onBack: () -> Unit) {
     val context = LocalContext.current
     
     val exoPlayer = remember {
         val okHttpClient = OkHttpClient.Builder()
             .connectTimeout(20, TimeUnit.SECONDS)
             .readTimeout(20, TimeUnit.SECONDS)
-            .followRedirects(true)
-            .followSslRedirects(true)
             .build()
 
         val okHttpDataSourceFactory = OkHttpDataSource.Factory(okHttpClient)
-            // 采用海阔同款 UA
-            .setUserAgent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) quark-cloud-drive/2.5.20 Chrome/100.0.4896.160 Electron/18.3.5.4-b478491100 Safari/537.36 Channel/pckk_other_ch")
-            .setDefaultRequestProperties(
-                mapOf(
-                    "Referer" to "https://drive.quark.cn/",
-                    "Cookie" to cookie
-                )
-            )
+            .setUserAgent("ExoPlayer")
 
         ExoPlayer.Builder(context)
             .setMediaSourceFactory(DefaultMediaSourceFactory(okHttpDataSourceFactory))
@@ -472,12 +462,10 @@ fun SeriesPosterCard(series: MediaSeries, onClick: () -> Unit, onLongClick: () -
 
 @Composable
 fun MediaDetailScreen(series: MediaSeries, onBack: () -> Unit, onPlay: (QuarkFile) -> Unit, onLongClickPoster: (MediaSeries) -> Unit) {
-    // 智能识别所有的季
     val allSeasons = series.videos.mapNotNull { it.parsedInfo?.season }.distinct().sorted()
     val currentSeasons = if (allSeasons.isEmpty()) listOf(1) else allSeasons
     var selectedSeason by remember { mutableStateOf(currentSeasons.first()) }
 
-    // 只过滤当前选中季的视频
     val currentVideos = series.videos.filter { (it.parsedInfo?.season ?: 1) == selectedSeason }
         .sortedBy { it.parsedInfo?.episode ?: 0 }
 
@@ -536,7 +524,6 @@ fun MediaDetailScreen(series: MediaSeries, onBack: () -> Unit, onPlay: (QuarkFil
             }
         }
         
-        // 季的切换按钮
         if (currentSeasons.size > 1) {
             item {
                 LazyRow(
@@ -569,15 +556,12 @@ fun MediaDetailScreen(series: MediaSeries, onBack: () -> Unit, onPlay: (QuarkFil
             LazyRow(contentPadding = PaddingValues(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 itemsIndexed(currentVideos) { index, file ->
                     val s = file.parsedInfo?.season ?: 1
-                    // 【核心兜底】如果解析器没拿到集数，用当前列表的 index + 1 代替
                     val e = file.parsedInfo?.episode ?: (index + 1)
                     
                     val tmdbTitle = series.episodeTitles["${s}_${e}"]
                     
-                    // 【显示逻辑】如果有 TMDB 单集标题，显示“第X集 标题”；如果没有，只显示“第X集”
-                    // 绝对不用 file.name
+                    // 绝不显示原文件名
                     val label = if (currentVideos.size == 1 && series.videos.size == 1) {
-                        // 如果是纯单集电影
                         series.title
                     } else {
                         "第${e}集" + if (!tmdbTitle.isNullOrBlank()) " $tmdbTitle" else ""
