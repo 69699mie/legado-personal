@@ -250,12 +250,19 @@ class VideoScraperViewModel(
                 }
             }
 
-            if (validFolders.isEmpty()) continue
+            var baseTitle = ""
+            var searchKeyword = ""
 
-            val baseTitle = validFolders.last()
-            val searchKeyword = validFolders.joinToString(" ")
+            // 核心修复：如果找不到有效子文件夹（视频直接扔在“电影”目录下），使用解析出的名字，不再跳过！
+            if (validFolders.isEmpty()) {
+                baseTitle = parsed.title
+                searchKeyword = parsed.title
+            } else {
+                baseTitle = validFolders.last()
+                searchKeyword = validFolders.joinToString(" ")
+            }
 
-            if (baseTitle.isBlank() || baseTitle.matches(Regex("^\\d+$"))) continue
+            if (baseTitle.isBlank() || baseTitle == "未知影视" || baseTitle.matches(Regex("^\\d+$"))) continue
 
             val key = baseTitle
             if (seriesMap.containsKey(key)) {
@@ -597,7 +604,6 @@ class VideoScraperViewModel(
             if (realUrl != null) {
                 startProxyServer()
                 if (proxyPort == 0) {
-                    // 端口解析失败，回退到直链（可能仍403，但至少尝试）
                     _uiState.update { it.copy(playUrl = realUrl) }
                     Toast.makeText(context, "代理启动失败，尝试直连", Toast.LENGTH_SHORT).show()
                 } else {
