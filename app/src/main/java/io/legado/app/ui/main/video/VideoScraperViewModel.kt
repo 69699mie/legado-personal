@@ -7,13 +7,6 @@ import androidx.lifecycle.viewModelScope
 import io.legado.app.data.repository.VideoSettingsRepository
 import io.legado.app.utils.ParsedVideoName
 import io.legado.app.utils.VideoFileNameParser
-import io.ktor.http.ContentType
-import io.ktor.http.HttpStatusCode
-import io.ktor.server.application.*
-import io.ktor.server.cio.*
-import io.ktor.server.engine.*
-import io.ktor.server.response.*
-import io.ktor.server.routing.*
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -26,8 +19,6 @@ import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONArray
 import org.json.JSONObject
-import java.net.ServerSocket
-import java.net.URLDecoder
 import java.net.URLEncoder
 import java.util.concurrent.TimeUnit
 
@@ -69,82 +60,9 @@ class VideoScraperViewModel(
 ) : ViewModel() {
 
     private val client = OkHttpClient.Builder()
-        .connectTimeout(20, TimeUnit.SECONDS)
-        .readTimeout(20, TimeUnit.SECONDS)
-        .followRedirects(true)
-        .followSslRedirects(true)
+        .connectTimeout(15, TimeUnit.SECONDS)
+        .readTimeout(15, TimeUnit.SECONDS)
         .build()
-
-    // ========== Ktor 本地代理 ==========
-    // 核心修复：使用 EmbeddedServer 泛型或 Any 接收，避免 API 版本兼容问题
-    private var proxyServer: EmbeddedServer<*, *>? = null
-    private var proxyPort: Int = 0
-
-    private fun startProxyServer() {
-        if (proxyServer != null) return
-        
-        // 核心修复：直接通过原生 Socket 获取一个空闲端口，百分百兼容
-        proxyPort = try {
-            ServerSocket(0).use { it.localPort }
-        } catch (e: Exception) {
-            8080
-        }
-
-        proxyServer = embeddedServer(CIO, port = proxyPort) {
-            routing {
-                get("/play") {
-                    val encodedUrl = call.request.queryParameters["url"]
-                    if (encodedUrl.isNullOrBlank()) {
-                        call.respond(HttpStatusCode.BadRequest, "missing url")
-                        return@get
-                    }
-                    val realUrl = URLDecoder.decode(encodedUrl, "UTF-8")
-                    val cookie = _uiState.value.cookie
-
-                    try {
-                        val req = Request.Builder()
-                            .url(realUrl)
-                            .header("Cookie", cookie)
-                            .header("Referer", "https://drive.quark.cn/")
-                            .header("User-Agent", "quark-cloud-drive/2.5.20")
-                            .build()
-
-                        client.newCall(req).execute().use { resp ->
-                            if (!resp.isSuccessful) {
-                                call.respond(HttpStatusCode.fromValue(resp.code))
-                                return@use
-                            }
-                            val body = resp.body ?: return@use
-                            val inputStream = body.byteStream()
-
-                            call.response.header("Content-Type", "video/mp4")
-                            call.respondOutputStream(ContentType.Video.MP4) {
-                                val buffer = ByteArray(64 * 1024)
-                                var bytesRead: Int
-                                while (inputStream.read(buffer).also { bytesRead = it } != -1) {
-                                    write(buffer, 0, bytesRead)
-                                    flush()
-                                }
-                            }
-                        }
-                    } catch (e: Exception) {
-                        call.respond(HttpStatusCode.InternalServerError, e.message ?: "proxy error")
-                    }
-                }
-            }
-        }.start(wait = false)
-    }
-
-    private fun stopProxyServer() {
-        proxyServer?.stop(1000, 2000)
-        proxyServer = null
-    }
-
-    override fun onCleared() {
-        super.onCleared()
-        stopProxyServer()
-    }
-    // ========== 代理结束 ==========
 
     private val _uiState = MutableStateFlow(VideoUiState())
     val uiState = _uiState.asStateFlow()
@@ -237,37 +155,33 @@ class VideoScraperViewModel(
 
     private fun aggregateToSeries(videos: List<QuarkFile>): List<MediaSeries> {
         val seriesMap = mutableMapOf<String, MediaSeries>()
-        val excludeSearch = setOf("动漫", "电视剧", "电影", "已观看", "未观看", "纪录片", "综艺", "未分类", "其他")
+        val ignoreFolders = setOf("电影", "动漫", "电视剧", "未分类", "其他", "未观看", "已观看", "纪录片", "综艺")
 
         for (v in videos) {
             val parsed = v.parsedInfo ?: continue
-            var finalCategory = v.category
-            val validFolders = mutableListOf<String>()
-
+            var baseTitle = ""
+            
+            // 寻找真实文件夹名
             if (v.folderPath.isNotEmpty()) {
-                for (folder in v.folderPath) {
-                    if (folder.contains("动漫") || folder.contains("动画")) finalCategory = "动漫"
-                    else if (folder.contains("电视剧") || folder.contains("剧集")) finalCategory = "剧集"
-                    else if (folder.contains("电影")) finalCategory = "电影"
-
-                    if (!excludeSearch.contains(folder) && !VideoFileNameParser.isSeasonFolder(folder)) {
-                        validFolders.add(folder)
+                for (i in v.folderPath.indices.reversed()) {
+                    val folder = v.folderPath[i]
+                    if (!ignoreFolders.contains(folder) && !VideoFileNameParser.isSeasonFolder(folder)) {
+                        baseTitle = folder
+                        break
                     }
                 }
             }
+            
+            if (baseTitle.isBlank()) baseTitle = parsed.title
 
-            var baseTitle = ""
-            var searchKeyword = ""
-
-            if (validFolders.isEmpty()) {
-                baseTitle = parsed.title
-                searchKeyword = parsed.title
-            } else {
-                baseTitle = validFolders.last()
-                searchKeyword = validFolders.joinToString(" ")
+            // 物理拦截：如果是空、纯数字、或者是“2 0”这种带空格的数字，直接丢弃
+            val cleanCheck = baseTitle.replace(" ", "").trim()
+            if (cleanCheck.isBlank() || cleanCheck.matches(Regex("^\\d+$")) || baseTitle == "未知影视" || baseTitle == "未分类") {
+                continue
             }
 
-            if (baseTitle.isBlank() || baseTitle == "未知影视" || baseTitle.matches(Regex("^\\d+$"))) continue
+            // 核心逻辑：强制继承根目录分类
+            val finalCategory = v.category
 
             val key = baseTitle
             if (seriesMap.containsKey(key)) {
@@ -279,7 +193,7 @@ class VideoScraperViewModel(
                 seriesMap[key] = MediaSeries(
                     id = key,
                     title = baseTitle,
-                    originalParsedTitle = searchKeyword,
+                    originalParsedTitle = baseTitle,
                     year = parsed.year,
                     category = finalCategory,
                     videos = listOf(v)
@@ -356,9 +270,11 @@ class VideoScraperViewModel(
     private fun scrapeSeriesPosters(seriesList: List<MediaSeries>, apiKey: String, baseUrl: String) {
         viewModelScope.launch(Dispatchers.IO) {
             val updatedList = seriesList.map { series ->
-                val match = searchTmdbWithFallback(series.originalParsedTitle, series.title, series.year, apiKey, baseUrl)
+                // 极简逻辑：直接拿 baseTitle（文件夹名）去搜
+                val match = searchTmdb(series.originalParsedTitle, series.year, apiKey, baseUrl, "zh-CN")
                 if (match != null) {
                     var finalTitle = match.title
+                    // 如果文件夹是纯中文，TMDB 返回英文，强制保留原中文名
                     if (finalTitle.matches(Regex("^[a-zA-Z0-9\\s\\p{Punct}]+$")) && series.title.any { it.code > 127 }) {
                         finalTitle = series.title
                     }
@@ -392,14 +308,6 @@ class VideoScraperViewModel(
         }
     }
 
-    private fun searchTmdbWithFallback(fullKeyword: String, baseTitle: String, year: Int?, apiKey: String, baseUrl: String): TmdbSearchResult? {
-        var result = searchTmdb(fullKeyword, year, apiKey, baseUrl, "zh-CN")
-        if (result == null && fullKeyword != baseTitle) {
-            result = searchTmdb(baseTitle, year, apiKey, baseUrl, "zh-CN")
-        }
-        return result
-    }
-
     private fun searchTmdb(title: String, year: Int?, apiKey: String, baseUrl: String, language: String): TmdbSearchResult? {
         try {
             val query = URLEncoder.encode(title, "UTF-8")
@@ -422,9 +330,6 @@ class VideoScraperViewModel(
 
                             var score = 0.0
                             if (officialTitle.contains(title) || title.contains(officialTitle)) score += 5.0
-                            title.split(" ").forEach { word ->
-                                if (word.length > 1 && officialTitle.contains(word)) score += 3.0
-                            }
                             if (year != null && releaseYear == year) score += 5.0
 
                             if (score > topScore && score > 0) {
@@ -563,14 +468,17 @@ class VideoScraperViewModel(
     fun playVideo(context: Context, file: QuarkFile) {
         val cookie = _uiState.value.cookie
         _uiState.update { it.copy(playUrl = null, playTitle = file.name) }
-        Toast.makeText(context, "正在获取原画直链...", Toast.LENGTH_SHORT).show()
+        Toast.makeText(context, "正在获取原画云播...", Toast.LENGTH_SHORT).show()
 
         viewModelScope.launch {
-            val realUrl = withContext(Dispatchers.IO) {
+            val url = withContext(Dispatchers.IO) {
                 try {
-                    val apiUrl = "https://drive.quark.cn/1/clouddrive/file/download?pr=ucpro&fr=pc"
+                    // 采用官方 v2/play 接口
+                    val apiUrl = "https://drive.quark.cn/1/clouddrive/file/v2/play?pr=ucpro&fr=pc"
                     val jsonBody = JSONObject().apply {
-                        put("fids", JSONArray().put(file.fid))
+                        put("fid", file.fid)
+                        put("resolutions", "normal,low,high,super,2k,4k")
+                        put("supports", "fmp4,m3u8")
                     }
                     val body = jsonBody.toString().toRequestBody("application/json".toMediaType())
 
@@ -588,14 +496,24 @@ class VideoScraperViewModel(
                         if (!resBody.isNullOrBlank()) {
                             val json = JSONObject(resBody)
                             if (json.optInt("code", -1) == 0) {
-                                val data = json.optJSONArray("data")
-                                if (data != null && data.length() > 0) {
-                                    return@withContext data.getJSONObject(0).optString("download_url")
+                                val data = json.optJSONObject("data")
+                                val videoList = data?.optJSONArray("video_list")
+                                if (videoList != null && videoList.length() > 0) {
+                                    for (i in 0 until videoList.length()) {
+                                        val videoItem = videoList.getJSONObject(i)
+                                        if (videoItem.optBoolean("accessable", false)) {
+                                            val videoInfo = videoItem.optJSONObject("video_info")
+                                            val playUrl = videoInfo?.optString("url")
+                                            if (!playUrl.isNullOrBlank()) {
+                                                return@withContext playUrl
+                                            }
+                                        }
+                                    }
                                 }
                             } else {
                                 val msg = json.optString("message")
                                 withContext(Dispatchers.Main) {
-                                    Toast.makeText(context, "获取直链失败: $msg", Toast.LENGTH_SHORT).show()
+                                    Toast.makeText(context, "获取云播直链失败: $msg", Toast.LENGTH_SHORT).show()
                                 }
                             }
                         }
@@ -606,18 +524,10 @@ class VideoScraperViewModel(
                 null
             }
 
-            if (realUrl != null) {
-                startProxyServer()
-                if (proxyPort == 0) {
-                    _uiState.update { it.copy(playUrl = realUrl) }
-                    Toast.makeText(context, "代理启动失败，尝试直连", Toast.LENGTH_SHORT).show()
-                } else {
-                    val encoded = URLEncoder.encode(realUrl, "UTF-8")
-                    val proxyUrl = "http://127.0.0.1:$proxyPort/play?url=$encoded"
-                    _uiState.update { it.copy(playUrl = proxyUrl) }
-                }
+            if (url != null) {
+                _uiState.update { it.copy(playUrl = url) }
             } else {
-                Toast.makeText(context, "解析直链失败，请检查 Cookie", Toast.LENGTH_LONG).show()
+                Toast.makeText(context, "解析云播地址失败，请检查 Cookie", Toast.LENGTH_LONG).show()
                 _uiState.update { it.copy(playUrl = null, playTitle = null) }
             }
         }
