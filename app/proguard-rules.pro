@@ -127,8 +127,6 @@
 -keepclassmembers class androidx.media3.datasource.cache.CacheDataSource$Factory {
     *** upstreamDataSourceFactory;
 }
-## ExoPlayer 如果还不能播放就取消注释这个
-# -keep class com.google.android.exoplayer2.** {*;}
 
 ## 对外提供api
 -keep class io.legado.app.api.ReturnData{*;}
@@ -142,10 +140,22 @@
 # Throwable
 -keepnames class * extends java.lang.Throwable
 -keepclassmembernames,allowobfuscation class * extends java.lang.Throwable{*;}
+
+# ==========================================
 # 忽略 Ktor 在 Android 上对 Java SE 管理类的引用
 -dontwarn java.lang.management.**
 -dontwarn io.ktor.util.debug.IntellijIdeaDebugDetector
 -keep,allowobfuscation class io.ktor.util.debug.** { *; }
+
 # 保留 Coil 3 通过 ServiceLoader 注册的所有解码器，防止 R8 full-mode 剥离
 -keep class * extends coil3.util.DecoderServiceLoaderTarget { *; }
 -keep class * extends coil3.util.FetcherServiceLoaderTarget { *; }
+
+# ==========================================
+# 核心新增：Media3 播放器防混淆（防止 R8 导致 HLS 崩溃和播放报错）
+-keep class androidx.media3.** { *; }
+-dontwarn androidx.media3.**
+
+# 核心新增：Ktor Server 防混淆（保障本地代理正常运行）
+-keep class io.ktor.** { *; }
+-dontwarn io.ktor.**
