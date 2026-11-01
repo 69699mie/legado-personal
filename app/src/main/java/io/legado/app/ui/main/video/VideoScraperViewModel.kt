@@ -52,7 +52,6 @@ data class TmdbSearchResult(
     val posterUrl: String?,
     val overview: String,
     val rating: String?,
-    // 【核心修复】增加类型和题材 ID 字段，用于分类
     val mediaType: String = "tv",
     val genreIds: List<Int> = emptyList()
 )
@@ -152,32 +151,38 @@ class VideoScraperViewModel(
         }
     }
 
+    // 【核心修复：极度严谨的系列聚合逻辑】
     private fun aggregateToSeries(videos: List<QuarkFile>): List<MediaSeries> {
         val seriesMap = mutableMapOf<String, MediaSeries>()
-        val ignoreFolders = setOf("电影", "动漫", "电视剧", "纪录片", "综艺", "未分类", "其他")
+        // 已知的网盘分类根目录，不参与剧名判断
+        val rootLibNames = setOf("电视剧", "动漫", "电影", "纪录片", "综艺", "未分类", "其他")
 
         for (v in videos) {
             val parsed = v.parsedInfo ?: continue
             var baseTitle = ""
-            if (v.folderPath.size >= 2) {
-                val parentFolder = v.folderPath.last()
-                val grandParentFolder = v.folderPath[v.folderPath.size - 2]
-                if (VideoFileNameParser.isSeasonFolder(parentFolder)) {
-                    baseTitle = grandParentFolder
+            
+            // 1. 如果有文件夹层级，绝不相信文件名，往上追溯找真正的“剧名”
+            if (v.folderPath.isNotEmpty()) {
+                // 过滤掉“电视剧”、“动漫”等根目录
+                val validPaths = v.folderPath.filter { !rootLibNames.contains(it) }
+                if (validPaths.isNotEmpty()) {
+                    // validPaths 比如：["低智商犯罪", "13-14"]，第一个元素必定是剧名
+                    baseTitle = validPaths.first() 
                 } else {
-                    baseTitle = parentFolder
+                    baseTitle = v.folderPath.last()
                 }
-            } else if (v.folderPath.isNotEmpty()) {
-                baseTitle = v.folderPath.last()
-            } else {
+            }
+            
+            // 2. 如果真的一点文件夹层级都没有（文件直接扔在根目录），才用文件名兜底
+            if (baseTitle.isBlank()) {
                 baseTitle = parsed.title
             }
 
-            if (baseTitle.isBlank() || ignoreFolders.contains(baseTitle)) {
+            if (baseTitle.isBlank() || baseTitle == "未知影视") {
                 baseTitle = parsed.title
             }
-            if (baseTitle.isBlank() || baseTitle == "未知影视") continue
 
+            // 3. 强行合并：只要是同一个 baseTitle，全部打包进同一个 MediaSeries
             val key = baseTitle
             if (seriesMap.containsKey(key)) {
                 val exist = seriesMap[key]!!
@@ -189,7 +194,7 @@ class VideoScraperViewModel(
                     title = baseTitle,
                     originalParsedTitle = baseTitle,
                     year = parsed.year,
-                    category = "未分类", // 初始为未分类，后续由 TMDB 覆盖
+                    category = "未分类",
                     videos = listOf(v)
                 )
             }
@@ -247,16 +252,14 @@ class VideoScraperViewModel(
             val updatedList = seriesList.map { series ->
                 val match = searchTmdbWithFallback(series.originalParsedTitle, series.year, apiKey, baseUrl)
                 if (match != null) {
-                    // 【核心修复】强制中文名拦截
                     var finalTitle = match.title
                     if (finalTitle.matches(Regex("^[a-zA-Z0-9\\s\\p{Punct}]+$")) && series.originalParsedTitle.any { it.code > 127 }) {
                         finalTitle = series.originalParsedTitle
                     }
 
-                    // 【核心修复】依据 TMDB genreIds 自动分类
                     val newCategory = when {
                         match.mediaType == "movie" -> "电影"
-                        match.genreIds.contains(16) -> "动漫" // 16 是动画
+                        match.genreIds.contains(16) -> "动漫"
                         match.mediaType == "tv" -> "剧集"
                         else -> series.category
                     }
@@ -327,7 +330,6 @@ class VideoScraperViewModel(
                         val ratingStr = if (voteAverage > 0) String.format("%.1f", voteAverage) else null
                         val mediaType = bestItem.optString("media_type", "tv")
 
-                        // 【核心修复】解析 genre_ids
                         val genreIdsList = mutableListOf<Int>()
                         val genreIdsArray = bestItem.optJSONArray("genre_ids")
                         if (genreIdsArray != null) {
@@ -439,7 +441,6 @@ class VideoScraperViewModel(
         }
     }
 
-    // ================== 【核心修复：播放逻辑】 ==================
     fun playVideo(context: Context, file: QuarkFile) {
         val cookie = _uiState.value.cookie
         _uiState.update { it.copy(playUrl = null, playTitle = file.name) }
@@ -448,7 +449,6 @@ class VideoScraperViewModel(
         viewModelScope.launch {
             val url = withContext(Dispatchers.IO) {
                 try {
-                    // 改用 v2/play 接口获取转码流 (参考海阔规则)
                     val apiUrl = "https://drive.quark.cn/1/clouddrive/file/v2/play?pr=ucpro&fr=pc"
                     val jsonBody = JSONObject().apply {
                         put("fid", file.fid)
@@ -460,8 +460,9 @@ class VideoScraperViewModel(
                         .url(apiUrl)
                         .post(body)
                         .header("Cookie", cookie)
+                        // 【核心修复】使用与 API 请求完全一致的桌面端 UA，防止跨域拦截
                         .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) quark-cloud-drive/2.5.20 Chrome/100.0.4896.160 Electron/18.3.5.4-b478491100 Safari/537.36 Channel/pckk_other_ch")
-                        .header("Referer", "https://pan.quark.cn/")
+                        .header("Referer", "https://drive.quark.cn/") // 必须是 drive.quark.cn
                         .header("Accept", "application/json, text/plain, */*")
                         .build()
 
@@ -470,10 +471,8 @@ class VideoScraperViewModel(
                         if (!resBody.isNullOrBlank()) {
                             val json = JSONObject(resBody)
                             if (json.optInt("code", -1) == 0) {
-                                // 解析 video_list
                                 val videoList = json.optJSONObject("data")?.optJSONArray("video_list")
                                 if (videoList != null && videoList.length() > 0) {
-                                    // 寻找分辨率最高的且可播放的
                                     var bestUrl: String? = null
                                     for (i in 0 until videoList.length()) {
                                         val video = videoList.getJSONObject(i)
@@ -481,7 +480,7 @@ class VideoScraperViewModel(
                                             val videoInfo = video.optJSONObject("video_info")
                                             val videoUrl = videoInfo?.optString("url")
                                             if (!videoUrl.isNullOrBlank()) {
-                                                bestUrl = videoUrl // 获取第一个可用的（一般是从高到底排的）
+                                                bestUrl = videoUrl
                                                 break
                                             }
                                         }
