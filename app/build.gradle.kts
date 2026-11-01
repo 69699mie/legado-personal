@@ -12,7 +12,7 @@ plugins {
     alias(libs.plugins.baselineprofile)
 }
 
-apply(from = "app/download.gradle")
+apply(from = "download.gradle")
 
 val versionPropsFile = file("version.properties")
 val versionProps = Properties().apply {
