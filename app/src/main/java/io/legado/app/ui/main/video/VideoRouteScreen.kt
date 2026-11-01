@@ -50,15 +50,11 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.media3.common.MediaItem
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
-import androidx.media3.datasource.okhttp.OkHttpDataSource
 import androidx.media3.exoplayer.ExoPlayer
-import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.ui.PlayerView
 import coil3.compose.AsyncImage
 import io.legado.app.ui.widget.components.text.AppText
-import okhttp3.OkHttpClient
 import org.koin.androidx.compose.koinViewModel
-import java.util.concurrent.TimeUnit
 
 @OptIn(ExperimentalFoundationApi::class, ExperimentalMaterial3Api::class)
 @Composable
@@ -344,16 +340,8 @@ fun InternalVideoPlayer(url: String, title: String, onBack: () -> Unit) {
     val context = LocalContext.current
     
     val exoPlayer = remember {
-        val okHttpClient = OkHttpClient.Builder()
-            .connectTimeout(20, TimeUnit.SECONDS)
-            .readTimeout(20, TimeUnit.SECONDS)
-            .build()
-
-        val okHttpDataSourceFactory = OkHttpDataSource.Factory(okHttpClient)
-            .setUserAgent("ExoPlayer")
-
+        // 极简播放器，不再需要任何防拦截 Header，直接播 m3u8
         ExoPlayer.Builder(context)
-            .setMediaSourceFactory(DefaultMediaSourceFactory(okHttpDataSourceFactory))
             .build().apply {
                 setMediaItem(MediaItem.fromUri(url))
                 prepare()
@@ -560,7 +548,7 @@ fun MediaDetailScreen(series: MediaSeries, onBack: () -> Unit, onPlay: (QuarkFil
                     
                     val tmdbTitle = series.episodeTitles["${s}_${e}"]
                     
-                    // 绝不显示原文件名
+                    // 强制显示第X集 + TMDB标题
                     val label = if (currentVideos.size == 1 && series.videos.size == 1) {
                         series.title
                     } else {
