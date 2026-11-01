@@ -35,7 +35,7 @@ data class QuarkFile(
 data class MediaSeries(
     val id: String,
     val title: String,
-    val originalParsedTitle: String, // 用于 TMDB 搜索的关键词（可能包含多级父目录）
+    val originalParsedTitle: String, // 仅作为兜底搜索词
     val year: Int?,
     val category: String,
     val posterUrl: String? = null,
@@ -60,9 +60,9 @@ class VideoScraperViewModel(
 ) : ViewModel() {
 
     private val client = OkHttpClient.Builder()
-        .connectTimeout(15, TimeUnit.SECONDS)
-        .readTimeout(15, TimeUnit.SECONDS)
-        .followRedirects(true)
+        .connectTimeout(20, TimeUnit.SECONDS)
+        .readTimeout(20, TimeUnit.SECONDS)
+        .followRedirects(true) // 必须允许重定向
         .followSslRedirects(true)
         .build()
 
@@ -157,41 +157,38 @@ class VideoScraperViewModel(
     
     private fun aggregateToSeries(videos: List<QuarkFile>): List<MediaSeries> {
         val seriesMap = mutableMapOf<String, MediaSeries>()
-        val ignoreFolders = setOf("电影", "动漫", "电视剧", "纪录片", "综艺", "未分类", "其他", "未观看", "已观看")
+        val excludeSearch = setOf("动漫", "电视剧", "电影", "已观看", "未观看", "纪录片", "综艺", "未分类", "其他")
 
         for (v in videos) {
             val parsed = v.parsedInfo ?: continue
-            var baseTitle = ""
-            var finalCategory = v.category 
+            var finalCategory = v.category
+            
+            // 1. 提取有效的父目录（剔除分类目录、剔除季目录）
             val validFolders = mutableListOf<String>()
-
-            // 1. 向上追溯寻找真实的父文件夹名和分类
             if (v.folderPath.isNotEmpty()) {
-                for (i in v.folderPath.indices.reversed()) {
-                    val folder = v.folderPath[i]
-                    // 极简分类逻辑
+                for (folder in v.folderPath) {
                     if (folder.contains("动漫") || folder.contains("动画")) finalCategory = "动漫"
                     else if (folder.contains("电视剧") || folder.contains("剧集")) finalCategory = "剧集"
                     else if (folder.contains("电影")) finalCategory = "电影"
-                    
-                    // 剔除无意义的分类目录和季目录，将有效目录（如 仙逆剧场版、弑仙之战）收集起来
-                    if (!ignoreFolders.contains(folder) && !VideoFileNameParser.isSeasonFolder(folder)) {
-                        validFolders.add(0, folder) // 保持从高到低的顺序
+
+                    if (!excludeSearch.contains(folder) && !VideoFileNameParser.isSeasonFolder(folder)) {
+                        validFolders.add(folder)
                     }
                 }
             }
             
-            // 取最底层的文件夹名作为聚合的 Key 和展示名称（兜底用）
-            if (validFolders.isNotEmpty()) {
-                baseTitle = validFolders.last()
-            } else {
-                baseTitle = parsed.title
-                if (baseTitle.isBlank() || baseTitle == "未知影视") continue
-            }
+            // 2. 剧名必须且只能来源于文件夹！如果找不到文件夹，说明结构不对，跳过！
+            if (validFolders.isEmpty()) continue
+
+            // 最后一级文件夹名作为展示名称 (比如：弑仙之战)
+            val baseTitle = validFolders.last()
+            // 所有有效文件夹拼起来作为搜索词 (比如：仙逆剧场版 弑仙之战)
+            val searchKeyword = validFolders.joinToString(" ")
+
+            // 严格过滤：如果名称是纯数字，直接跳过
+            if (baseTitle.isBlank() || baseTitle.matches(Regex("^\\d+$"))) continue
 
             val key = baseTitle
-            // 将多级目录拼接作为 TMDB 搜索词，如 "仙逆剧场版 弑仙之战"
-            val searchKeyword = if (validFolders.isNotEmpty()) validFolders.joinToString(" ") else parsed.title
             
             if (seriesMap.containsKey(key)) {
                 val exist = seriesMap[key]!!
@@ -202,7 +199,7 @@ class VideoScraperViewModel(
                 seriesMap[key] = MediaSeries(
                     id = key,
                     title = baseTitle,
-                    originalParsedTitle = searchKeyword, // 使用拼接词去搜索
+                    originalParsedTitle = searchKeyword,
                     year = parsed.year,
                     category = finalCategory,
                     videos = listOf(v)
@@ -279,18 +276,13 @@ class VideoScraperViewModel(
     private fun scrapeSeriesPosters(seriesList: List<MediaSeries>, apiKey: String, baseUrl: String) {
         viewModelScope.launch(Dispatchers.IO) {
             val updatedList = seriesList.map { series ->
-                // 传入系列名作为兜底，如果拼接词搜不到，就用底层文件夹名搜
+                // 用拼好的词（文件夹路径）去搜
                 val match = searchTmdbWithFallback(series.originalParsedTitle, series.title, series.year, apiKey, baseUrl)
                 if (match != null) {
                     var finalTitle = match.title
-                    
-                    // 核心防错：如果 TMDB 返回的标题是纯英文/数字，且我们的原目录名是纯中文，强制保留原目录名！
-                    val isMatchTitleEnglish = finalTitle.matches(Regex("^[a-zA-Z0-9\\s\\p{Punct}]+$"))
-                    val isOriginalTitleChinese = series.title.any { it.code > 127 }
-                    
-                    if (isMatchTitleEnglish && isOriginalTitleChinese) {
-                        // 如果原目录名包含了上级（如：仙逆剧场版 弑仙之战），这里直接用 series.title（即底层名）或者 originalParsedTitle
-                        finalTitle = if (series.originalParsedTitle.any { it.code > 127 }) series.originalParsedTitle else series.title
+                    // 兜底：如果返回英文，强行换回文件夹名
+                    if (finalTitle.matches(Regex("^[a-zA-Z0-9\\s\\p{Punct}]+$")) && series.title.any { it.code > 127 }) {
+                        finalTitle = series.title 
                     }
 
                     val epTitles = mutableMapOf<String, String>()
@@ -322,20 +314,10 @@ class VideoScraperViewModel(
         }
     }
 
-    private fun searchTmdbWithFallback(primaryTitle: String, fallbackTitle: String, year: Int?, apiKey: String, baseUrl: String): TmdbSearchResult? {
-        // 1. 优先用完整路径词搜中文
-        var result = searchTmdb(primaryTitle, year, apiKey, baseUrl, "zh-CN")
-        
-        // 2. 如果搜不到，并且有备用词（底层文件夹名），用备用词搜中文
-        if (result == null && primaryTitle != fallbackTitle) {
-            result = searchTmdb(fallbackTitle, year, apiKey, baseUrl, "zh-CN")
-        }
-        if (result != null) return result
-
-        // 3. 如果还没有，直接搜英文（逻辑上少用，但作为兜底）
-        result = searchTmdb(primaryTitle, year, apiKey, baseUrl, "en-US")
-        if (result == null && primaryTitle != fallbackTitle) {
-            result = searchTmdb(fallbackTitle, year, apiKey, baseUrl, "en-US")
+    private fun searchTmdbWithFallback(fullKeyword: String, baseTitle: String, year: Int?, apiKey: String, baseUrl: String): TmdbSearchResult? {
+        var result = searchTmdb(fullKeyword, year, apiKey, baseUrl, "zh-CN")
+        if (result == null && fullKeyword != baseTitle) {
+            result = searchTmdb(baseTitle, year, apiKey, baseUrl, "zh-CN")
         }
         return result
     }
@@ -361,9 +343,7 @@ class VideoScraperViewModel(
                             val releaseYear = item.optString("release_date").take(4).toIntOrNull() ?: item.optString("first_air_date").take(4).toIntOrNull()
                             
                             var score = 0.0
-                            // 如果官方标题包含搜索词，或者搜索词包含官方标题，加高分
                             if (officialTitle.contains(title) || title.contains(officialTitle)) score += 5.0
-                            // 如果是多个词拼接，只要包含其中一个长词，也给分
                             title.split(" ").forEach { word ->
                                 if (word.length > 1 && officialTitle.contains(word)) score += 3.0
                             }
@@ -505,16 +485,14 @@ class VideoScraperViewModel(
     fun playVideo(context: Context, file: QuarkFile) {
         val cookie = _uiState.value.cookie
         _uiState.update { it.copy(playUrl = null, playTitle = file.name) }
-        Toast.makeText(context, "正在获取云播直链...", Toast.LENGTH_SHORT).show()
+        Toast.makeText(context, "正在获取原画直链...", Toast.LENGTH_SHORT).show()
         
         viewModelScope.launch {
             val url = withContext(Dispatchers.IO) {
                 try {
-                    val apiUrl = "https://drive.quark.cn/1/clouddrive/file/v2/play?pr=ucpro&fr=pc"
+                    val apiUrl = "https://drive.quark.cn/1/clouddrive/file/download?pr=ucpro&fr=pc"
                     val jsonBody = JSONObject().apply {
-                        put("fid", file.fid)
-                        put("resolutions", "normal,low,high,super,2k,4k")
-                        put("supports", "fmp4,m3u8")
+                        put("fids", JSONArray().put(file.fid))
                     }
                     val body = jsonBody.toString().toRequestBody("application/json".toMediaType())
                     
@@ -532,24 +510,14 @@ class VideoScraperViewModel(
                         if (!resBody.isNullOrBlank()) {
                             val json = JSONObject(resBody)
                             if (json.optInt("code", -1) == 0) {
-                                val data = json.optJSONObject("data")
-                                val videoList = data?.optJSONArray("video_list")
-                                if (videoList != null && videoList.length() > 0) {
-                                    for (i in 0 until videoList.length()) {
-                                        val videoItem = videoList.getJSONObject(i)
-                                        if (videoItem.optBoolean("accessable", false)) {
-                                            val videoInfo = videoItem.optJSONObject("video_info")
-                                            val playUrl = videoInfo?.optString("url")
-                                            if (!playUrl.isNullOrBlank()) {
-                                                return@withContext playUrl
-                                            }
-                                        }
-                                    }
+                                val data = json.optJSONArray("data")
+                                if (data != null && data.length() > 0) {
+                                    return@withContext data.getJSONObject(0).optString("download_url")
                                 }
                             } else {
                                 val msg = json.optString("message")
                                 withContext(Dispatchers.Main) {
-                                    Toast.makeText(context, "获取播放直链失败: $msg", Toast.LENGTH_SHORT).show()
+                                    Toast.makeText(context, "获取直链失败: $msg", Toast.LENGTH_SHORT).show()
                                 }
                             }
                         }
@@ -563,7 +531,7 @@ class VideoScraperViewModel(
             if (url != null) {
                 _uiState.update { it.copy(playUrl = url) }
             } else {
-                Toast.makeText(context, "解析云播地址失败，请检查 Cookie", Toast.LENGTH_LONG).show()
+                Toast.makeText(context, "解析直链失败，请检查 Cookie", Toast.LENGTH_LONG).show()
                 _uiState.update { it.copy(playUrl = null, playTitle = null) }
             }
         }
