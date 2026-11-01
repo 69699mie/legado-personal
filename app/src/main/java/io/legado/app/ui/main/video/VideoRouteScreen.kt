@@ -1,19 +1,28 @@
 package io.legado.app.ui.main.video
 
 import android.annotation.SuppressLint
+import android.app.Activity
+import android.content.Context
+import android.content.pm.ActivityInfo
+import android.content.res.Configuration
 import android.net.Uri
 import android.util.Log
 import android.view.ViewGroup
+import android.view.WindowManager
 import android.webkit.CookieManager
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import android.widget.FrameLayout
 import android.widget.Toast
 import androidx.activity.compose.BackHandler
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
@@ -27,6 +36,7 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.Movie
+import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Star
@@ -41,7 +51,9 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shadow
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
@@ -52,11 +64,15 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
+import androidx.core.view.WindowCompat
+import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.WindowInsetsControllerCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MediaMetadata
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
+import androidx.media3.common.VideoSize
 import androidx.media3.datasource.DefaultHttpDataSource
 import androidx.media3.datasource.HttpDataSource
 import androidx.media3.exoplayer.ExoPlayer
@@ -65,6 +81,7 @@ import androidx.media3.exoplayer.source.ProgressiveMediaSource
 import androidx.media3.ui.PlayerView
 import coil3.compose.AsyncImage
 import io.legado.app.ui.widget.components.text.AppText
+import kotlinx.coroutines.delay
 import org.koin.androidx.compose.koinViewModel
 
 @OptIn(ExperimentalFoundationApi::class, ExperimentalMaterial3Api::class)
@@ -434,13 +451,43 @@ fun WebLoginView(onLoginSuccess: (String) -> Unit, onCancel: () -> Unit) {
     }
 }
 
+// 【核心重构】播放器组件
 @Composable
 fun InternalVideoPlayer(url: String, title: String, cookie: String, onBack: () -> Unit) {
     val context = LocalContext.current
+    val activity = context as? Activity
+    val configuration = LocalConfiguration.current
+    val isLandscape = configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
+
+    // 沉浸式全屏控制
+    DisposableEffect(Unit) {
+        activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_SENSOR
+        activity?.window?.let { window ->
+            WindowCompat.setDecorFitsSystemWindows(window, false)
+            val controller = WindowInsetsControllerCompat(window, window.decorView)
+            controller.hide(WindowInsetsCompat.Type.systemBars())
+            controller.systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+        }
+        onDispose {
+            activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
+            activity?.window?.let { window ->
+                WindowCompat.setDecorFitsSystemWindows(window, true)
+                val controller = WindowInsetsControllerCompat(window, window.decorView)
+                controller.show(WindowInsetsCompat.Type.systemBars())
+            }
+        }
+    }
+
+    // 播放器状态
+    var isPlaying by remember { mutableStateOf(true) }
+    var currentPosition by remember { mutableLongStateOf(0L) }
+    var duration by remember { mutableLongStateOf(0L) }
+    var resolution by remember { mutableStateOf("") }
+    var showControls by remember { mutableStateOf(true) }
+
+    // 初始化 ExoPlayer
     val exoPlayer = remember {
         val cleanCookie = cookie.replace("\n", "").replace("\r", "").trim()
-
-        // 1. 构建统一的请求头，注入到所有网络请求中
         val defaultRequestProperties = mapOf(
             "Referer" to "https://pan.quark.cn/",
             "Cookie" to cleanCookie,
@@ -449,7 +496,7 @@ fun InternalVideoPlayer(url: String, title: String, cookie: String, onBack: () -
 
         val dataSourceFactory = DefaultHttpDataSource.Factory()
             .setDefaultRequestProperties(defaultRequestProperties)
-            .setAllowCrossProtocolRedirects(true) // 允许夸克 CDN 可能发生的跨协议重定向
+            .setAllowCrossProtocolRedirects(true)
             .setConnectTimeoutMs(15000)
             .setReadTimeoutMs(15000)
 
@@ -457,21 +504,17 @@ fun InternalVideoPlayer(url: String, title: String, cookie: String, onBack: () -
             .setUri(url)
             .setMediaMetadata(MediaMetadata.Builder().setTitle(title).build())
 
-        // 2. 【核心修复】使用 Uri 解析路径，正确判断是否为 HLS 流
-        // 这解决了链接带查询参数（如 ?token=xxx）时 endsWith(".m3u8") 判断失效的问题
         val isHls = try {
             Uri.parse(url).path?.contains(".m3u8") == true
         } catch (e: Exception) {
-            url.contains(".m3u8") // 解析失败时回退到简单判断
+            url.contains(".m3u8")
         }
 
         val mediaSource = if (isHls) {
-            // HLS 流：使用 HlsMediaSource，并开启 chunkless 优化以兼容非标准清单
             HlsMediaSource.Factory(dataSourceFactory)
                 .setAllowChunklessPreparation(true)
                 .createMediaSource(mediaItemBuilder.build())
         } else {
-            // 普通视频流（MP4 等）：使用 ProgressiveMediaSource
             ProgressiveMediaSource.Factory(dataSourceFactory)
                 .createMediaSource(mediaItemBuilder.build())
         }
@@ -482,30 +525,61 @@ fun InternalVideoPlayer(url: String, title: String, cookie: String, onBack: () -
                 setMediaSource(mediaSource)
                 prepare()
                 playWhenReady = true
-
-                addListener(object : Player.Listener {
-                    override fun onPlayerError(error: PlaybackException) {
-                        super.onPlayerError(error)
-                        Log.e("ExoPlayer", "Error: ${error.errorCodeName}", error)
-
-                        val msg = when (val cause = error.cause) {
-                            is HttpDataSource.InvalidResponseCodeException ->
-                                "播放失败: HTTP ${cause.responseCode}"
-                            else -> "播放失败: ${error.errorCodeName}"
-                        }
-                        Toast.makeText(context, msg, Toast.LENGTH_LONG).show()
-                    }
-                })
             }
     }
 
-    BackHandler {
-        exoPlayer.release()
-        onBack()
+    // 监听播放器状态更新 UI
+    DisposableEffect(exoPlayer) {
+        val listener = object : Player.Listener {
+            override fun onIsPlayingChanged(playing: Boolean) {
+                isPlaying = playing
+            }
+
+            override fun onPlaybackStateChanged(state: Int) {
+                if (state == Player.STATE_READY) {
+                    duration = exoPlayer.duration.coerceAtLeast(0L)
+                }
+            }
+
+            override fun onVideoSizeChanged(videoSize: VideoSize) {
+                if (videoSize.width > 0 && videoSize.height > 0) {
+                    resolution = "${videoSize.width}×${videoSize.height}"
+                }
+            }
+
+            override fun onPlayerError(error: PlaybackException) {
+                val msg = when (val cause = error.cause) {
+                    is HttpDataSource.InvalidResponseCodeException -> "播放失败: HTTP ${cause.responseCode}"
+                    else -> "播放失败: ${error.errorCodeName}"
+                }
+                Toast.makeText(context, msg, Toast.LENGTH_LONG).show()
+            }
+        }
+        exoPlayer.addListener(listener)
+        onDispose {
+            exoPlayer.removeListener(listener)
+            exoPlayer.release()
+        }
     }
 
-    DisposableEffect(Unit) {
-        onDispose { exoPlayer.release() }
+    // 进度同步
+    LaunchedEffect(isPlaying) {
+        while (isPlaying) {
+            currentPosition = exoPlayer.currentPosition
+            delay(1000)
+        }
+    }
+
+    // 自动隐藏控制栏
+    LaunchedEffect(showControls, isPlaying) {
+        if (showControls && isPlaying) {
+            delay(3000)
+            showControls = false
+        }
+    }
+
+    BackHandler {
+        onBack()
     }
 
     Box(modifier = Modifier.fillMaxSize().background(Color.Black)) {
@@ -513,35 +587,136 @@ fun InternalVideoPlayer(url: String, title: String, cookie: String, onBack: () -
             factory = { ctx ->
                 PlayerView(ctx).apply {
                     player = exoPlayer
+                    useController = false // 禁用原生控制器
                     layoutParams = FrameLayout.LayoutParams(
                         ViewGroup.LayoutParams.MATCH_PARENT,
                         ViewGroup.LayoutParams.MATCH_PARENT
                     )
-                    useController = true
                 }
             },
-            modifier = Modifier.fillMaxSize()
-        )
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .background(Brush.verticalGradient(listOf(Color(0xAA000000), Color.Transparent)))
-                .statusBarsPadding()
-                .padding(8.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            IconButton(onClick = { exoPlayer.release(); onBack() }) {
-                Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "返回", tint = Color.White)
+            modifier = Modifier.fillMaxSize().pointerInput(Unit) {
+                detectTapGestures(onTap = { showControls = !showControls })
             }
-            AppText(
-                text = title,
-                color = Color.White,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.padding(start = 8.dp, end = 16.dp)
-            )
+        )
+
+        // Compose 自定义控制层
+        AnimatedVisibility(
+            visible = showControls,
+            enter = fadeIn(),
+            exit = fadeOut(),
+            modifier = Modifier.fillMaxSize()
+        ) {
+            Box(modifier = Modifier.fillMaxSize().background(Color(0x44000000))) {
+                // 顶部：返回、标题、分辨率、旋转按钮
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .background(Brush.verticalGradient(listOf(Color(0xAA000000), Color.Transparent)))
+                        .statusBarsPadding()
+                        .padding(horizontal = 8.dp, vertical = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    IconButton(onClick = onBack) {
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "返回", tint = Color.White)
+                    }
+                    AppText(
+                        text = title,
+                        color = Color.White,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f).padding(start = 8.dp)
+                    )
+                    if (resolution.isNotBlank()) {
+                        AppText(
+                            text = resolution,
+                            color = Color.White,
+                            fontSize = 12.sp,
+                            modifier = Modifier.padding(end = 16.dp)
+                        )
+                    }
+                    IconButton(onClick = {
+                        activity?.requestedOrientation = if (isLandscape) {
+                            ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
+                        } else {
+                            ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE
+                        }
+                    }) {
+                        // 简单使用内置图标或自定义
+                        Icon(
+                            imageVector = Icons.Default.Settings, // 临时占位，可以通过自定义 vector 替换为旋转图标
+                            contentDescription = "切换横竖屏",
+                            tint = Color.White
+                        )
+                    }
+                }
+
+                // 底部：进度条、时间、播放/暂停
+                Column(
+                    modifier = Modifier
+                        .align(Alignment.BottomCenter)
+                        .fillMaxWidth()
+                        .background(Brush.verticalGradient(listOf(Color.Transparent, Color(0xAA000000))))
+                        .navigationBarsPadding()
+                        .padding(horizontal = 16.dp, vertical = 8.dp)
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        AppText(
+                            text = formatTime(currentPosition),
+                            color = Color.White,
+                            fontSize = 12.sp
+                        )
+                        Slider(
+                            value = if (duration > 0) currentPosition.toFloat() / duration else 0f,
+                            onValueChange = { 
+                                val newPos = (it * duration).toLong()
+                                exoPlayer.seekTo(newPos)
+                                currentPosition = newPos
+                            },
+                            modifier = Modifier.weight(1f).padding(horizontal = 8.dp),
+                            colors = SliderDefaults.colors(
+                                thumbColor = MaterialTheme.colorScheme.primary,
+                                activeTrackColor = MaterialTheme.colorScheme.primary,
+                                inactiveTrackColor = Color.White.copy(alpha = 0.3f)
+                            )
+                        )
+                        AppText(
+                            text = formatTime(duration),
+                            color = Color.White,
+                            fontSize = 12.sp
+                        )
+                    }
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.Center,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        // 倒放 15s (可自行加 icon，此处留白)
+                        Spacer(modifier = Modifier.width(48.dp))
+                        IconButton(onClick = {
+                            if (isPlaying) exoPlayer.pause() else exoPlayer.play()
+                        }) {
+                            Icon(
+                                imageVector = if (isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
+                                contentDescription = if (isPlaying) "暂停" else "播放",
+                                tint = Color.White,
+                                modifier = Modifier.size(48.dp)
+                            )
+                        }
+                        Spacer(modifier = Modifier.width(48.dp))
+                    }
+                }
+            }
         }
     }
+}
+
+// 格式化时间辅助函数
+private fun formatTime(ms: Long): String {
+    if (ms <= 0) return "00:00"
+    val totalSeconds = ms / 1000
+    val minutes = totalSeconds / 60
+    val seconds = totalSeconds % 60
+    return String.format("%02d:%02d", minutes, seconds)
 }
 
 @OptIn(ExperimentalFoundationApi::class)
