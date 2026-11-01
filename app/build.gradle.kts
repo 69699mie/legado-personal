@@ -12,6 +12,7 @@ plugins {
     alias(libs.plugins.baselineprofile)
 }
 
+// 核心注意：这里绝对不要写成 app/download.gradle，直接写 download.gradle 即可
 apply(from = "download.gradle")
 
 val versionPropsFile = file("version.properties")
@@ -208,7 +209,6 @@ dependencies {
     // ===== 播放器模块 =====
     implementation(libs.media3.exoplayer)
     implementation(libs.media3.datasource.okhttp)
-    // ➕ 新增：ExoPlayer 的 UI 模块和 HLS 模块，用于渲染播放控件并支持 m3u8 格式
     implementation("androidx.media3:media3-ui:1.2.1")
     implementation("androidx.media3:media3-exoplayer-hls:1.2.1")
     // =====================
@@ -236,12 +236,16 @@ dependencies {
     implementation(libs.androidsvg)
     implementation(libs.glide.svg)
     implementation(libs.glide.recyclerview)
+    
+    // ===== Ktor 模块（用于本地视频代理） =====
     implementation(libs.ktor.server.core)
     implementation(libs.ktor.server.cio)
     implementation(libs.ktor.server.content.negotiation)
     implementation(libs.ktor.serialization.gson)
     implementation(libs.ktor.server.cors)
     implementation(libs.ktor.server.websockets)
+    // ========================================
+
     implementation(libs.zxing.lite)
     implementation(libs.colorpicker)
     implementation(libs.colorpicker.compose)
