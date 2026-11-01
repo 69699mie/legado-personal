@@ -17,7 +17,6 @@ import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
-import org.json.JSONArray
 import org.json.JSONObject
 import java.net.URLEncoder
 import java.util.concurrent.TimeUnit
@@ -71,19 +70,35 @@ class VideoScraperViewModel(
     private val pathHistory = mutableListOf<String>()
     private var hasLoadedLibrary = false
 
+    // 【核心修复】用于记录勾选的文件夹 fid 对应的文件夹名字
+    private val libraryNames = mutableMapOf<String, String>()
+
     init {
         val savedLibs = videoSettingsRepository.libraryFids.split(",").filter { it.isNotBlank() }
+        val fids = mutableSetOf<String>()
+        
+        savedLibs.forEach { item ->
+            val parts = item.split(":")
+            if (parts.isNotEmpty()) {
+                val fid = parts[0]
+                fids.add(fid)
+                if (parts.size > 1) {
+                    libraryNames[fid] = parts[1] // 恢复名字
+                }
+            }
+        }
+
         _uiState.update {
             it.copy(
                 cookie = videoSettingsRepository.quarkCookie,
                 tmdbApiKey = videoSettingsRepository.tmdbApiKey,
                 tmdbBaseUrl = videoSettingsRepository.tmdbBaseUrl,
-                selectedLibraryFids = savedLibs.toSet(),
+                selectedLibraryFids = fids,
                 isLibraryMode = true
             )
         }
         fetchQuarkFiles("0")
-        if (savedLibs.isNotEmpty()) loadLibraryVideos()
+        if (fids.isNotEmpty()) loadLibraryVideos()
     }
 
     fun saveSettings(cookie: String, tmdbKey: String, baseUrl: String) {
@@ -98,10 +113,21 @@ class VideoScraperViewModel(
         loadLibraryVideos()
     }
 
-    fun toggleLibrary(fid: String) {
+    // 【核心修复】接收 file.name 并保存
+    fun toggleLibrary(fid: String, name: String) {
         val current = _uiState.value.selectedLibraryFids.toMutableSet()
-        if (current.contains(fid)) current.remove(fid) else current.add(fid)
-        videoSettingsRepository.libraryFids = current.joinToString(",")
+        if (current.contains(fid)) {
+            current.remove(fid)
+            libraryNames.remove(fid)
+        } else {
+            current.add(fid)
+            libraryNames[fid] = name
+        }
+        
+        // 保存为 fid:name 格式
+        val saveString = current.joinToString(",") { f -> "$f:${libraryNames[f] ?: ""}" }
+        videoSettingsRepository.libraryFids = saveString
+        
         _uiState.update { it.copy(selectedLibraryFids = current) }
         hasLoadedLibrary = false
         if (_uiState.value.isLibraryMode) loadLibraryVideos()
@@ -133,7 +159,10 @@ class VideoScraperViewModel(
                 val allVideos = mutableListOf<QuarkFile>()
                 withContext(Dispatchers.IO) {
                     for (fid in libs) {
-                        fetchVideosRecursively(cookie, fid, "未分类", emptyList(), allVideos)
+                        // 【核心修复】从 map 里拿到对应的文件夹名字，作为初始路径
+                        val folderName = libraryNames[fid] ?: ""
+                        val initialPath = if (folderName.isNotBlank()) listOf(folderName) else emptyList()
+                        fetchVideosRecursively(cookie, fid, initialPath, allVideos)
                     }
                 }
                 val groupedSeries = aggregateToSeries(allVideos)
@@ -151,17 +180,14 @@ class VideoScraperViewModel(
         }
     }
 
-    // 【核心修复：绝对严谨的聚合与分类逻辑】
     private fun aggregateToSeries(videos: List<QuarkFile>): List<MediaSeries> {
         val seriesMap = mutableMapOf<String, MediaSeries>()
         
-        // 强分类词典
         val categoryMap = mapOf(
             "电视剧" to "剧集", "剧集" to "剧集",
             "动漫" to "动漫", "动画" to "动漫",
             "电影" to "电影", "纪录片" to "纪录片", "综艺" to "综艺"
         )
-        // 无效文件夹词典（提取剧名时需过滤）
         val excludeFolders = categoryMap.keys + setOf("未观看", "已观看", "其他", "未分类")
 
         for (v in videos) {
@@ -172,7 +198,7 @@ class VideoScraperViewModel(
             for (pathNode in v.folderPath) {
                 if (categoryMap.containsKey(pathNode)) {
                     finalCategory = categoryMap[pathNode]!!
-                    break // 找到分类节点立刻锁定
+                    break 
                 }
             }
 
@@ -181,14 +207,12 @@ class VideoScraperViewModel(
             var baseTitle = ""
             
             if (meaningfulPaths.isNotEmpty()) {
-                // 如果最后一个文件夹是“第一季”这种，往上找一层
                 if (VideoFileNameParser.isSeasonFolder(meaningfulPaths.last())) {
                     baseTitle = if (meaningfulPaths.size >= 2) meaningfulPaths[meaningfulPaths.size - 2] else meaningfulPaths.last()
                 } else {
                     baseTitle = meaningfulPaths.last()
                 }
             } else {
-                // 如果路径全被过滤了（比如直接放在“电视剧”根目录），用解析出来的文件名
                 baseTitle = parsed.title
             }
 
@@ -208,7 +232,7 @@ class VideoScraperViewModel(
                     title = baseTitle,
                     originalParsedTitle = baseTitle,
                     year = parsed.year,
-                    category = finalCategory, // 使用强制判定的分类
+                    category = finalCategory, 
                     videos = listOf(v)
                 )
             }
@@ -219,7 +243,6 @@ class VideoScraperViewModel(
     private suspend fun fetchVideosRecursively(
         cookie: String,
         parentFid: String,
-        category: String,
         currentPath: List<String>,
         resultList: MutableList<QuarkFile>
     ) {
@@ -241,12 +264,13 @@ class VideoScraperViewModel(
                                     val isFolder = item.optBoolean("dir", false)
                                     val size = item.optLong("size", 0L)
                                     if (isFolder) {
-                                        fetchVideosRecursively(cookie, fileFid, category, currentPath + fileName, resultList)
+                                        fetchVideosRecursively(cookie, fileFid, currentPath + fileName, resultList)
                                     } else {
                                         val parentFolder = currentPath.lastOrNull()
                                         val parsed = VideoFileNameParser.parse(fileName, parentFolder)
                                         if (parsed.isVideo) {
-                                            val qf = QuarkFile(fileFid, fileName, false, category, currentPath, parsed, size)
+                                            // 这里的分类填“未分类”，真正的分类在 aggregateToSeries 里算
+                                            val qf = QuarkFile(fileFid, fileName, false, "未分类", currentPath, parsed, size)
                                             resultList.add(qf)
                                         }
                                     }
@@ -266,13 +290,11 @@ class VideoScraperViewModel(
             val updatedList = seriesList.map { series ->
                 val match = searchTmdbWithFallback(series.originalParsedTitle, series.year, apiKey, baseUrl)
                 if (match != null) {
-                    // 名称强制中文兜底
                     var finalTitle = match.title
                     if (finalTitle.matches(Regex("^[a-zA-Z0-9\\s\\p{Punct}]+$")) && series.originalParsedTitle.any { it.code > 127 }) {
                         finalTitle = series.originalParsedTitle
                     }
 
-                    // 【核心修复】分类逻辑：如果路径已经锁定了分类（不是“未分类”），则拒绝 TMDB 覆盖
                     var finalCategory = series.category
                     if (finalCategory == "未分类") {
                         finalCategory = when {
@@ -290,7 +312,7 @@ class VideoScraperViewModel(
                     }
                     series.copy(
                         title = finalTitle,
-                        category = finalCategory, // 覆盖分类
+                        category = finalCategory,
                         posterUrl = match.posterUrl,
                         overview = match.overview,
                         rating = match.rating,
