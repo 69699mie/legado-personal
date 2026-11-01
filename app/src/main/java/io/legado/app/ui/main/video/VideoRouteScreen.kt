@@ -1,6 +1,10 @@
 package io.legado.app.ui.main.video
 
+import android.annotation.SuppressLint
 import android.view.ViewGroup
+import android.webkit.CookieManager
+import android.webkit.WebView
+import android.webkit.WebViewClient
 import android.widget.FrameLayout
 import android.widget.Toast
 import androidx.activity.compose.BackHandler
@@ -45,6 +49,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MediaMetadata
@@ -71,6 +76,7 @@ fun VideoRouteScreen(
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val context = LocalContext.current
     var showSettingsDialog by remember { mutableStateOf(false) }
+    var showWebLoginDialog by remember { mutableStateOf(false) }
     var showManualScrapeDialog by remember { mutableStateOf(false) }
     var manualScrapeSeries by remember { mutableStateOf<MediaSeries?>(null) }
     var viewAllCategory by remember { mutableStateOf<String?>(null) }
@@ -260,14 +266,27 @@ fun VideoRouteScreen(
         }
     }
 
+    // 设置弹窗
     if (showSettingsDialog) {
         var inputCookie by remember { mutableStateOf(uiState.cookie) }
         var inputTmdbKey by remember { mutableStateOf(uiState.tmdbApiKey) }
         var inputTmdbUrl by remember { mutableStateOf(uiState.tmdbBaseUrl) }
         Dialog(onDismissRequest = { showSettingsDialog = false }) {
             Column(modifier = Modifier.background(Color.White).padding(16.dp).fillMaxWidth()) {
-                AppText(text = "夸克 Cookie")
-                OutlinedTextField(value = inputCookie, onValueChange = { inputCookie = it }, modifier = Modifier.padding(vertical = 8.dp), visualTransformation = PasswordVisualTransformation(), maxLines = 3)
+                Row(modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                    AppText(text = "夸克登录状态", fontWeight = FontWeight.Bold)
+                    Button(onClick = { showWebLoginDialog = true }, contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp)) {
+                        AppText("网页扫码登录")
+                    }
+                }
+                OutlinedTextField(
+                    value = inputCookie, 
+                    onValueChange = { inputCookie = it }, 
+                    modifier = Modifier.padding(vertical = 8.dp), 
+                    visualTransformation = PasswordVisualTransformation(), 
+                    maxLines = 2,
+                    label = { AppText("手动填写 Cookie（可选）") }
+                )
                 AppText(text = "TMDB API Key (v3 auth)")
                 OutlinedTextField(value = inputTmdbKey, onValueChange = { inputTmdbKey = it }, modifier = Modifier.padding(vertical = 8.dp), visualTransformation = PasswordVisualTransformation(), maxLines = 1)
                 AppText(text = "TMDB API 代理地址")
@@ -275,6 +294,25 @@ fun VideoRouteScreen(
                 OutlinedButton(onClick = { viewModel.saveSettings(inputCookie, inputTmdbKey, inputTmdbUrl); showSettingsDialog = false }, modifier = Modifier.align(Alignment.End)) {
                     AppText("保存并刷新")
                 }
+            }
+        }
+    }
+
+    // 网页扫码登录弹窗
+    if (showWebLoginDialog) {
+        Dialog(
+            onDismissRequest = { showWebLoginDialog = false },
+            properties = DialogProperties(usePlatformDefaultWidth = false)
+        ) {
+            Box(modifier = Modifier.fillMaxSize().background(Color.White).statusBarsPadding()) {
+                WebLoginView(
+                    onLoginSuccess = { cookie ->
+                        viewModel.loginWithCapturedCookie(cookie)
+                        showWebLoginDialog = false
+                        Toast.makeText(context, "登录成功！", Toast.LENGTH_SHORT).show()
+                    },
+                    onCancel = { showWebLoginDialog = false }
+                )
             }
         }
     }
@@ -337,6 +375,67 @@ fun VideoRouteScreen(
     }
 }
 
+// 内嵌网页登录组件
+@SuppressLint("SetJavaScriptEnabled")
+@Composable
+fun WebLoginView(onLoginSuccess: (String) -> Unit, onCancel: () -> Unit) {
+    val context = LocalContext.current
+    var webViewRef by remember { mutableStateOf<WebView?>(null) }
+
+    DisposableEffect(Unit) {
+        onDispose {
+            webViewRef?.destroy()
+            webViewRef = null
+        }
+    }
+
+    Column(modifier = Modifier.fillMaxSize()) {
+        // 简易标题栏
+        Row(
+            modifier = Modifier.fillMaxWidth().background(Color(0xFFF5F5F5)).padding(8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween
+        ) {
+            TextButton(onClick = onCancel) { AppText("取消", color = Color.Gray) }
+            AppText("夸克扫码/账号登录", fontWeight = FontWeight.Bold)
+            TextButton(onClick = {
+                val cookie = CookieManager.getInstance().getCookie("https://pan.quark.cn/")
+                if (!cookie.isNullOrBlank() && cookie.contains("__uid=") && cookie.contains("__pus=")) {
+                    onLoginSuccess(cookie)
+                } else {
+                    Toast.makeText(context, "尚未检测到有效登录，请完成扫码或授权", Toast.LENGTH_SHORT).show()
+                }
+            }) { AppText("完成登录", color = MaterialTheme.colorScheme.primary) }
+        }
+
+        AndroidView(
+            modifier = Modifier.weight(1f).fillMaxWidth(),
+            factory = { ctx ->
+                WebView(ctx).apply {
+                    webViewRef = this
+                    settings.javaScriptEnabled = true
+                    settings.domStorageEnabled = true
+                    settings.databaseEnabled = true
+                    CookieManager.getInstance().setAcceptCookie(true)
+                    CookieManager.getInstance().setAcceptThirdPartyCookies(this, true)
+
+                    webViewClient = object : WebViewClient() {
+                        override fun onPageFinished(view: WebView?, url: String?) {
+                            super.onPageFinished(view, url)
+                            // 每次页面加载完毕，静默检测一次 Cookie 是否已生成
+                            val cookie = CookieManager.getInstance().getCookie("https://pan.quark.cn/")
+                            if (!cookie.isNullOrBlank() && cookie.contains("__uid=") && cookie.contains("__pus=")) {
+                                onLoginSuccess(cookie)
+                            }
+                        }
+                    }
+                    loadUrl("https://pan.quark.cn/")
+                }
+            }
+        )
+    }
+}
+
 @Composable
 fun InternalVideoPlayer(url: String, title: String, cookie: String, onBack: () -> Unit) {
     val context = LocalContext.current
@@ -366,12 +465,11 @@ fun InternalVideoPlayer(url: String, title: String, cookie: String, onBack: () -
         ExoPlayer.Builder(context)
             .setMediaSourceFactory(DefaultMediaSourceFactory(okHttpDataSourceFactory))
             .build().apply {
-                // 【修复标题】构建 MediaItem 时，明确设置 MediaMetadata
                 val mediaItem = MediaItem.Builder()
                     .setUri(url)
                     .setMediaMetadata(
                         MediaMetadata.Builder()
-                            .setTitle(title) // 这里设置为完整的 "狂飙 第1集"
+                            .setTitle(title)
                             .build()
                     )
                     .build()
