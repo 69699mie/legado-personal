@@ -1,5 +1,6 @@
 plugins {
-    alias(libs.plugins.android.library)
+    // 改为直接加载，避免与根项目的 AGP 版本产生冲突
+    id("com.android.library")
 }
 
 android {
