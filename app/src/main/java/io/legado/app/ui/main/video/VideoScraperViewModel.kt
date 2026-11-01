@@ -26,6 +26,7 @@ import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONArray
 import org.json.JSONObject
+import java.net.ServerSocket
 import java.net.URLDecoder
 import java.net.URLEncoder
 import java.util.concurrent.TimeUnit
@@ -75,12 +76,21 @@ class VideoScraperViewModel(
         .build()
 
     // ========== Ktor 本地代理 ==========
-    private var proxyServer: ApplicationEngine? = null
+    // 核心修复：使用 EmbeddedServer 泛型或 Any 接收，避免 API 版本兼容问题
+    private var proxyServer: EmbeddedServer<*, *>? = null
     private var proxyPort: Int = 0
 
     private fun startProxyServer() {
         if (proxyServer != null) return
-        proxyServer = embeddedServer(CIO, port = 0) {
+        
+        // 核心修复：直接通过原生 Socket 获取一个空闲端口，百分百兼容
+        proxyPort = try {
+            ServerSocket(0).use { it.localPort }
+        } catch (e: Exception) {
+            8080
+        }
+
+        proxyServer = embeddedServer(CIO, port = proxyPort) {
             routing {
                 get("/play") {
                     val encodedUrl = call.request.queryParameters["url"]
@@ -123,10 +133,6 @@ class VideoScraperViewModel(
                 }
             }
         }.start(wait = false)
-
-        proxyPort = runCatching {
-            (proxyServer as? CIOApplicationEngine)?.environment?.connectors?.firstOrNull()?.port
-        }.getOrNull() ?: 0
     }
 
     private fun stopProxyServer() {
@@ -253,7 +259,6 @@ class VideoScraperViewModel(
             var baseTitle = ""
             var searchKeyword = ""
 
-            // 核心修复：如果找不到有效子文件夹（视频直接扔在“电影”目录下），使用解析出的名字，不再跳过！
             if (validFolders.isEmpty()) {
                 baseTitle = parsed.title
                 searchKeyword = parsed.title
