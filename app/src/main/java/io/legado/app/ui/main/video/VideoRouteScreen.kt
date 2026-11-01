@@ -55,7 +55,9 @@ import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.ui.PlayerView
 import coil3.compose.AsyncImage
 import io.legado.app.ui.widget.components.text.AppText
+import okhttp3.Interceptor
 import okhttp3.OkHttpClient
+import okhttp3.Response
 import org.koin.androidx.compose.koinViewModel
 import java.util.concurrent.TimeUnit
 
@@ -338,22 +340,26 @@ fun VideoRouteScreen(
 fun InternalVideoPlayer(url: String, title: String, cookie: String, onBack: () -> Unit) {
     val context = LocalContext.current
     val exoPlayer = remember {
+        // 【核心修复】加入全局拦截器，确保 m3u8 的每一个 ts 切片请求都携带 Cookie 和 Referer
         val okHttpClient = OkHttpClient.Builder()
             .connectTimeout(15, TimeUnit.SECONDS)
             .readTimeout(15, TimeUnit.SECONDS)
             .followRedirects(true)
             .followSslRedirects(true)
+            .addInterceptor(object : Interceptor {
+                override fun intercept(chain: Interceptor.Chain): Response {
+                    val originalRequest = chain.request()
+                    val newRequest = originalRequest.newBuilder()
+                        .header("Referer", "https://drive.quark.cn/") // 必须是 drive.quark.cn
+                        .header("Cookie", cookie)
+                        .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) quark-cloud-drive/2.5.20 Chrome/100.0.4896.160 Electron/18.3.5.4-b478491100 Safari/537.36 Channel/pckk_other_ch")
+                        .build()
+                    return chain.proceed(newRequest)
+                }
+            })
             .build()
 
         val okHttpDataSourceFactory = OkHttpDataSource.Factory(okHttpClient)
-            // 【核心修复】UA 和 v2/play 请求一致，防止夸克拦截播放流
-            .setUserAgent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) quark-cloud-drive/2.5.20 Chrome/100.0.4896.160 Electron/18.3.5.4-b478491100 Safari/537.36 Channel/pckk_other_ch")
-            .setDefaultRequestProperties(
-                mapOf(
-                    "Referer" to "https://pan.quark.cn/",
-                    "Cookie" to cookie
-                )
-            )
 
         ExoPlayer.Builder(context)
             .setMediaSourceFactory(DefaultMediaSourceFactory(okHttpDataSourceFactory))
