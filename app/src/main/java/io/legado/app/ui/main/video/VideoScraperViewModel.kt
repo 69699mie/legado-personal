@@ -43,7 +43,7 @@ data class MediaSeries(
     val rating: String? = null,
     val videos: List<QuarkFile> = emptyList(),
     val episodeTitles: Map<Int, String> = emptyMap(),
-    val episodeStills: Map<Int, String> = emptyMap() // 新增：单集截图
+    val episodeStills: Map<Int, String> = emptyMap()
 )
 
 data class TmdbSearchResult(
@@ -104,6 +104,17 @@ class VideoScraperViewModel(
         videoSettingsRepository.tmdbApiKey = tmdbKey
         videoSettingsRepository.tmdbBaseUrl = cleanBaseUrl
         _uiState.update { it.copy(cookie = cleanCookie, tmdbApiKey = tmdbKey, tmdbBaseUrl = cleanBaseUrl) }
+        fetchQuarkFiles("0")
+        hasLoadedLibrary = false
+        loadLibraryVideos()
+    }
+
+    // 新增：接收 WebView 扫码登录捕获的 Cookie
+    fun loginWithCapturedCookie(capturedCookie: String) {
+        if (capturedCookie.isBlank()) return
+        val cleanCookie = capturedCookie.replace("\n", "").replace("\r", "").trim()
+        videoSettingsRepository.quarkCookie = cleanCookie
+        _uiState.update { it.copy(cookie = cleanCookie) }
         fetchQuarkFiles("0")
         hasLoadedLibrary = false
         loadLibraryVideos()
@@ -394,7 +405,6 @@ class VideoScraperViewModel(
         return null
     }
 
-    // 返回单集标题和截图
     private fun fetchEpisodeData(tvId: Int, season: Int, apiKey: String, baseUrl: String): Pair<Map<Int, String>, Map<Int, String>> {
         val titles = mutableMapOf<Int, String>()
         val stills = mutableMapOf<Int, String>()
@@ -498,7 +508,6 @@ class VideoScraperViewModel(
         }
     }
 
-    // 修复播放逻辑：改用 /file/download 接口拿原画直链，并且传入 series 拼接漂亮标题
     fun playVideo(context: Context, series: MediaSeries, file: QuarkFile) {
         val cookie = _uiState.value.cookie
         val epNum = file.parsedInfo?.episode
@@ -514,6 +523,7 @@ class VideoScraperViewModel(
         viewModelScope.launch {
             val url = withContext(Dispatchers.IO) {
                 try {
+                    // 回退到最稳定的 download 接口获取原文件直链
                     val apiUrl = "https://drive.quark.cn/1/clouddrive/file/download?pr=ucpro&fr=pc"
                     val jsonBody = JSONObject().apply {
                         put("fids", JSONArray().put(file.fid))
@@ -524,7 +534,7 @@ class VideoScraperViewModel(
                         .post(body)
                         .header("Cookie", cookie)
                         .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) quark-cloud-drive/2.5.20 Chrome/100.0.4896.160 Electron/18.3.5.4-b478491100 Safari/537.36 Channel/pckk_other_ch")
-                        .header("Referer", "https://drive.quark.cn/") 
+                        .header("Referer", "https://pan.quark.cn/") 
                         .header("Accept", "application/json, text/plain, */*")
                         .build()
 
@@ -554,7 +564,7 @@ class VideoScraperViewModel(
             if (url != null) {
                 _uiState.update { it.copy(playUrl = url) }
             } else {
-                Toast.makeText(context, "获取播放流失败，请检查Cookie或文件状态", Toast.LENGTH_LONG).show()
+                Toast.makeText(context, "获取播放流失败，请检查登录状态或文件是否存在", Toast.LENGTH_LONG).show()
             }
         }
     }
@@ -566,7 +576,7 @@ class VideoScraperViewModel(
     fun fetchQuarkFiles(fid: String = "0", isBack: Boolean = false) {
         val cookie = _uiState.value.cookie
         if (cookie.isBlank()) {
-            _uiState.update { it.copy(errorMsg = "请先设置 Cookie") }
+            _uiState.update { it.copy(errorMsg = "请先设置 Cookie 或扫码登录") }
             return
         }
         if (fid == "0") pathHistory.clear() else if (!isBack && _uiState.value.currentFid != fid) pathHistory.add(_uiState.value.currentFid)
@@ -601,7 +611,7 @@ class VideoScraperViewModel(
                         }
                         _uiState.update { it.copy(fileList = files) }
                     } else {
-                        _uiState.update { it.copy(errorMsg = "获取失败") }
+                        _uiState.update { it.copy(errorMsg = "获取失败，Cookie 可能已过期") }
                     }
                 }
             } catch (e: Exception) {
