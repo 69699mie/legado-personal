@@ -1,4 +1,3 @@
-// app/download.gradle
 def cronetVersion = project.hasProperty("CronetVersion") ? project.property("CronetVersion") : "128.0.6613.40"
 def cronetMainVersion = project.hasProperty("CronetMainVersion") ? project.property("CronetMainVersion") : "128.0.6613.40"
 
@@ -7,25 +6,25 @@ if (!cronetDir.exists()) {
     cronetDir.mkdirs()
 }
 
-// 关键修复：加上 ext. 让闭包可以访问到这个方法
-ext.downloadFile = { String urlStr, File dest ->
-    if (dest.exists()) return
-    println "Downloading $urlStr to $dest"
-    new URL(urlStr).withInputStream { i ->
-        dest.withOutputStream { o ->
-            o << i
-        }
-    }
-}
-
 def baseUrl = "https://raw.githubusercontent.com/gedoor/legado/master/app/cronetlib/"
 def cronetJar = new File(cronetDir, "cronet-api-${cronetVersion}.jar")
 def cronetAar = new File(cronetDir, "cronet-impl-${cronetMainVersion}.aar")
 
 tasks.register("downloadCronet") {
     doLast {
-        if (!cronetJar.exists()) downloadFile(baseUrl + cronetJar.name, cronetJar)
-        if (!cronetAar.exists()) downloadFile(baseUrl + cronetAar.name, cronetAar)
+        // 直接在这里写下载逻辑，不调用外部函数，彻底解决作用域报错
+        if (!cronetJar.exists()) {
+            println "Downloading ${cronetJar.name}..."
+            new URL(baseUrl + cronetJar.name).withInputStream { i ->
+                cronetJar.withOutputStream { o -> o << i }
+            }
+        }
+        if (!cronetAar.exists()) {
+            println "Downloading ${cronetAar.name}..."
+            new URL(baseUrl + cronetAar.name).withInputStream { i ->
+                cronetAar.withOutputStream { o -> o << i }
+            }
+        }
     }
 }
 
