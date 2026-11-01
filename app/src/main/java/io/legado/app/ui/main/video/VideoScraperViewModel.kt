@@ -26,7 +26,7 @@ data class QuarkFile(
     val fid: String,
     val name: String,
     val isFolder: Boolean,
-    val category: String = "其他",
+    val category: String = "未分类",
     val folderPath: List<String> = emptyList(),
     val parsedInfo: ParsedVideoName? = null,
     val size: Long = 0L
@@ -151,30 +151,44 @@ class VideoScraperViewModel(
         }
     }
 
-    // 【核心修复：极度严谨的系列聚合逻辑】
+    // 【核心修复：绝对严谨的聚合与分类逻辑】
     private fun aggregateToSeries(videos: List<QuarkFile>): List<MediaSeries> {
         val seriesMap = mutableMapOf<String, MediaSeries>()
-        // 已知的网盘分类根目录，不参与剧名判断
-        val rootLibNames = setOf("电视剧", "动漫", "电影", "纪录片", "综艺", "未分类", "其他")
+        
+        // 强分类词典
+        val categoryMap = mapOf(
+            "电视剧" to "剧集", "剧集" to "剧集",
+            "动漫" to "动漫", "动画" to "动漫",
+            "电影" to "电影", "纪录片" to "纪录片", "综艺" to "综艺"
+        )
+        // 无效文件夹词典（提取剧名时需过滤）
+        val excludeFolders = categoryMap.keys + setOf("未观看", "已观看", "其他", "未分类")
 
         for (v in videos) {
             val parsed = v.parsedInfo ?: continue
-            var baseTitle = ""
             
-            // 1. 如果有文件夹层级，绝不相信文件名，往上追溯找真正的“剧名”
-            if (v.folderPath.isNotEmpty()) {
-                // 过滤掉“电视剧”、“动漫”等根目录
-                val validPaths = v.folderPath.filter { !rootLibNames.contains(it) }
-                if (validPaths.isNotEmpty()) {
-                    // validPaths 比如：["低智商犯罪", "13-14"]，第一个元素必定是剧名
-                    baseTitle = validPaths.first() 
-                } else {
-                    baseTitle = v.folderPath.last()
+            // 1. 判定分类（路径绝对优先）
+            var finalCategory = "未分类"
+            for (pathNode in v.folderPath) {
+                if (categoryMap.containsKey(pathNode)) {
+                    finalCategory = categoryMap[pathNode]!!
+                    break // 找到分类节点立刻锁定
                 }
             }
+
+            // 2. 提取有效路径，用于确定剧名
+            val meaningfulPaths = v.folderPath.filter { !excludeFolders.contains(it) }
+            var baseTitle = ""
             
-            // 2. 如果真的一点文件夹层级都没有（文件直接扔在根目录），才用文件名兜底
-            if (baseTitle.isBlank()) {
+            if (meaningfulPaths.isNotEmpty()) {
+                // 如果最后一个文件夹是“第一季”这种，往上找一层
+                if (VideoFileNameParser.isSeasonFolder(meaningfulPaths.last())) {
+                    baseTitle = if (meaningfulPaths.size >= 2) meaningfulPaths[meaningfulPaths.size - 2] else meaningfulPaths.last()
+                } else {
+                    baseTitle = meaningfulPaths.last()
+                }
+            } else {
+                // 如果路径全被过滤了（比如直接放在“电视剧”根目录），用解析出来的文件名
                 baseTitle = parsed.title
             }
 
@@ -182,7 +196,7 @@ class VideoScraperViewModel(
                 baseTitle = parsed.title
             }
 
-            // 3. 强行合并：只要是同一个 baseTitle，全部打包进同一个 MediaSeries
+            // 3. 强行合并
             val key = baseTitle
             if (seriesMap.containsKey(key)) {
                 val exist = seriesMap[key]!!
@@ -194,7 +208,7 @@ class VideoScraperViewModel(
                     title = baseTitle,
                     originalParsedTitle = baseTitle,
                     year = parsed.year,
-                    category = "未分类",
+                    category = finalCategory, // 使用强制判定的分类
                     videos = listOf(v)
                 )
             }
@@ -252,16 +266,21 @@ class VideoScraperViewModel(
             val updatedList = seriesList.map { series ->
                 val match = searchTmdbWithFallback(series.originalParsedTitle, series.year, apiKey, baseUrl)
                 if (match != null) {
+                    // 名称强制中文兜底
                     var finalTitle = match.title
                     if (finalTitle.matches(Regex("^[a-zA-Z0-9\\s\\p{Punct}]+$")) && series.originalParsedTitle.any { it.code > 127 }) {
                         finalTitle = series.originalParsedTitle
                     }
 
-                    val newCategory = when {
-                        match.mediaType == "movie" -> "电影"
-                        match.genreIds.contains(16) -> "动漫"
-                        match.mediaType == "tv" -> "剧集"
-                        else -> series.category
+                    // 【核心修复】分类逻辑：如果路径已经锁定了分类（不是“未分类”），则拒绝 TMDB 覆盖
+                    var finalCategory = series.category
+                    if (finalCategory == "未分类") {
+                        finalCategory = when {
+                            match.mediaType == "movie" -> "电影"
+                            match.genreIds.contains(16) -> "动漫"
+                            match.mediaType == "tv" -> "剧集"
+                            else -> "未分类"
+                        }
                     }
 
                     var epTitles: Map<Int, String> = emptyMap()
@@ -271,7 +290,7 @@ class VideoScraperViewModel(
                     }
                     series.copy(
                         title = finalTitle,
-                        category = newCategory,
+                        category = finalCategory, // 覆盖分类
                         posterUrl = match.posterUrl,
                         overview = match.overview,
                         rating = match.rating,
@@ -460,9 +479,8 @@ class VideoScraperViewModel(
                         .url(apiUrl)
                         .post(body)
                         .header("Cookie", cookie)
-                        // 【核心修复】使用与 API 请求完全一致的桌面端 UA，防止跨域拦截
                         .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) quark-cloud-drive/2.5.20 Chrome/100.0.4896.160 Electron/18.3.5.4-b478491100 Safari/537.36 Channel/pckk_other_ch")
-                        .header("Referer", "https://drive.quark.cn/") // 必须是 drive.quark.cn
+                        .header("Referer", "https://drive.quark.cn/") 
                         .header("Accept", "application/json, text/plain, */*")
                         .build()
 
