@@ -109,7 +109,7 @@ class VideoScraperViewModel(
         loadLibraryVideos()
     }
 
-    // 新增：接收 WebView 扫码登录捕获的 Cookie
+    // 接收 WebView 扫码登录捕获的 Cookie
     fun loginWithCapturedCookie(capturedCookie: String) {
         if (capturedCookie.isBlank()) return
         val cleanCookie = capturedCookie.replace("\n", "").replace("\r", "").trim()
@@ -508,6 +508,7 @@ class VideoScraperViewModel(
         }
     }
 
+    // 【核心修复】使用 v2/play 获取转码 m3u8 流，解决黑屏问题
     fun playVideo(context: Context, series: MediaSeries, file: QuarkFile) {
         val cookie = _uiState.value.cookie
         val epNum = file.parsedInfo?.episode
@@ -523,10 +524,11 @@ class VideoScraperViewModel(
         viewModelScope.launch {
             val url = withContext(Dispatchers.IO) {
                 try {
-                    // 回退到最稳定的 download 接口获取原文件直链
-                    val apiUrl = "https://drive.quark.cn/1/clouddrive/file/download?pr=ucpro&fr=pc"
+                    val apiUrl = "https://drive.quark.cn/1/clouddrive/file/v2/play?pr=ucpro&fr=pc"
                     val jsonBody = JSONObject().apply {
-                        put("fids", JSONArray().put(file.fid))
+                        put("fid", file.fid)
+                        put("resolutions", "normal,low,high,super,2k,4k")
+                        put("supports", "fmp4,m3u8")
                     }
                     val body = jsonBody.toString().toRequestBody("application/json".toMediaType())
                     val request = Request.Builder()
@@ -543,9 +545,21 @@ class VideoScraperViewModel(
                         if (!resBody.isNullOrBlank()) {
                             val json = JSONObject(resBody)
                             if (json.optInt("code", -1) == 0) {
-                                val data = json.optJSONArray("data")
-                                if (data != null && data.length() > 0) {
-                                    return@withContext data.getJSONObject(0).optString("download_url")
+                                val videoList = json.optJSONObject("data")?.optJSONArray("video_list")
+                                if (videoList != null && videoList.length() > 0) {
+                                    var bestUrl: String? = null
+                                    for (i in 0 until videoList.length()) {
+                                        val video = videoList.getJSONObject(i)
+                                        if (video.optBoolean("accessable", false)) {
+                                            val videoInfo = video.optJSONObject("video_info")
+                                            val videoUrl = videoInfo?.optString("url")
+                                            if (!videoUrl.isNullOrBlank()) {
+                                                bestUrl = videoUrl
+                                                break
+                                            }
+                                        }
+                                    }
+                                    if (bestUrl != null) return@withContext bestUrl
                                 }
                             } else {
                                 val msg = json.optString("message")
