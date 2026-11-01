@@ -69,30 +69,25 @@ class VideoScraperViewModel(
 
     private val pathHistory = mutableListOf<String>()
     private var hasLoadedLibrary = false
-
-    // 【核心修复】用于记录勾选的文件夹 fid 对应的文件夹名字
     private val libraryNames = mutableMapOf<String, String>()
 
     init {
         val savedLibs = videoSettingsRepository.libraryFids.split(",").filter { it.isNotBlank() }
         val fids = mutableSetOf<String>()
-        
         savedLibs.forEach { item ->
             val parts = item.split(":")
             if (parts.isNotEmpty()) {
                 val fid = parts[0]
                 fids.add(fid)
-                if (parts.size > 1) {
-                    libraryNames[fid] = parts[1] // 恢复名字
-                }
+                if (parts.size > 1) libraryNames[fid] = parts[1]
             }
         }
-
         _uiState.update {
             it.copy(
                 cookie = videoSettingsRepository.quarkCookie,
                 tmdbApiKey = videoSettingsRepository.tmdbApiKey,
-                tmdbBaseUrl = videoSettingsRepository.tmdbBaseUrl,
+                // 默认值改为常用代理，如果不填就用这个
+                tmdbBaseUrl = videoSettingsRepository.tmdbBaseUrl.ifBlank { "https://tmdbimg.quarkalist.xyz" },
                 selectedLibraryFids = fids,
                 isLibraryMode = true
             )
@@ -103,7 +98,7 @@ class VideoScraperViewModel(
 
     fun saveSettings(cookie: String, tmdbKey: String, baseUrl: String) {
         val cleanCookie = cookie.replace("\n", "").replace("\r", "").trim()
-        val cleanBaseUrl = baseUrl.removeSuffix("/").trim()
+        val cleanBaseUrl = baseUrl.removeSuffix("/").trim().ifBlank { "https://tmdbimg.quarkalist.xyz" }
         videoSettingsRepository.quarkCookie = cleanCookie
         videoSettingsRepository.tmdbApiKey = tmdbKey
         videoSettingsRepository.tmdbBaseUrl = cleanBaseUrl
@@ -113,7 +108,6 @@ class VideoScraperViewModel(
         loadLibraryVideos()
     }
 
-    // 【核心修复】接收 file.name 并保存
     fun toggleLibrary(fid: String, name: String) {
         val current = _uiState.value.selectedLibraryFids.toMutableSet()
         if (current.contains(fid)) {
@@ -123,11 +117,8 @@ class VideoScraperViewModel(
             current.add(fid)
             libraryNames[fid] = name
         }
-        
-        // 保存为 fid:name 格式
         val saveString = current.joinToString(",") { f -> "$f:${libraryNames[f] ?: ""}" }
         videoSettingsRepository.libraryFids = saveString
-        
         _uiState.update { it.copy(selectedLibraryFids = current) }
         hasLoadedLibrary = false
         if (_uiState.value.isLibraryMode) loadLibraryVideos()
@@ -159,7 +150,6 @@ class VideoScraperViewModel(
                 val allVideos = mutableListOf<QuarkFile>()
                 withContext(Dispatchers.IO) {
                     for (fid in libs) {
-                        // 【核心修复】从 map 里拿到对应的文件夹名字，作为初始路径
                         val folderName = libraryNames[fid] ?: ""
                         val initialPath = if (folderName.isNotBlank()) listOf(folderName) else emptyList()
                         fetchVideosRecursively(cookie, fid, initialPath, allVideos)
@@ -193,7 +183,6 @@ class VideoScraperViewModel(
         for (v in videos) {
             val parsed = v.parsedInfo ?: continue
             
-            // 1. 判定分类（路径绝对优先）
             var finalCategory = "未分类"
             for (pathNode in v.folderPath) {
                 if (categoryMap.containsKey(pathNode)) {
@@ -202,7 +191,6 @@ class VideoScraperViewModel(
                 }
             }
 
-            // 2. 提取有效路径，用于确定剧名
             val meaningfulPaths = v.folderPath.filter { !excludeFolders.contains(it) }
             var baseTitle = ""
             
@@ -220,7 +208,6 @@ class VideoScraperViewModel(
                 baseTitle = parsed.title
             }
 
-            // 3. 强行合并
             val key = baseTitle
             if (seriesMap.containsKey(key)) {
                 val exist = seriesMap[key]!!
@@ -269,7 +256,6 @@ class VideoScraperViewModel(
                                         val parentFolder = currentPath.lastOrNull()
                                         val parsed = VideoFileNameParser.parse(fileName, parentFolder)
                                         if (parsed.isVideo) {
-                                            // 这里的分类填“未分类”，真正的分类在 aggregateToSeries 里算
                                             val qf = QuarkFile(fileFid, fileName, false, "未分类", currentPath, parsed, size)
                                             resultList.add(qf)
                                         }
@@ -285,6 +271,7 @@ class VideoScraperViewModel(
         }
     }
 
+    // 【核心修复：完美适配代理，并利用 TMDB 兜底分类】
     private fun scrapeSeriesPosters(seriesList: List<MediaSeries>, apiKey: String, baseUrl: String) {
         viewModelScope.launch(Dispatchers.IO) {
             val updatedList = seriesList.map { series ->
@@ -296,6 +283,7 @@ class VideoScraperViewModel(
                     }
 
                     var finalCategory = series.category
+                    // 【核心修复】如果路径没有分类，通过 TMDB 智能分类
                     if (finalCategory == "未分类") {
                         finalCategory = when {
                             match.mediaType == "movie" -> "电影"
@@ -307,7 +295,8 @@ class VideoScraperViewModel(
 
                     var epTitles: Map<Int, String> = emptyMap()
                     val season = series.videos.firstOrNull()?.parsedInfo?.season ?: 1
-                    if (series.videos.size > 1 || series.originalParsedTitle.contains("季")) {
+                    // 只要 TMDB 识别出来了，且不是电影，就去拉取单集标题
+                    if (match.mediaType != "movie" && (series.videos.size > 1 || series.originalParsedTitle.contains("季"))) {
                         epTitles = fetchEpisodeTitles(match.id, season, apiKey, baseUrl)
                     }
                     series.copy(
@@ -341,7 +330,11 @@ class VideoScraperViewModel(
     private fun searchTmdb(title: String, year: Int?, apiKey: String, baseUrl: String, language: String): TmdbSearchResult? {
         try {
             val query = URLEncoder.encode(title, "UTF-8")
-            val url = "$baseUrl/3/search/multi?api_key=$apiKey&query=$query&language=$language"
+            // 智能判断是否为代理地址，拼接正确的 API 路径
+            val isProxy = baseUrl.contains("quarkalist") || baseUrl.contains("proxy")
+            val apiPath = if (isProxy) "/api/3/search/multi" else "/3/search/multi"
+            val url = "$baseUrl$apiPath?api_key=$apiKey&query=$query&language=$language"
+            
             val request = Request.Builder().url(url).build()
             client.newCall(request).execute().use { response ->
                 val body = response.body?.string()
@@ -379,11 +372,16 @@ class VideoScraperViewModel(
                             }
                         }
 
+                        // 智能拼接图片地址
+                        val posterUrl = if (posterPath.isNotBlank() && posterPath != "null") {
+                            if (isProxy) "$baseUrl/img/t/p/w500$posterPath" else "https://image.tmdb.org/t/p/w500$posterPath"
+                        } else null
+
                         return TmdbSearchResult(
                             id = bestItem.optInt("id"),
                             title = officialName,
                             year = (bestItem.optString("release_date").take(4).ifBlank { bestItem.optString("first_air_date").take(4) }),
-                            posterUrl = if (posterPath.isNotBlank() && posterPath != "null") "https://image.tmdb.org/t/p/w500$posterPath" else null,
+                            posterUrl = posterUrl,
                             overview = bestItem.optString("overview"),
                             rating = ratingStr,
                             mediaType = mediaType,
@@ -399,7 +397,10 @@ class VideoScraperViewModel(
     private fun fetchEpisodeTitles(tvId: Int, season: Int, apiKey: String, baseUrl: String): Map<Int, String> {
         val map = mutableMapOf<Int, String>()
         try {
-            val url = "$baseUrl/3/tv/$tvId/season/$season?api_key=$apiKey&language=zh-CN"
+            val isProxy = baseUrl.contains("quarkalist") || baseUrl.contains("proxy")
+            val apiPath = if (isProxy) "/api/3/tv/$tvId/season/$season" else "/3/tv/$tvId/season/$season"
+            val url = "$baseUrl$apiPath?api_key=$apiKey&language=zh-CN"
+            
             val request = Request.Builder().url(url).build()
             client.newCall(request).execute().use { response ->
                 val body = response.body?.string()
@@ -430,7 +431,10 @@ class VideoScraperViewModel(
             val list = mutableListOf<TmdbSearchResult>()
             try {
                 val q = URLEncoder.encode(query, "UTF-8")
-                val url = "$baseUrl/3/search/multi?api_key=$apiKey&query=$q&language=zh-CN"
+                val isProxy = baseUrl.contains("quarkalist") || baseUrl.contains("proxy")
+                val apiPath = if (isProxy) "/api/3/search/multi" else "/3/search/multi"
+                val url = "$baseUrl$apiPath?api_key=$apiKey&query=$q&language=zh-CN"
+                
                 val request = Request.Builder().url(url).build()
                 client.newCall(request).execute().use { response ->
                     val body = response.body?.string()
@@ -443,12 +447,17 @@ class VideoScraperViewModel(
                                 val title = item.optString("title").ifBlank { item.optString("name") }
                                 val posterPath = item.optString("poster_path")
                                 val voteAverage = item.optDouble("vote_average", 0.0)
+                                
+                                val posterUrl = if (posterPath.isNotBlank() && posterPath != "null") {
+                                    if (isProxy) "$baseUrl/img/t/p/w300$posterPath" else "https://image.tmdb.org/t/p/w300$posterPath"
+                                } else null
+
                                 list.add(
                                     TmdbSearchResult(
                                         id = item.optInt("id"),
                                         title = title,
                                         year = item.optString("release_date").take(4).ifBlank { item.optString("first_air_date").take(4) },
-                                        posterUrl = if (posterPath.isNotBlank() && posterPath != "null") "https://image.tmdb.org/t/p/w300$posterPath" else null,
+                                        posterUrl = posterUrl,
                                         overview = item.optString("overview"),
                                         rating = if (voteAverage > 0) String.format("%.1f", voteAverage) else null
                                     )
@@ -527,11 +536,6 @@ class VideoScraperViewModel(
                                     }
                                     if (bestUrl != null) return@withContext bestUrl
                                 }
-                            } else {
-                                val msg = json.optString("message")
-                                withContext(Dispatchers.Main) {
-                                    Toast.makeText(context, "接口报错: $msg", Toast.LENGTH_SHORT).show()
-                                }
                             }
                         }
                     }
@@ -608,7 +612,7 @@ class VideoScraperViewModel(
 data class VideoUiState(
     val cookie: String = "",
     val tmdbApiKey: String = "",
-    val tmdbBaseUrl: String = "https://api.tmdb.org",
+    val tmdbBaseUrl: String = "https://tmdbimg.quarkalist.xyz",
     val currentFid: String = "0",
     val isLoading: Boolean = false,
     val errorMsg: String? = null,
