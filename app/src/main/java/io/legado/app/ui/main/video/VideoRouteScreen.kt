@@ -49,7 +49,6 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shadow
-import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalConfiguration
@@ -338,10 +337,8 @@ fun WebLoginView(onLoginSuccess: (String) -> Unit, onCancel: () -> Unit) {
 }
 
 // ==========================================
-// 核心播放器组件 (全面优化)
+// 核心播放器组件 (全面修复)
 // ==========================================
-
-enum class ResizeMode { FIT, FILL, ZOOM }
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -355,7 +352,7 @@ fun InternalVideoPlayer(
     onBack: () -> Unit
 ) {
     val context = LocalContext.current
-    val activity = context as? Activity
+    val activity = context.findActivity()
     val configuration = LocalConfiguration.current
     val isLandscape = configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
 
@@ -630,7 +627,7 @@ fun InternalVideoPlayer(
                         imageVector = if (gestureType == "volume") {
                             if (gestureValue == 0f) Icons.Default.VolumeMute else Icons.Default.VolumeUp
                         } else {
-                            Icons.Default.BrightnessHigh // 如果有 BrightnessLow 可以判断
+                            Icons.Default.BrightnessHigh
                         },
                         contentDescription = null,
                         tint = Color.White,
@@ -685,7 +682,7 @@ fun InternalVideoPlayer(
                     IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, null, tint = Color.White) }
                     AppText(text = title, color = Color.White, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f).padding(start = 8.dp))
                     if (resolution.isNotBlank()) AppText(text = resolution, color = Color.White, fontSize = 12.sp, modifier = Modifier.padding(end = 16.dp))
-                    // 图三要求：右上角设置图标
+                    // 设置图标
                     IconButton(onClick = { showSettingsPanel = true }) { Icon(Icons.Default.Settings, contentDescription = "设置", tint = Color.White) }
                 }
 
@@ -756,7 +753,7 @@ fun InternalVideoPlayer(
             }
         }
 
-        // ======= 右侧抽屉：选集（图五样式） =======
+        // 右侧抽屉：选集
         AnimatedVisibility(
             visible = showEpisodeDrawer,
             enter = slideInHorizontally(initialOffsetX = { it }, animationSpec = tween(300)),
@@ -792,7 +789,7 @@ fun InternalVideoPlayer(
             }
         }
 
-        // ======= 右侧抽屉：播放设置（图三样式） =======
+        // 右侧抽屉：播放设置
         AnimatedVisibility(
             visible = showSettingsPanel,
             enter = slideInHorizontally(initialOffsetX = { it }, animationSpec = tween(300)),
@@ -824,7 +821,7 @@ fun InternalVideoPlayer(
         }
     }
 
-    // 片头片尾设置弹窗（图四图五逻辑）
+    // 片头片尾设置弹窗
     if (showIntroOutroDialog) {
         var inputIntro by remember { mutableFloatStateOf(introSeconds.toFloat()) }
         var inputOutro by remember { mutableFloatStateOf(outroSeconds.toFloat()) }
@@ -859,6 +856,16 @@ private fun formatTime(ms: Long): String {
     val minutes = (totalSeconds % 3600) / 60
     val seconds = totalSeconds % 60
     return String.format("%02d:%02d:%02d", hours, minutes, seconds)
+}
+
+// 扩展函数：查找 Activity
+private fun Context.findActivity(): Activity? {
+    var context = this
+    while (context is android.content.ContextWrapper) {
+        if (context is Activity) return context
+        context = context.baseContext
+    }
+    return null
 }
 
 @OptIn(ExperimentalFoundationApi::class)
