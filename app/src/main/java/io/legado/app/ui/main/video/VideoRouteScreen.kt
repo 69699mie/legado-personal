@@ -47,6 +47,7 @@ import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.window.Dialog
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.media3.common.MediaItem
+import androidx.media3.common.MediaMetadata
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
 import androidx.media3.datasource.okhttp.OkHttpDataSource
@@ -340,24 +341,19 @@ fun VideoRouteScreen(
 fun InternalVideoPlayer(url: String, title: String, cookie: String, onBack: () -> Unit) {
     val context = LocalContext.current
     val exoPlayer = remember {
-        // 1. 清洗 Cookie，防止 Header 被截断
         val cleanCookie = cookie.replace("\n", "").replace("\r", "").trim()
         
         val okHttpClient = OkHttpClient.Builder()
             .connectTimeout(15, TimeUnit.SECONDS)
             .readTimeout(15, TimeUnit.SECONDS)
-            // 2. 开启重定向
             .followRedirects(true)
             .followSslRedirects(true)
-            // 3. 拦截器：强制为每个请求（包括分片）注入完整 Header
             .addInterceptor(object : Interceptor {
                 override fun intercept(chain: Interceptor.Chain): Response {
                     val originalRequest = chain.request()
                     val newRequest = originalRequest.newBuilder()
-                        // Referer 必须是夸克官方域名
                         .header("Referer", "https://pan.quark.cn/")
                         .header("Cookie", cleanCookie)
-                        // 使用桌面端浏览器 UA
                         .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) quark-cloud-drive/2.5.20 Chrome/100.0.4896.160 Electron/18.3.5.4-b478491100 Safari/537.36 Channel/pckk_other_ch")
                         .build()
                     return chain.proceed(newRequest)
@@ -370,13 +366,21 @@ fun InternalVideoPlayer(url: String, title: String, cookie: String, onBack: () -
         ExoPlayer.Builder(context)
             .setMediaSourceFactory(DefaultMediaSourceFactory(okHttpDataSourceFactory))
             .build().apply {
-                setMediaItem(MediaItem.fromUri(url))
+                // 【修复标题】构建 MediaItem 时，明确设置 MediaMetadata
+                val mediaItem = MediaItem.Builder()
+                    .setUri(url)
+                    .setMediaMetadata(
+                        MediaMetadata.Builder()
+                            .setTitle(title) // 这里设置为完整的 "狂飙 第1集"
+                            .build()
+                    )
+                    .build()
+                setMediaItem(mediaItem)
                 prepare()
                 playWhenReady = true
                 addListener(object : Player.Listener {
                     override fun onPlayerError(error: PlaybackException) {
                         super.onPlayerError(error)
-                        // 4. 精确捕获 HTTP 状态码，方便排查
                         val msg = if (error.cause is androidx.media3.datasource.HttpDataSource.InvalidResponseCodeException) {
                             val httpError = error.cause as androidx.media3.datasource.HttpDataSource.InvalidResponseCodeException
                             "播放失败: HTTP ${httpError.responseCode}"
