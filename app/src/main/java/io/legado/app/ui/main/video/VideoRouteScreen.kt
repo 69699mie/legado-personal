@@ -188,7 +188,8 @@ fun VideoRouteScreen(
                                     AppText(text = file.name, maxLines = 1, overflow = TextOverflow.Ellipsis)
                                 }
                                 if (file.isFolder) {
-                                    IconButton(onClick = { viewModel.toggleLibrary(file.fid) }) {
+                                    // 【核心修复】传入了 file.name
+                                    IconButton(onClick = { viewModel.toggleLibrary(file.fid, file.name) }) {
                                         Icon(
                                             if (uiState.selectedLibraryFids.contains(file.fid)) Icons.Default.Star else Icons.Outlined.StarBorder,
                                             "加入影视库",
@@ -340,7 +341,6 @@ fun VideoRouteScreen(
 fun InternalVideoPlayer(url: String, title: String, cookie: String, onBack: () -> Unit) {
     val context = LocalContext.current
     val exoPlayer = remember {
-        // 【核心修复】加入全局拦截器，确保 m3u8 的每一个 ts 切片请求都携带 Cookie 和 Referer
         val okHttpClient = OkHttpClient.Builder()
             .connectTimeout(15, TimeUnit.SECONDS)
             .readTimeout(15, TimeUnit.SECONDS)
@@ -350,7 +350,7 @@ fun InternalVideoPlayer(url: String, title: String, cookie: String, onBack: () -
                 override fun intercept(chain: Interceptor.Chain): Response {
                     val originalRequest = chain.request()
                     val newRequest = originalRequest.newBuilder()
-                        .header("Referer", "https://drive.quark.cn/") // 必须是 drive.quark.cn
+                        .header("Referer", "https://drive.quark.cn/")
                         .header("Cookie", cookie)
                         .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) quark-cloud-drive/2.5.20 Chrome/100.0.4896.160 Electron/18.3.5.4-b478491100 Safari/537.36 Channel/pckk_other_ch")
                         .build()
