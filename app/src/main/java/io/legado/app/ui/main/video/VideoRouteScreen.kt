@@ -470,6 +470,15 @@ fun SeriesPosterCard(series: MediaSeries, onClick: () -> Unit, onLongClick: () -
 
 @Composable
 fun MediaDetailScreen(series: MediaSeries, onBack: () -> Unit, onPlay: (QuarkFile) -> Unit, onLongClickPoster: (MediaSeries) -> Unit) {
+    // 智能识别所有的季
+    val allSeasons = series.videos.mapNotNull { it.parsedInfo?.season }.distinct().sorted()
+    val currentSeasons = if (allSeasons.isEmpty()) listOf(1) else allSeasons
+    var selectedSeason by remember { mutableStateOf(currentSeasons.first()) }
+
+    // 只过滤当前选中季的视频
+    val currentVideos = series.videos.filter { (it.parsedInfo?.season ?: 1) == selectedSeason }
+        .sortedBy { it.parsedInfo?.episode ?: 0 }
+
     LazyColumn(modifier = Modifier.fillMaxSize().background(Color.White)) {
         item {
             Box(modifier = Modifier.fillMaxWidth().height(350.dp)) {
@@ -512,7 +521,7 @@ fun MediaDetailScreen(series: MediaSeries, onBack: () -> Unit, onPlay: (QuarkFil
                 }
                 
                 Button(
-                    onClick = { onPlay(series.videos.firstOrNull() ?: return@Button) },
+                    onClick = { onPlay(currentVideos.firstOrNull() ?: return@Button) },
                     modifier = Modifier.fillMaxWidth().height(50.dp),
                     colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF333333))
                 ) {
@@ -525,16 +534,42 @@ fun MediaDetailScreen(series: MediaSeries, onBack: () -> Unit, onPlay: (QuarkFil
             }
         }
         
-        item {
-            AppText(text = "剧集列表", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, modifier = Modifier.padding(start = 16.dp, top = 24.dp, bottom = 8.dp))
+        // 季的切换按钮
+        if (currentSeasons.size > 1) {
+            item {
+                LazyRow(
+                    contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    items(currentSeasons) { season ->
+                        val isSelected = season == selectedSeason
+                        Button(
+                            onClick = { selectedSeason = season },
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = if (isSelected) MaterialTheme.colorScheme.primary else Color.LightGray,
+                                contentColor = if (isSelected) Color.White else Color.Black
+                            ),
+                            contentPadding = PaddingValues(horizontal = 16.dp, vertical = 6.dp),
+                            modifier = Modifier.height(36.dp)
+                        ) {
+                            AppText("第${season}季")
+                        }
+                    }
+                }
+            }
         }
+
+        item {
+            AppText(text = "剧集列表", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, modifier = Modifier.padding(start = 16.dp, top = if (currentSeasons.size > 1) 0.dp else 24.dp, bottom = 8.dp))
+        }
+        
         item {
             LazyRow(contentPadding = PaddingValues(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                items(series.videos) { file ->
-                    val s = file.parsedInfo?.season
+                items(currentVideos) { file ->
+                    val s = file.parsedInfo?.season ?: 1
                     val e = file.parsedInfo?.episode
                     
-                    val tmdbTitle = if (e != null) series.episodeTitles[e] else null
+                    val tmdbTitle = if (e != null) series.episodeTitles["${s}_${e}"] else null
                     val label = if (e != null) {
                         "第${e}集" + if (!tmdbTitle.isNullOrBlank()) " $tmdbTitle" else ""
                     } else file.name
@@ -552,12 +587,12 @@ fun MediaDetailScreen(series: MediaSeries, onBack: () -> Unit, onPlay: (QuarkFil
         item {
             Column(modifier = Modifier.fillMaxWidth().background(Color(0xFFF5F5F5)).padding(16.dp).padding(top = 24.dp)) {
                 AppText(text = "文件信息", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-                series.videos.firstOrNull()?.let { firstFile ->
+                currentVideos.firstOrNull()?.let { firstFile ->
                     AppText(text = firstFile.name, style = MaterialTheme.typography.bodySmall, color = Color.Gray, modifier = Modifier.padding(top = 8.dp))
                     val pathStr = firstFile.folderPath.joinToString(" / ")
                     AppText(text = "夸克网盘: /$pathStr", style = MaterialTheme.typography.bodySmall, color = Color.Gray, modifier = Modifier.padding(top = 4.dp))
                     val sizeMb = firstFile.size / (1024 * 1024)
-                    AppText(text = "共 ${series.videos.size} 集 | ${sizeMb}MB (单集)", style = MaterialTheme.typography.bodySmall, color = Color.Gray, modifier = Modifier.padding(top = 4.dp))
+                    AppText(text = "共 ${currentVideos.size} 集 | ${sizeMb}MB (单集)", style = MaterialTheme.typography.bodySmall, color = Color.Gray, modifier = Modifier.padding(top = 4.dp))
                 }
             }
         }
