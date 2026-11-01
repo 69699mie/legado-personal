@@ -17,7 +17,6 @@ import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
-import org.json.JSONArray
 import org.json.JSONObject
 import java.net.URLEncoder
 import java.util.concurrent.TimeUnit
@@ -109,7 +108,6 @@ class VideoScraperViewModel(
         loadLibraryVideos()
     }
 
-    // 接收 WebView 扫码登录捕获的 Cookie
     fun loginWithCapturedCookie(capturedCookie: String) {
         if (capturedCookie.isBlank()) return
         val cleanCookie = capturedCookie.replace("\n", "").replace("\r", "").trim()
@@ -184,7 +182,6 @@ class VideoScraperViewModel(
 
     private fun aggregateToSeries(videos: List<QuarkFile>): List<MediaSeries> {
         val seriesMap = mutableMapOf<String, MediaSeries>()
-        
         val categoryMap = mapOf(
             "电视剧" to "剧集", "剧集" to "剧集",
             "动漫" to "动漫", "动画" to "动漫",
@@ -194,7 +191,6 @@ class VideoScraperViewModel(
 
         for (v in videos) {
             val parsed = v.parsedInfo ?: continue
-            
             var finalCategory = "未分类"
             for (pathNode in v.folderPath) {
                 if (categoryMap.containsKey(pathNode)) {
@@ -205,7 +201,6 @@ class VideoScraperViewModel(
 
             val meaningfulPaths = v.folderPath.filter { !excludeFolders.contains(it) }
             var baseTitle = ""
-            
             if (meaningfulPaths.isNotEmpty()) {
                 if (VideoFileNameParser.isSeasonFolder(meaningfulPaths.last())) {
                     baseTitle = if (meaningfulPaths.size >= 2) meaningfulPaths[meaningfulPaths.size - 2] else meaningfulPaths.last()
@@ -216,9 +211,7 @@ class VideoScraperViewModel(
                 baseTitle = parsed.title
             }
 
-            if (baseTitle.isBlank() || baseTitle == "未知影视") {
-                baseTitle = parsed.title
-            }
+            if (baseTitle.isBlank() || baseTitle == "未知影视") baseTitle = parsed.title
 
             val key = baseTitle
             if (seriesMap.containsKey(key)) {
@@ -277,9 +270,7 @@ class VideoScraperViewModel(
                         }
                     }
                 }
-            } catch (e: Exception) {
-                e.printStackTrace()
-            }
+            } catch (e: Exception) { e.printStackTrace() }
         }
     }
 
@@ -320,9 +311,7 @@ class VideoScraperViewModel(
                         episodeTitles = epTitles,
                         episodeStills = epStills
                     )
-                } else {
-                    series
-                }
+                } else { series }
             }
             withContext(Dispatchers.Main) {
                 hasLoadedLibrary = true
@@ -425,7 +414,6 @@ class VideoScraperViewModel(
                             val epNum = ep.optInt("episode_number")
                             val epName = ep.optString("name")
                             val stillPath = ep.optString("still_path")
-                            
                             if (epNum > 0) {
                                 if (epName.isNotBlank()) titles[epNum] = epName
                                 if (stillPath.isNotBlank() && stillPath != "null") {
@@ -484,9 +472,7 @@ class VideoScraperViewModel(
                     }
                 }
             } catch (e: Exception) {}
-            withContext(Dispatchers.Main) {
-                onResult(list)
-            }
+            withContext(Dispatchers.Main) { onResult(list) }
         }
     }
 
@@ -508,23 +494,17 @@ class VideoScraperViewModel(
         }
     }
 
-    // 【核心修复】使用 v2/play 获取转码 m3u8 流，解决黑屏问题
     fun playVideo(context: Context, series: MediaSeries, file: QuarkFile) {
         val cookie = _uiState.value.cookie
         val epNum = file.parsedInfo?.episode
         val titleText = if (epNum != null) {
-            // 【修改点】优先使用 TMDB 的集数标题
             val tmdbEpTitle = series.episodeTitles[epNum]
-            if (!tmdbEpTitle.isNullOrBlank()) {
-                "${series.title} $tmdbEpTitle"
-            } else {
-                "${series.title} 第${epNum}集"
-            }
-        } else {
-            file.name
-        }
+            if (!tmdbEpTitle.isNullOrBlank()) "${series.title} 第${epNum}集 $tmdbEpTitle"
+            else "${series.title} 第${epNum}集"
+        } else { file.name }
         
-        _uiState.update { it.copy(playUrl = null, playTitle = titleText) }
+        // 记录当前播放的 file 和 series
+        _uiState.update { it.copy(playUrl = null, playTitle = titleText, currentSeries = series, currentPlayFile = file) }
         Toast.makeText(context, "正在获取播放直链...", Toast.LENGTH_SHORT).show()
 
         viewModelScope.launch {
@@ -538,9 +518,7 @@ class VideoScraperViewModel(
                     }
                     val body = jsonBody.toString().toRequestBody("application/json".toMediaType())
                     val request = Request.Builder()
-                        .url(apiUrl)
-                        .post(body)
-                        .header("Cookie", cookie)
+                        .url(apiUrl).post(body).header("Cookie", cookie)
                         .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) quark-cloud-drive/2.5.20 Chrome/100.0.4896.160 Electron/18.3.5.4-b478491100 Safari/537.36 Channel/pckk_other_ch")
                         .header("Referer", "https://pan.quark.cn/") 
                         .header("Accept", "application/json, text/plain, */*")
@@ -553,31 +531,20 @@ class VideoScraperViewModel(
                             if (json.optInt("code", -1) == 0) {
                                 val videoList = json.optJSONObject("data")?.optJSONArray("video_list")
                                 if (videoList != null && videoList.length() > 0) {
-                                    var bestUrl: String? = null
                                     for (i in 0 until videoList.length()) {
                                         val video = videoList.getJSONObject(i)
                                         if (video.optBoolean("accessable", false)) {
-                                            val videoInfo = video.optJSONObject("video_info")
-                                            val videoUrl = videoInfo?.optString("url")
-                                            if (!videoUrl.isNullOrBlank()) {
-                                                bestUrl = videoUrl
-                                                break
-                                            }
+                                            val videoUrl = video.optJSONObject("video_info")?.optString("url")
+                                            if (!videoUrl.isNullOrBlank()) return@withContext videoUrl
                                         }
                                     }
-                                    if (bestUrl != null) return@withContext bestUrl
                                 }
                             } else {
-                                val msg = json.optString("message")
-                                withContext(Dispatchers.Main) {
-                                    Toast.makeText(context, "接口报错: $msg", Toast.LENGTH_SHORT).show()
-                                }
+                                withContext(Dispatchers.Main) { Toast.makeText(context, "接口报错: ${json.optString("message")}", Toast.LENGTH_SHORT).show() }
                             }
                         }
                     }
-                } catch (e: Exception) {
-                    e.printStackTrace()
-                }
+                } catch (e: Exception) { e.printStackTrace() }
                 null
             }
 
@@ -589,8 +556,29 @@ class VideoScraperViewModel(
         }
     }
 
+    fun getIntroOutro(seriesTitle: String, season: Int): Pair<Int, Int> {
+        try {
+            val json = JSONObject(videoSettingsRepository.introOutroData)
+            val key = "${seriesTitle}_S$season"
+            if (json.has(key)) {
+                val obj = json.getJSONObject(key)
+                return Pair(obj.optInt("intro", 0), obj.optInt("outro", 0))
+            }
+        } catch (e: Exception) {}
+        return Pair(0, 0)
+    }
+
+    fun saveIntroOutro(seriesTitle: String, season: Int, intro: Int, outro: Int) {
+        try {
+            val json = JSONObject(videoSettingsRepository.introOutroData)
+            val key = "${seriesTitle}_S$season"
+            json.put(key, JSONObject().apply { put("intro", intro); put("outro", outro) })
+            videoSettingsRepository.introOutroData = json.toString()
+        } catch (e: Exception) {}
+    }
+
     fun stopPlaying() {
-        _uiState.update { it.copy(playUrl = null, playTitle = null) }
+        _uiState.update { it.copy(playUrl = null, playTitle = null, currentPlayFile = null) }
     }
 
     fun fetchQuarkFiles(fid: String = "0", isBack: Boolean = false) {
@@ -607,9 +595,7 @@ class VideoScraperViewModel(
                 val result = withContext(Dispatchers.IO) {
                     val url = "https://drive-pc.quark.cn/1/clouddrive/file/sort?pr=ucpro&fr=pc&uc_param_str=&pdir_fid=$fid&_page=1&_size=100&_sort=file_type:asc,updated_at:desc"
                     val request = Request.Builder().url(url).header("Cookie", cookie).header("User-Agent", "Mozilla/5.0").build()
-                    client.newCall(request).execute().use { response ->
-                        Pair(response.isSuccessful, response.body?.string())
-                    }
+                    client.newCall(request).execute().use { Pair(it.isSuccessful, it.body?.string()) }
                 }
                 val (isSuccessful, body) = result
                 if (isSuccessful && !body.isNullOrBlank()) {
@@ -634,9 +620,7 @@ class VideoScraperViewModel(
                         _uiState.update { it.copy(errorMsg = "获取失败，Cookie 可能已过期") }
                     }
                 }
-            } catch (e: Exception) {
-                _uiState.update { it.copy(errorMsg = "请求异常") }
-            }
+            } catch (e: Exception) { _uiState.update { it.copy(errorMsg = "请求异常") } }
         }
     }
 
@@ -658,5 +642,6 @@ data class VideoUiState(
     val seriesList: List<MediaSeries> = emptyList(),
     val currentSeries: MediaSeries? = null,
     val playUrl: String? = null,
-    val playTitle: String? = null
+    val playTitle: String? = null,
+    val currentPlayFile: QuarkFile? = null // 新增当前播放文件
 )
