@@ -1,5 +1,6 @@
 plugins {
-    alias(libs.plugins.android.test)
+    // 改为直接使用 id 加载，避免与根项目的 AGP 版本产生冲突
+    id("com.android.test")
     alias(libs.plugins.baselineprofile)
 }
 
@@ -22,7 +23,7 @@ android {
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         testInstrumentationRunnerArguments["androidx.benchmark.suppressErrors"] = "DEBUGGABLE"
-}
+    }
 
     targetProjectPath = ":app"
 
