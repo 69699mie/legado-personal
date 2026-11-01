@@ -303,13 +303,8 @@ class VideoScraperViewModel(
                         epStills = pair.second
                     }
                     series.copy(
-                        title = finalTitle,
-                        category = finalCategory,
-                        posterUrl = match.posterUrl,
-                        overview = match.overview,
-                        rating = match.rating,
-                        episodeTitles = epTitles,
-                        episodeStills = epStills
+                        title = finalTitle, category = finalCategory, posterUrl = match.posterUrl,
+                        overview = match.overview, rating = match.rating, episodeTitles = epTitles, episodeStills = epStills
                     )
                 } else { series }
             }
@@ -352,10 +347,7 @@ class VideoScraperViewModel(
                             var score = 0.0
                             if (officialTitle.contains(title) || title.contains(officialTitle)) score += 5.0
                             if (year != null && releaseYear == year) score += 5.0
-                            if (score > topScore && score > 0) {
-                                topScore = score
-                                bestItem = item
-                            }
+                            if (score > topScore && score > 0) { topScore = score; bestItem = item }
                         }
                         if (bestItem == null) bestItem = results.getJSONObject(0)
 
@@ -368,9 +360,7 @@ class VideoScraperViewModel(
                         val genreIdsList = mutableListOf<Int>()
                         val genreIdsArray = bestItem.optJSONArray("genre_ids")
                         if (genreIdsArray != null) {
-                            for (j in 0 until genreIdsArray.length()) {
-                                genreIdsList.add(genreIdsArray.getInt(j))
-                            }
+                            for (j in 0 until genreIdsArray.length()) genreIdsList.add(genreIdsArray.getInt(j))
                         }
 
                         val posterUrl = if (posterPath.isNotBlank() && posterPath != "null") {
@@ -381,11 +371,8 @@ class VideoScraperViewModel(
                             id = bestItem.optInt("id"),
                             title = officialName,
                             year = (bestItem.optString("release_date").take(4).ifBlank { bestItem.optString("first_air_date").take(4) }),
-                            posterUrl = posterUrl,
-                            overview = bestItem.optString("overview"),
-                            rating = ratingStr,
-                            mediaType = mediaType,
-                            genreIds = genreIdsList
+                            posterUrl = posterUrl, overview = bestItem.optString("overview"), rating = ratingStr,
+                            mediaType = mediaType, genreIds = genreIdsList
                         )
                     }
                 }
@@ -459,11 +446,9 @@ class VideoScraperViewModel(
 
                                 list.add(
                                     TmdbSearchResult(
-                                        id = item.optInt("id"),
-                                        title = title,
+                                        id = item.optInt("id"), title = title,
                                         year = item.optString("release_date").take(4).ifBlank { item.optString("first_air_date").take(4) },
-                                        posterUrl = posterUrl,
-                                        overview = item.optString("overview"),
+                                        posterUrl = posterUrl, overview = item.optString("overview"),
                                         rating = if (voteAverage > 0) String.format("%.1f", voteAverage) else null
                                     )
                                 )
@@ -480,11 +465,8 @@ class VideoScraperViewModel(
         val currentList = _uiState.value.seriesList.map {
             if (it.id == seriesId) {
                 it.copy(
-                    title = result?.title ?: newTitle,
-                    posterUrl = result?.posterUrl ?: it.posterUrl,
-                    overview = result?.overview ?: it.overview,
-                    rating = result?.rating ?: it.rating,
-                    category = newCategory
+                    title = result?.title ?: newTitle, posterUrl = result?.posterUrl ?: it.posterUrl,
+                    overview = result?.overview ?: it.overview, rating = result?.rating ?: it.rating, category = newCategory
                 )
             } else it
         }
@@ -503,7 +485,6 @@ class VideoScraperViewModel(
             else "${series.title} 第${epNum}集"
         } else { file.name }
         
-        // 记录当前播放的 file 和 series
         _uiState.update { it.copy(playUrl = null, playTitle = titleText, currentSeries = series, currentPlayFile = file) }
         Toast.makeText(context, "正在获取播放直链...", Toast.LENGTH_SHORT).show()
 
@@ -554,6 +535,23 @@ class VideoScraperViewModel(
                 Toast.makeText(context, "获取播放流失败，请检查登录状态或文件是否存在", Toast.LENGTH_LONG).show()
             }
         }
+    }
+
+    // ======= 进度记录 =======
+    fun getVideoProgress(fid: String): Long {
+        try {
+            val json = JSONObject(videoSettingsRepository.videoProgressData)
+            if (json.has(fid)) return json.getLong(fid)
+        } catch (e: Exception) {}
+        return 0L
+    }
+
+    fun saveVideoProgress(fid: String, position: Long) {
+        try {
+            val json = JSONObject(videoSettingsRepository.videoProgressData)
+            json.put(fid, position)
+            videoSettingsRepository.videoProgressData = json.toString()
+        } catch (e: Exception) {}
     }
 
     fun getIntroOutro(seriesTitle: String, season: Int): Pair<Int, Int> {
@@ -643,5 +641,5 @@ data class VideoUiState(
     val currentSeries: MediaSeries? = null,
     val playUrl: String? = null,
     val playTitle: String? = null,
-    val currentPlayFile: QuarkFile? = null // 新增当前播放文件
+    val currentPlayFile: QuarkFile? = null
 )
