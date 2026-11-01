@@ -42,7 +42,6 @@ data class MediaSeries(
     val overview: String? = null,
     val rating: String? = null,
     val videos: List<QuarkFile> = emptyList(),
-    // 改为 String Key，格式为 "季_集"，以支持多季标题
     val episodeTitles: Map<String, String> = emptyMap() 
 )
 
@@ -158,13 +157,14 @@ class VideoScraperViewModel(
     
     private fun aggregateToSeries(videos: List<QuarkFile>): List<MediaSeries> {
         val seriesMap = mutableMapOf<String, MediaSeries>()
+        // 严格跳过分类目录
         val ignoreFolders = setOf("电影", "动漫", "电视剧", "纪录片", "综艺", "未分类", "其他", "未观看", "已观看")
 
         for (v in videos) {
             val parsed = v.parsedInfo ?: continue
             var baseTitle = ""
             
-            // 智能向上寻找真实的剧名
+            // 查找真实名称
             if (v.folderPath.isNotEmpty()) {
                 for (i in v.folderPath.indices.reversed()) {
                     val folder = v.folderPath[i]
@@ -175,16 +175,16 @@ class VideoScraperViewModel(
                 }
             }
             
-            if (baseTitle.isBlank()) {
+            // 如果文件夹里找不到，就用解析出来的名字
+            if (baseTitle.isBlank() || ignoreFolders.contains(baseTitle)) {
                 baseTitle = parsed.title
-                if (baseTitle.isBlank() || baseTitle == "未知影视") continue
+                if (baseTitle.isBlank() || baseTitle == "未知影视" || baseTitle == "未分类") continue
             }
 
             val key = baseTitle
             
             if (seriesMap.containsKey(key)) {
                 val exist = seriesMap[key]!!
-                // 去重并按季、集数排序
                 val combinedVideos = (exist.videos + v).distinctBy { it.fid }
                     .sortedWith(compareBy({ it.parsedInfo?.season ?: 1 }, { it.parsedInfo?.episode ?: 0 }))
                 seriesMap[key] = exist.copy(videos = combinedVideos)
@@ -283,7 +283,6 @@ class VideoScraperViewModel(
                         finalCategory = if (series.videos.size > 1) "剧集" else "电影"
                     }
 
-                    // 多季标题聚合
                     val epTitles = mutableMapOf<String, String>()
                     if (series.videos.size > 1) {
                         val seasons = series.videos.mapNotNull { it.parsedInfo?.season }.distinct().ifEmpty { listOf(1) }
@@ -500,8 +499,9 @@ class VideoScraperViewModel(
                         .url(apiUrl)
                         .post(body)
                         .header("Cookie", cookie)
+                        // 海阔视界标准请求头修复 Referer
+                        .header("Referer", "https://drive.quark.cn/")
                         .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) quark-cloud-drive/2.5.20 Chrome/100.0.4896.160 Electron/18.3.5.4-b478491100 Safari/537.36 Channel/pckk_other_ch")
-                        .header("Referer", "https://pan.quark.cn/")
                         .header("Accept", "application/json, text/plain, */*")
                         .build()
                         
