@@ -97,7 +97,6 @@ fun VideoRouteScreen(
         MediaDetailScreen(
             series = uiState.currentSeries!!,
             onBack = { viewModel.selectSeries(null) },
-            // 传入 series
             onPlay = { series, file -> viewModel.playVideo(context, series, file) },
             onLongClickPoster = {
                 manualScrapeSeries = it
@@ -341,20 +340,24 @@ fun VideoRouteScreen(
 fun InternalVideoPlayer(url: String, title: String, cookie: String, onBack: () -> Unit) {
     val context = LocalContext.current
     val exoPlayer = remember {
+        // 1. 清洗 Cookie，防止 Header 被截断
         val cleanCookie = cookie.replace("\n", "").replace("\r", "").trim()
         
         val okHttpClient = OkHttpClient.Builder()
             .connectTimeout(15, TimeUnit.SECONDS)
             .readTimeout(15, TimeUnit.SECONDS)
+            // 2. 开启重定向
             .followRedirects(true)
             .followSslRedirects(true)
+            // 3. 拦截器：强制为每个请求（包括分片）注入完整 Header
             .addInterceptor(object : Interceptor {
                 override fun intercept(chain: Interceptor.Chain): Response {
                     val originalRequest = chain.request()
                     val newRequest = originalRequest.newBuilder()
-                        // 原画直链防盗链必须使用 pan.quark.cn 作为 Referer
+                        // Referer 必须是夸克官方域名
                         .header("Referer", "https://pan.quark.cn/")
                         .header("Cookie", cleanCookie)
+                        // 使用桌面端浏览器 UA
                         .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) quark-cloud-drive/2.5.20 Chrome/100.0.4896.160 Electron/18.3.5.4-b478491100 Safari/537.36 Channel/pckk_other_ch")
                         .build()
                     return chain.proceed(newRequest)
@@ -373,6 +376,7 @@ fun InternalVideoPlayer(url: String, title: String, cookie: String, onBack: () -
                 addListener(object : Player.Listener {
                     override fun onPlayerError(error: PlaybackException) {
                         super.onPlayerError(error)
+                        // 4. 精确捕获 HTTP 状态码，方便排查
                         val msg = if (error.cause is androidx.media3.datasource.HttpDataSource.InvalidResponseCodeException) {
                             val httpError = error.cause as androidx.media3.datasource.HttpDataSource.InvalidResponseCodeException
                             "播放失败: HTTP ${httpError.responseCode}"
@@ -534,7 +538,7 @@ fun MediaDetailScreen(
                 items(series.videos) { file ->
                     val e = file.parsedInfo?.episode
                     val tmdbTitle = if (e != null) series.episodeTitles[e] else null
-                    val stillUrl = if (e != null) series.episodeStills[e] else null // 获取单集截图
+                    val stillUrl = if (e != null) series.episodeStills[e] else null
                     
                     val label = if (e != null) {
                         "第${e}集" + if (!tmdbTitle.isNullOrBlank()) " $tmdbTitle" else ""
