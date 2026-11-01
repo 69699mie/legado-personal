@@ -42,7 +42,8 @@ data class MediaSeries(
     val overview: String? = null,
     val rating: String? = null,
     val videos: List<QuarkFile> = emptyList(),
-    val episodeTitles: Map<Int, String> = emptyMap()
+    // 改为 String Key，格式为 "季_集"，以支持多季标题
+    val episodeTitles: Map<String, String> = emptyMap() 
 )
 
 data class TmdbSearchResult(
@@ -52,7 +53,7 @@ data class TmdbSearchResult(
     val posterUrl: String?,
     val overview: String,
     val rating: String?,
-    val genreIds: List<Int> = emptyList() // 新增：保存题材ID
+    val genreIds: List<Int> = emptyList()
 )
 
 class VideoScraperViewModel(
@@ -62,6 +63,8 @@ class VideoScraperViewModel(
     private val client = OkHttpClient.Builder()
         .connectTimeout(15, TimeUnit.SECONDS)
         .readTimeout(15, TimeUnit.SECONDS)
+        .followRedirects(true)
+        .followSslRedirects(true)
         .build()
 
     private val _uiState = MutableStateFlow(VideoUiState())
@@ -161,9 +164,8 @@ class VideoScraperViewModel(
             val parsed = v.parsedInfo ?: continue
             var baseTitle = ""
             
-            // 智能推断父文件夹名
+            // 智能向上寻找真实的剧名
             if (v.folderPath.isNotEmpty()) {
-                // 从倒数第一个开始找，跳过无意义的分类词和季文件夹
                 for (i in v.folderPath.indices.reversed()) {
                     val folder = v.folderPath[i]
                     if (!ignoreFolders.contains(folder) && !VideoFileNameParser.isSeasonFolder(folder)) {
@@ -173,7 +175,6 @@ class VideoScraperViewModel(
                 }
             }
             
-            // 如果没找到合适的文件夹名，退而求其次用解析出的名字
             if (baseTitle.isBlank()) {
                 baseTitle = parsed.title
                 if (baseTitle.isBlank() || baseTitle == "未知影视") continue
@@ -183,7 +184,9 @@ class VideoScraperViewModel(
             
             if (seriesMap.containsKey(key)) {
                 val exist = seriesMap[key]!!
-                val combinedVideos = (exist.videos + v).sortedBy { it.parsedInfo?.episode ?: 0 }
+                // 去重并按季、集数排序
+                val combinedVideos = (exist.videos + v).distinctBy { it.fid }
+                    .sortedWith(compareBy({ it.parsedInfo?.season ?: 1 }, { it.parsedInfo?.episode ?: 0 }))
                 seriesMap[key] = exist.copy(videos = combinedVideos)
             } else {
                 seriesMap[key] = MediaSeries(
@@ -268,13 +271,11 @@ class VideoScraperViewModel(
             val updatedList = seriesList.map { series ->
                 val match = searchTmdbWithFallback(series.originalParsedTitle, series.year, apiKey, baseUrl)
                 if (match != null) {
-                    // 核心拦截：如果原文件夹是纯中文，无视TMDB返回，直接强制保留原中文名
                     var finalTitle = match.title
                     if (series.originalParsedTitle.matches(Regex("^[\\u4e00-\\u9fa5]+$"))) {
                         finalTitle = series.originalParsedTitle
                     }
 
-                    // 根据 TMDB 类型 ID 强制分类
                     var finalCategory = series.category
                     if (match.genreIds.contains(16)) {
                         finalCategory = "动漫"
@@ -282,10 +283,16 @@ class VideoScraperViewModel(
                         finalCategory = if (series.videos.size > 1) "剧集" else "电影"
                     }
 
-                    var epTitles: Map<Int, String> = emptyMap()
-                    val season = series.videos.firstOrNull()?.parsedInfo?.season ?: 1
-                    if (series.videos.size > 1 || series.originalParsedTitle.contains("季")) {
-                        epTitles = fetchEpisodeTitles(match.id, season, apiKey, baseUrl)
+                    // 多季标题聚合
+                    val epTitles = mutableMapOf<String, String>()
+                    if (series.videos.size > 1) {
+                        val seasons = series.videos.mapNotNull { it.parsedInfo?.season }.distinct().ifEmpty { listOf(1) }
+                        for (s in seasons) {
+                            val map = fetchEpisodeTitles(match.id, s, apiKey, baseUrl)
+                            map.forEach { (ep, title) ->
+                                epTitles["${s}_${ep}"] = title
+                            }
+                        }
                     }
 
                     series.copy(
@@ -476,12 +483,11 @@ class VideoScraperViewModel(
     fun playVideo(context: Context, file: QuarkFile) {
         val cookie = _uiState.value.cookie
         _uiState.update { it.copy(playUrl = null, playTitle = file.name) }
-        Toast.makeText(context, "正在获取原画直链...", Toast.LENGTH_SHORT).show()
+        Toast.makeText(context, "正在获取云播直链...", Toast.LENGTH_SHORT).show()
         
         viewModelScope.launch {
             val url = withContext(Dispatchers.IO) {
                 try {
-                    // 使用官方转码/云播接口，支持最高4K，彻底解决 MKV/DDP 导致的 IO_BAD_HTTP_STATUS
                     val apiUrl = "https://drive.quark.cn/1/clouddrive/file/v2/play?pr=ucpro&fr=pc"
                     val jsonBody = JSONObject().apply {
                         put("fid", file.fid)
@@ -507,7 +513,6 @@ class VideoScraperViewModel(
                                 val data = json.optJSONObject("data")
                                 val videoList = data?.optJSONArray("video_list")
                                 if (videoList != null && videoList.length() > 0) {
-                                    // 通常返回的列表按可用性和清晰度排列，找第一个可以播放的
                                     for (i in 0 until videoList.length()) {
                                         val videoItem = videoList.getJSONObject(i)
                                         if (videoItem.optBoolean("accessable", false)) {
@@ -536,7 +541,7 @@ class VideoScraperViewModel(
             if (url != null) {
                 _uiState.update { it.copy(playUrl = url) }
             } else {
-                Toast.makeText(context, "解析播放地址失败，请检查 Cookie 是否过期", Toast.LENGTH_LONG).show()
+                Toast.makeText(context, "解析云播地址失败，请检查 Cookie", Toast.LENGTH_LONG).show()
                 _uiState.update { it.copy(playUrl = null, playTitle = null) }
             }
         }
