@@ -204,10 +204,15 @@ dependencies {
     implementation(libs.lifecycle.common.java8)
     implementation(libs.lifecycle.service)
     implementation(libs.media.media)
+    
+    // ===== 播放器模块 =====
     implementation(libs.media3.exoplayer)
-    // ➕ 新增：ExoPlayer 的 UI 模块，用于渲染播放控件（修复 PlayerView 报错）
-    implementation("androidx.media3:media3-ui:1.2.1")
     implementation(libs.media3.datasource.okhttp)
+    // ➕ 新增：ExoPlayer 的 UI 模块和 HLS 模块，用于渲染播放控件并支持 m3u8 格式
+    implementation("androidx.media3:media3-ui:1.2.1")
+    implementation("androidx.media3:media3-exoplayer-hls:1.2.1")
+    // =====================
+
     implementation(libs.splitties.appctx)
     implementation(libs.splitties.systemservices)
     implementation(libs.splitties.views)
