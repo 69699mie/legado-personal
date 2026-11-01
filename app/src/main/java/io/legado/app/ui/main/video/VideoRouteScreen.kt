@@ -355,7 +355,8 @@ fun InternalVideoPlayer(url: String, title: String, cookie: String, onBack: () -
             .setUserAgent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) quark-cloud-drive/2.5.20 Chrome/100.0.4896.160 Electron/18.3.5.4-b478491100 Safari/537.36 Channel/pckk_other_ch")
             .setDefaultRequestProperties(
                 mapOf(
-                    "Referer" to "https://pan.quark.cn/",
+                    // 修正：必须是 drive.quark.cn，否则 CDN 校验不通过
+                    "Referer" to "https://drive.quark.cn/",
                     "Cookie" to cookie
                 )
             )
