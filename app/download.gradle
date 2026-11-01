@@ -1,13 +1,14 @@
-// download.gradle
-def cronetVersion = project.hasProperty("CronetVersion") ? project.property("CronetVersion") : "119.6045.31"
-def cronetMainVersion = project.hasProperty("CronetMainVersion") ? project.property("CronetMainVersion") : "119.6045.31"
+// app/download.gradle
+def cronetVersion = project.hasProperty("CronetVersion") ? project.property("CronetVersion") : "128.0.6613.40"
+def cronetMainVersion = project.hasProperty("CronetMainVersion") ? project.property("CronetMainVersion") : "128.0.6613.40"
 
 def cronetDir = file("${projectDir}/cronetlib")
 if (!cronetDir.exists()) {
     cronetDir.mkdirs()
 }
 
-def downloadFile(String urlStr, File dest) {
+// 关键修复：加上 ext. 让闭包可以访问到这个方法
+ext.downloadFile = { String urlStr, File dest ->
     if (dest.exists()) return
     println "Downloading $urlStr to $dest"
     new URL(urlStr).withInputStream { i ->
@@ -21,7 +22,6 @@ def baseUrl = "https://raw.githubusercontent.com/gedoor/legado/master/app/cronet
 def cronetJar = new File(cronetDir, "cronet-api-${cronetVersion}.jar")
 def cronetAar = new File(cronetDir, "cronet-impl-${cronetMainVersion}.aar")
 
-// 只有在构建时才会触发下载
 tasks.register("downloadCronet") {
     doLast {
         if (!cronetJar.exists()) downloadFile(baseUrl + cronetJar.name, cronetJar)
@@ -29,7 +29,6 @@ tasks.register("downloadCronet") {
     }
 }
 
-// 依赖编译前的任务
 afterEvaluate {
     tasks.named("preBuild") {
         dependsOn("downloadCronet")
