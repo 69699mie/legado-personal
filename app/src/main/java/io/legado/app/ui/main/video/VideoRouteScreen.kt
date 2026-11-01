@@ -382,6 +382,9 @@ fun WebLoginView(onLoginSuccess: (String) -> Unit, onCancel: () -> Unit) {
     val context = LocalContext.current
     var webViewRef by remember { mutableStateOf<WebView?>(null) }
 
+    // 【核心修复】强制使用 PC 桌面端 UA，防止被夸克识别为移动端跳转下载页
+    val desktopUserAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+
     DisposableEffect(Unit) {
         onDispose {
             webViewRef?.destroy()
@@ -400,7 +403,7 @@ fun WebLoginView(onLoginSuccess: (String) -> Unit, onCancel: () -> Unit) {
             AppText("夸克扫码/账号登录", fontWeight = FontWeight.Bold)
             TextButton(onClick = {
                 val cookie = CookieManager.getInstance().getCookie("https://pan.quark.cn/")
-                if (!cookie.isNullOrBlank() && cookie.contains("__uid=") && cookie.contains("__pus=")) {
+                if (!cookie.isNullOrBlank() && cookie.contains("__uid=") && cookie.contains("__puus=")) {
                     onLoginSuccess(cookie)
                 } else {
                     Toast.makeText(context, "尚未检测到有效登录，请完成扫码或授权", Toast.LENGTH_SHORT).show()
@@ -416,6 +419,9 @@ fun WebLoginView(onLoginSuccess: (String) -> Unit, onCancel: () -> Unit) {
                     settings.javaScriptEnabled = true
                     settings.domStorageEnabled = true
                     settings.databaseEnabled = true
+                    // 【核心修复】强制设置桌面端 User-Agent
+                    settings.userAgentString = desktopUserAgent
+                    
                     CookieManager.getInstance().setAcceptCookie(true)
                     CookieManager.getInstance().setAcceptThirdPartyCookies(this, true)
 
@@ -424,7 +430,7 @@ fun WebLoginView(onLoginSuccess: (String) -> Unit, onCancel: () -> Unit) {
                             super.onPageFinished(view, url)
                             // 每次页面加载完毕，静默检测一次 Cookie 是否已生成
                             val cookie = CookieManager.getInstance().getCookie("https://pan.quark.cn/")
-                            if (!cookie.isNullOrBlank() && cookie.contains("__uid=") && cookie.contains("__pus=")) {
+                            if (!cookie.isNullOrBlank() && cookie.contains("__uid=") && cookie.contains("__puus=")) {
                                 onLoginSuccess(cookie)
                             }
                         }
@@ -465,11 +471,12 @@ fun InternalVideoPlayer(url: String, title: String, cookie: String, onBack: () -
         ExoPlayer.Builder(context)
             .setMediaSourceFactory(DefaultMediaSourceFactory(okHttpDataSourceFactory))
             .build().apply {
+                // 【修复标题】构建 MediaItem 时，明确设置 MediaMetadata
                 val mediaItem = MediaItem.Builder()
                     .setUri(url)
                     .setMediaMetadata(
                         MediaMetadata.Builder()
-                            .setTitle(title)
+                            .setTitle(title) // 这里设置为完整的 "狂飙 第1集"
                             .build()
                     )
                     .build()
