@@ -15,7 +15,6 @@ import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
@@ -50,11 +49,15 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.media3.common.MediaItem
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
+import androidx.media3.datasource.okhttp.OkHttpDataSource
 import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.ui.PlayerView
 import coil3.compose.AsyncImage
 import io.legado.app.ui.widget.components.text.AppText
+import okhttp3.OkHttpClient
 import org.koin.androidx.compose.koinViewModel
+import java.util.concurrent.TimeUnit
 
 @OptIn(ExperimentalFoundationApi::class, ExperimentalMaterial3Api::class)
 @Composable
@@ -65,7 +68,6 @@ fun VideoRouteScreen(
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val context = LocalContext.current
     var showSettingsDialog by remember { mutableStateOf(false) }
-    
     var showManualScrapeDialog by remember { mutableStateOf(false) }
     var manualScrapeSeries by remember { mutableStateOf<MediaSeries?>(null) }
     var viewAllCategory by remember { mutableStateOf<String?>(null) }
@@ -86,6 +88,7 @@ fun VideoRouteScreen(
         InternalVideoPlayer(
             url = uiState.playUrl!!,
             title = uiState.playTitle ?: "播放中",
+            cookie = uiState.cookie,
             onBack = { viewModel.stopPlaying() }
         )
     } else if (uiState.currentSeries != null) {
@@ -134,9 +137,7 @@ fun VideoRouteScreen(
             }
         }
     } else {
-        Column(
-            modifier = modifier.fillMaxSize().statusBarsPadding()
-        ) {
+        Column(modifier = modifier.fillMaxSize().statusBarsPadding()) {
             Row(
                 modifier = Modifier.fillMaxWidth().background(Color(0xFFF5F5F5)).padding(horizontal = 16.dp, vertical = 8.dp),
                 verticalAlignment = Alignment.CenterVertically
@@ -146,7 +147,6 @@ fun VideoRouteScreen(
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "返回")
                     }
                 }
-                
                 TabRow(
                     selectedTabIndex = if (uiState.isLibraryMode) 1 else 0,
                     modifier = Modifier.weight(1f).padding(horizontal = 8.dp),
@@ -156,7 +156,6 @@ fun VideoRouteScreen(
                     Tab(selected = !uiState.isLibraryMode, onClick = { viewModel.setMode(false) }, text = { AppText("网盘浏览") })
                     Tab(selected = uiState.isLibraryMode, onClick = { viewModel.setMode(true) }, text = { AppText("影视库") })
                 }
-                
                 IconButton(onClick = { showSettingsDialog = true }) {
                     Icon(Icons.Default.Settings, contentDescription = "设置")
                 }
@@ -169,7 +168,9 @@ fun VideoRouteScreen(
             }
 
             if (uiState.isLoading && uiState.seriesList.isEmpty() && uiState.fileList.isEmpty()) {
-                Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
+                Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                    CircularProgressIndicator()
+                }
             } else if (!uiState.isLibraryMode) {
                 if (uiState.fileList.isEmpty()) {
                     Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { AppText("当前文件夹为空") }
@@ -177,9 +178,7 @@ fun VideoRouteScreen(
                     LazyColumn(modifier = Modifier.fillMaxSize(), contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         items(uiState.fileList) { file ->
                             Row(
-                                modifier = Modifier.fillMaxWidth().clickable(enabled = file.isFolder) {
-                                    if (file.isFolder) viewModel.fetchQuarkFiles(file.fid)
-                                }.padding(vertical = 12.dp),
+                                modifier = Modifier.fillMaxWidth().clickable(enabled = file.isFolder) { if (file.isFolder) viewModel.fetchQuarkFiles(file.fid) }.padding(vertical = 12.dp),
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
                                 Icon(if (file.isFolder) Icons.Default.Folder else Icons.Default.Movie, null, tint = if (file.isFolder) Color(0xFFFFB300) else Color.Gray)
@@ -188,7 +187,11 @@ fun VideoRouteScreen(
                                 }
                                 if (file.isFolder) {
                                     IconButton(onClick = { viewModel.toggleLibrary(file.fid) }) {
-                                        Icon(if (uiState.selectedLibraryFids.contains(file.fid)) Icons.Default.Star else Icons.Outlined.StarBorder, "加入影视库", tint = if (uiState.selectedLibraryFids.contains(file.fid)) Color(0xFFFFB300) else Color.Gray)
+                                        Icon(
+                                            if (uiState.selectedLibraryFids.contains(file.fid)) Icons.Default.Star else Icons.Outlined.StarBorder,
+                                            "加入影视库",
+                                            tint = if (uiState.selectedLibraryFids.contains(file.fid)) Color(0xFFFFB300) else Color.Gray
+                                        )
                                     }
                                 }
                             }
@@ -221,8 +224,8 @@ fun VideoRouteScreen(
                                         ) {
                                             AppText(text = categoryName, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
                                             AppText(
-                                                text = "全部 ${seriesList.size} 部 >", 
-                                                style = MaterialTheme.typography.bodySmall, 
+                                                text = "全部 ${seriesList.size} 部 >",
+                                                style = MaterialTheme.typography.bodySmall,
                                                 color = Color.Gray,
                                                 modifier = Modifier.clickable { viewAllCategory = categoryName }
                                             )
@@ -272,35 +275,32 @@ fun VideoRouteScreen(
             }
         }
     }
-    
+
     if (showManualScrapeDialog && manualScrapeSeries != null) {
         var searchKeyword by remember { mutableStateOf(manualScrapeSeries!!.title) }
         var searchResults by remember { mutableStateOf<List<TmdbSearchResult>?>(null) }
-        var categoryInput by remember { mutableStateOf(manualScrapeSeries!!.category) } 
-        
+        var categoryInput by remember { mutableStateOf(manualScrapeSeries!!.category) }
         Dialog(onDismissRequest = { showManualScrapeDialog = false }) {
             Column(modifier = Modifier.background(Color.White).padding(16.dp).fillMaxWidth().heightIn(max = 600.dp)) {
                 AppText("手动修正刮削信息")
-                
                 Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(vertical = 8.dp)) {
                     AppText("分类：", modifier = Modifier.width(50.dp))
                     OutlinedTextField(value = categoryInput, onValueChange = { categoryInput = it }, modifier = Modifier.weight(1f), placeholder = { AppText("如：动漫、电影") })
                 }
-                
                 Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(bottom = 8.dp)) {
                     AppText("名称：", modifier = Modifier.width(50.dp))
                     OutlinedTextField(value = searchKeyword, onValueChange = { searchKeyword = it }, modifier = Modifier.weight(1f))
-                    OutlinedButton(onClick = { 
+                    OutlinedButton(onClick = {
                         viewModel.applyManualScrape(manualScrapeSeries!!.id, null, categoryInput, searchKeyword)
                         showManualScrapeDialog = false
                     }, modifier = Modifier.padding(start = 8.dp)) { AppText("仅保存") }
                 }
-
                 Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(bottom = 8.dp)) {
                     Spacer(modifier = Modifier.width(50.dp))
-                    OutlinedButton(onClick = { viewModel.searchTmdbManually(searchKeyword) { searchResults = it } }, modifier = Modifier.fillMaxWidth()) { AppText("去 TMDB 搜索海报") }
+                    OutlinedButton(onClick = { viewModel.searchTmdbManually(searchKeyword) { searchResults = it } }, modifier = Modifier.fillMaxWidth()) {
+                        AppText("去 TMDB 搜索海报")
+                    }
                 }
-                
                 if (searchResults == null) {
                     Box(modifier = Modifier.fillMaxWidth().padding(24.dp), contentAlignment = Alignment.Center) { AppText("输入名称并搜索", color = Color.Gray) }
                 } else if (searchResults!!.isEmpty()) {
@@ -334,19 +334,33 @@ fun VideoRouteScreen(
     }
 }
 
-// 播放器
 @Composable
-fun InternalVideoPlayer(url: String, title: String, onBack: () -> Unit) {
+fun InternalVideoPlayer(url: String, title: String, cookie: String, onBack: () -> Unit) {
     val context = LocalContext.current
-    
     val exoPlayer = remember {
-        // 极简播放器，不再需要任何防拦截 Header，直接播 m3u8
+        val okHttpClient = OkHttpClient.Builder()
+            .connectTimeout(15, TimeUnit.SECONDS)
+            .readTimeout(15, TimeUnit.SECONDS)
+            .followRedirects(true)
+            .followSslRedirects(true)
+            .build()
+
+        val okHttpDataSourceFactory = OkHttpDataSource.Factory(okHttpClient)
+            // 【核心修复】UA 和 v2/play 请求一致，防止夸克拦截播放流
+            .setUserAgent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) quark-cloud-drive/2.5.20 Chrome/100.0.4896.160 Electron/18.3.5.4-b478491100 Safari/537.36 Channel/pckk_other_ch")
+            .setDefaultRequestProperties(
+                mapOf(
+                    "Referer" to "https://pan.quark.cn/",
+                    "Cookie" to cookie
+                )
+            )
+
         ExoPlayer.Builder(context)
+            .setMediaSourceFactory(DefaultMediaSourceFactory(okHttpDataSourceFactory))
             .build().apply {
                 setMediaItem(MediaItem.fromUri(url))
                 prepare()
                 playWhenReady = true
-                
                 addListener(object : Player.Listener {
                     override fun onPlayerError(error: PlaybackException) {
                         super.onPlayerError(error)
@@ -362,9 +376,7 @@ fun InternalVideoPlayer(url: String, title: String, onBack: () -> Unit) {
     }
 
     DisposableEffect(Unit) {
-        onDispose {
-            exoPlayer.release()
-        }
+        onDispose { exoPlayer.release() }
     }
 
     Box(modifier = Modifier.fillMaxSize().background(Color.Black)) {
@@ -381,7 +393,6 @@ fun InternalVideoPlayer(url: String, title: String, onBack: () -> Unit) {
             },
             modifier = Modifier.fillMaxSize()
         )
-
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -390,10 +401,7 @@ fun InternalVideoPlayer(url: String, title: String, onBack: () -> Unit) {
                 .padding(8.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            IconButton(onClick = {
-                exoPlayer.release()
-                onBack()
-            }) {
+            IconButton(onClick = { exoPlayer.release(); onBack() }) {
                 Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "返回", tint = Color.White)
             }
             AppText(
@@ -422,7 +430,6 @@ fun SeriesPosterCard(series: MediaSeries, onClick: () -> Unit, onLongClick: () -
             } else {
                 AppText("长按修正", color = Color.Gray, style = MaterialTheme.typography.bodySmall)
             }
-            
             if (series.rating != null) {
                 AppText(
                     text = series.rating,
@@ -432,9 +439,7 @@ fun SeriesPosterCard(series: MediaSeries, onClick: () -> Unit, onLongClick: () -
                     style = TextStyle(
                         shadow = Shadow(color = Color.Black, offset = Offset(1f, 1f), blurRadius = 3f)
                     ),
-                    modifier = Modifier
-                        .align(Alignment.BottomEnd) 
-                        .padding(6.dp) 
+                    modifier = Modifier.align(Alignment.BottomEnd).padding(6.dp)
                 )
             }
         }
@@ -450,13 +455,6 @@ fun SeriesPosterCard(series: MediaSeries, onClick: () -> Unit, onLongClick: () -
 
 @Composable
 fun MediaDetailScreen(series: MediaSeries, onBack: () -> Unit, onPlay: (QuarkFile) -> Unit, onLongClickPoster: (MediaSeries) -> Unit) {
-    val allSeasons = series.videos.mapNotNull { it.parsedInfo?.season }.distinct().sorted()
-    val currentSeasons = if (allSeasons.isEmpty()) listOf(1) else allSeasons
-    var selectedSeason by remember { mutableStateOf(currentSeasons.first()) }
-
-    val currentVideos = series.videos.filter { (it.parsedInfo?.season ?: 1) == selectedSeason }
-        .sortedBy { it.parsedInfo?.episode ?: 0 }
-
     LazyColumn(modifier = Modifier.fillMaxSize().background(Color.White)) {
         item {
             Box(modifier = Modifier.fillMaxWidth().height(350.dp)) {
@@ -484,7 +482,6 @@ fun MediaDetailScreen(series: MediaSeries, onBack: () -> Unit, onPlay: (QuarkFil
                 }
             }
         }
-        
         item {
             Column(modifier = Modifier.padding(horizontal = 16.dp)) {
                 AppText(text = series.title, style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
@@ -497,66 +494,31 @@ fun MediaDetailScreen(series: MediaSeries, onBack: () -> Unit, onPlay: (QuarkFil
                     AppText(text = "${series.year ?: ""}", style = MaterialTheme.typography.bodyMedium)
                     AppText(text = " | ${series.category}", style = MaterialTheme.typography.bodyMedium, color = Color.Gray)
                 }
-                
                 Button(
-                    onClick = { onPlay(currentVideos.firstOrNull() ?: return@Button) },
+                    onClick = { onPlay(series.videos.firstOrNull() ?: return@Button) },
                     modifier = Modifier.fillMaxWidth().height(50.dp),
                     colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF333333))
                 ) {
                     Icon(Icons.Default.PlayArrow, null, tint = Color.White)
                     AppText(text = " 播放", color = Color.White, style = MaterialTheme.typography.titleMedium)
                 }
-                
                 AppText(text = "剧情简介", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, modifier = Modifier.padding(top = 16.dp))
                 AppText(text = series.overview ?: "暂无简介", style = MaterialTheme.typography.bodyMedium, color = Color.DarkGray, modifier = Modifier.padding(top = 8.dp))
             }
         }
-        
-        if (currentSeasons.size > 1) {
-            item {
-                LazyRow(
-                    contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    items(currentSeasons) { season ->
-                        val isSelected = season == selectedSeason
-                        Button(
-                            onClick = { selectedSeason = season },
-                            colors = ButtonDefaults.buttonColors(
-                                containerColor = if (isSelected) MaterialTheme.colorScheme.primary else Color.LightGray,
-                                contentColor = if (isSelected) Color.White else Color.Black
-                            ),
-                            contentPadding = PaddingValues(horizontal = 16.dp, vertical = 6.dp),
-                            modifier = Modifier.height(36.dp)
-                        ) {
-                            AppText("第${season}季")
-                        }
-                    }
-                }
-            }
-        }
-
         item {
-            AppText(text = "剧集列表", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, modifier = Modifier.padding(start = 16.dp, top = if (currentSeasons.size > 1) 0.dp else 24.dp, bottom = 8.dp))
+            AppText(text = "剧集列表", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, modifier = Modifier.padding(start = 16.dp, top = 24.dp, bottom = 8.dp))
         }
-        
         item {
             LazyRow(contentPadding = PaddingValues(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                itemsIndexed(currentVideos) { index, file ->
-                    val s = file.parsedInfo?.season ?: 1
-                    val e = file.parsedInfo?.episode ?: (index + 1)
-                    
-                    val tmdbTitle = series.episodeTitles["${s}_${e}"]
-                    
-                    // 强制显示第X集 + TMDB标题
-                    val label = if (currentVideos.size == 1 && series.videos.size == 1) {
-                        series.title
-                    } else {
+                items(series.videos) { file ->
+                    val e = file.parsedInfo?.episode
+                    val tmdbTitle = if (e != null) series.episodeTitles[e] else null
+                    val label = if (e != null) {
                         "第${e}集" + if (!tmdbTitle.isNullOrBlank()) " $tmdbTitle" else ""
-                    }
-
+                    } else file.name
                     Column(modifier = Modifier.width(160.dp).clickable { onPlay(file) }) {
-                        Box(modifier = Modifier.fillMaxWidth().aspectRatio(16f/9f).clip(RoundedCornerShape(8.dp)).background(Color.DarkGray), contentAlignment = Alignment.Center) {
+                        Box(modifier = Modifier.fillMaxWidth().aspectRatio(16f / 9f).clip(RoundedCornerShape(8.dp)).background(Color.DarkGray), contentAlignment = Alignment.Center) {
                             Icon(Icons.Default.PlayArrow, null, tint = Color.White)
                         }
                         AppText(text = label, maxLines = 1, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(top = 4.dp), fontWeight = FontWeight.Bold)
@@ -564,16 +526,15 @@ fun MediaDetailScreen(series: MediaSeries, onBack: () -> Unit, onPlay: (QuarkFil
                 }
             }
         }
-        
         item {
             Column(modifier = Modifier.fillMaxWidth().background(Color(0xFFF5F5F5)).padding(16.dp).padding(top = 24.dp)) {
                 AppText(text = "文件信息", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-                currentVideos.firstOrNull()?.let { firstFile ->
+                series.videos.firstOrNull()?.let { firstFile ->
                     AppText(text = firstFile.name, style = MaterialTheme.typography.bodySmall, color = Color.Gray, modifier = Modifier.padding(top = 8.dp))
                     val pathStr = firstFile.folderPath.joinToString(" / ")
                     AppText(text = "夸克网盘: /$pathStr", style = MaterialTheme.typography.bodySmall, color = Color.Gray, modifier = Modifier.padding(top = 4.dp))
                     val sizeMb = firstFile.size / (1024 * 1024)
-                    AppText(text = "共 ${currentVideos.size} 集 | ${sizeMb}MB (单集)", style = MaterialTheme.typography.bodySmall, color = Color.Gray, modifier = Modifier.padding(top = 4.dp))
+                    AppText(text = "共 ${series.videos.size} 集 | ${sizeMb}MB (单集)", style = MaterialTheme.typography.bodySmall, color = Color.Gray, modifier = Modifier.padding(top = 4.dp))
                 }
             }
         }
