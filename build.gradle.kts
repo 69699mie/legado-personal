@@ -1,284 +1,321 @@
-@DisableCachingByDefault(because = "架构验证任务没有输出文件")
-abstract class VerifyConfigArchitectureTask : DefaultTask() {
-
-    @get:InputDirectory
-    @get:PathSensitive(PathSensitivity.RELATIVE)
-    abstract val sourceRoot: DirectoryProperty
-
-    @get:Input
-    abstract val legacyPreferenceCallBaseline: MapProperty<String, Int>
-
-    @get:Input
-    abstract val legacyDaoInjectionBaseline: MapProperty<String, Int>
-
-    @get:Input
-    abstract val legacyUiDaoAccessBaseline: MapProperty<String, Int>
-
-    @TaskAction
-    fun verify() {
-        val sourceRootDir = sourceRoot.get().asFile
-        val kotlinFiles = sourceRootDir.walkTopDown()
-            .filter { it.isFile && it.extension == "kt" }
-            .toList()
-        val preferenceBaseline = legacyPreferenceCallBaseline.get()
-        val daoInjectionBaseline = legacyDaoInjectionBaseline.get()
-        val uiDaoAccessBaseline = legacyUiDaoAccessBaseline.get()
-        val violations = mutableListOf<String>()
-        val forbiddenConfigImport = Regex(
-            """^import io\.legado\.app\.(?:help\.config\.AppConfig|ui\.config\..*Config)$""",
-            RegexOption.MULTILINE,
-        )
-        val preferenceCall = Regex("""\b(?:getPref|putPref)[A-Za-z0-9_]*\s*\(""")
-        val daoImport = Regex(
-            """^import io\.legado\.app\.data\.dao\.[A-Za-z0-9_*]+$""",
-            RegexOption.MULTILINE,
-        )
-        val appDbDaoAccess = Regex(
-            """(?:\bappDb|io\.legado\.app\.data\.appDb)\.[A-Za-z0-9_]*Dao\b"""
-        )
-        val readBookConfigWrite = Regex(
-            """\bReadBookConfig\.[a-z_][A-Za-z0-9_]*(?:\.[a-z_][A-Za-z0-9_]*)?\s*="""
-        )
-        val readBookConfigMutationCall = Regex(
-            """\bReadBookConfig\.durConfig\.set[A-Za-z0-9_]*\s*\("""
-        )
-        // 上面两条都按 `ReadBookConfig.` 前缀找，成员 import 之后的裸写一个都看不见：
-        // `import io.legado.app.help.config.ReadBookConfig.durConfig`（含 as 别名）之后
-        // `durConfig = ...` 就是绕过 gateway 的写——不落盘也不 publishState。
-        // 不必管通配 import：Kotlin 不允许从 object 按需导入。
-        val readBookConfigMemberImport = Regex(
-            """^import io\.legado\.app\.help\.config\.ReadBookConfig\.durConfig\b""",
-            RegexOption.MULTILINE,
-        )
-        // 同样的裸写还能从 `with(ReadBookConfig) { durConfig = ... }`／`ReadBookConfig.apply { }`
-        // 这类作用域函数里冒出来。与其枚举作用域函数（还会误伤 ChapterProvider 里只读的
-        // `with(ReadBookConfig)`），不如直接盯裸赋值本身：带 `.` 前缀的限定写法归上面那条管。
-        val readBookConfigBareWrite = Regex("""(?<![.\w])durConfig\s*=(?!=)""")
-        // 文件读写层 ReadStyleRepository 同理是 Koin 单例：谁 inject 谁就能直接 save()
-        // 覆盖 readConfig.json，磁盘与 ReadStyleConfigStore 的内存状态就此分叉。
-        val styleRepositoryOwners = setOf(
-            "io/legado/app/data/repository/ReadStyleRepository.kt",
-            "io/legado/app/data/repository/ReadStyleConfigStore.kt",
-            "io/legado/app/data/repository/ReadBookStyleConfigRepository.kt",
-            "io/legado/app/di/appModule.kt",
-        )
-        // R4.7：Config 的值字段已是 val，字段写入由编译器拦；剩下的唯一写入口是
-        // ReadStyleConfigStore 的列表操作。它是 Koin 单例，谁 inject 谁就能绕过 gateway
-        // 改配置且不触发 save/publishState——所以限定只有下面这几个文件能提到这个类型。
-        val configStoreOwners = setOf(
-            "io/legado/app/data/repository/ReadStyleConfigStore.kt",
-            "io/legado/app/data/repository/ReadBookStyleConfigRepository.kt",
-            "io/legado/app/help/config/ReadBookConfig.kt",
-            "io/legado/app/di/appModule.kt",
-        )
-        val settingsUpdateDeclaration = Regex(
-            """\b(?:class|interface|object|typealias)\s+[A-Za-z0-9_]*SettingsUpdate\b"""
-        )
-        val updateAllDeclaration = Regex("""\bfun\s+(?:<[^>\n]+>\s*)?updateAll\s*\(""")
-        val injectedConfigFiles = setOf(
-            "io/legado/app/help/config/AppConfig.kt",
-            "io/legado/app/help/config/ReadBookConfig.kt",
-            "io/legado/app/help/config/ThemePackageManager.kt",
-        )
-
-        kotlinFiles.forEach { file ->
-            val text = file.readText()
-            val relativePath = file.relativeTo(sourceRootDir).invariantSeparatorsPath
-            val displayPath = "app/src/main/java/$relativePath"
-
-            if ("prefDelegate" in text || "prefStateDelegate" in text ||
-                "Snapshot.withMutableSnapshot" in text
-            ) {
-                violations += "$displayPath: 禁止 Snapshot 配置桥"
-            }
-            if ((relativePath.startsWith("io/legado/app/data/") ||
-                    relativePath.startsWith("io/legado/app/domain/")) &&
-                forbiddenConfigImport.containsMatchIn(text)
-            ) {
-                violations += "$displayPath: data/domain 禁止导入全局 Config"
-            }
-            if (("@Composable" in text || "import androidx.compose" in text) &&
-                forbiddenConfigImport.containsMatchIn(text)
-            ) {
-                violations += "$displayPath: Composable 禁止读取兼容 Config"
-            }
-            if (file.name.endsWith("Config.kt") &&
-                ("mutableStateOf(" in text || "Snapshot.withMutableSnapshot" in text ||
-                    "import androidx.compose.runtime.State" in text ||
-                    "import androidx.compose.runtime.MutableState" in text)
-            ) {
-                violations += "$displayPath: 配置门面禁止持有 Compose State"
-            }
-            if (relativePath !=
-                "io/legado/app/data/repository/ReadBookStyleConfigRepository.kt" &&
-                (readBookConfigWrite.containsMatchIn(text) ||
-                    readBookConfigMutationCall.containsMatchIn(text) ||
-                    readBookConfigMemberImport.containsMatchIn(text) ||
-                    readBookConfigBareWrite.containsMatchIn(text))
-            ) {
-                violations += "$displayPath: ReadBookConfig 写入必须经过 ReadStyleGateway"
-            }
-            if (relativePath !in configStoreOwners && "ReadStyleConfigStore" in text) {
-                violations += "$displayPath: 排版配置的写入口只对 ReadStyleGateway 的实现开放，" +
-                    "不要注入 ReadStyleConfigStore"
-            }
-            if (relativePath !in styleRepositoryOwners && "ReadStyleRepository" in text) {
-                violations += "$displayPath: readConfig.json 的读写只对 ReadStyleConfigStore 与 " +
-                    "ReadStyleGateway 的实现开放，不要注入 ReadStyleRepository"
-            }
-            if (relativePath in injectedConfigFiles && "GlobalContext" in text) {
-                violations += "$displayPath: 配置所有者必须显式注入依赖，禁止 GlobalContext"
-            }
-            if (settingsUpdateDeclaration.containsMatchIn(text)) {
-                violations += "$displayPath: 设置网关禁止重新引入 *SettingsUpdate 分发类型"
-            }
-            if (relativePath.startsWith("io/legado/app/domain/gateway/") &&
-                file.name.endsWith("SettingsGateway.kt") &&
-                updateAllDeclaration.containsMatchIn(text)
-            ) {
-                violations += "$displayPath: 设置网关批量修改必须使用单次 update { copy(...) }"
-            }
-
-            val preferenceCalls = preferenceCall.findAll(text).count()
-            val allowedCalls = preferenceBaseline[relativePath] ?: 0
-            if (preferenceCalls > allowedCalls) {
-                violations += "$displayPath: 新增了 ${preferenceCalls - allowedCalls} 个旧偏好调用"
-            }
-
-            if (relativePath.startsWith("io/legado/app/ui/") &&
-                file.name.contains("ViewModel")
-            ) {
-                val daoDependencies = daoImport.findAll(text).count() +
-                    appDbDaoAccess.findAll(text).count()
-                val allowedDaoDependencies = daoInjectionBaseline[relativePath] ?: 0
-                if (daoDependencies > allowedDaoDependencies) {
-                    violations += "$displayPath: ViewModel 新增了 ${daoDependencies - allowedDaoDependencies} 个 DAO 直连"
-                } else if (daoDependencies < allowedDaoDependencies) {
-                    violations += "$displayPath: 已减少 DAO 直连，请将基线从 $allowedDaoDependencies 下调到 $daoDependencies"
-                }
-            }
-
-            if (relativePath.startsWith("io/legado/app/ui/") &&
-                !file.name.contains("ViewModel")
-            ) {
-                val daoDependencies = daoImport.findAll(text).count() +
-                    appDbDaoAccess.findAll(text).count()
-                val allowedDaoDependencies = uiDaoAccessBaseline[relativePath] ?: 0
-                if (daoDependencies > allowedDaoDependencies) {
-                    violations += "$displayPath: UI 层新增了 ${daoDependencies - allowedDaoDependencies} 个 DAO 直连"
-                } else if (daoDependencies < allowedDaoDependencies) {
-                    violations += "$displayPath: 已减少 DAO 直连，请将基线从 $allowedDaoDependencies 下调到 $daoDependencies"
-                }
-            }
-        }
-
-        val sourcePaths = kotlinFiles.mapTo(hashSetOf()) {
-            it.relativeTo(sourceRootDir).invariantSeparatorsPath
-        }
-        (daoInjectionBaseline.keys - sourcePaths).forEach { relativePath ->
-            violations += "app/src/main/java/$relativePath: 文件已移除，请删除 DAO 直连基线"
-        }
-        (uiDaoAccessBaseline.keys - sourcePaths).forEach { relativePath ->
-            violations += "app/src/main/java/$relativePath: 文件已移除，请删除 UI DAO 直连基线"
-        }
-
-        check(violations.isEmpty()) {
-            violations.joinToString(prefix = "配置架构护栏失败:\n", separator = "\n")
-        }
-    }
-}
-
-buildscript {
-    extra.apply {
-        set("compile_sdk_version", 36)
-        set("build_tool_version", "34.0.0")
-    }
-}
+import java.io.FileInputStream
+import java.util.Properties
 
 plugins {
-    alias(libs.plugins.compose.compiler) apply false
-    alias(libs.plugins.android.application) apply false
-    alias(libs.plugins.android.library) apply false
-    alias(libs.plugins.kotlin.parcelize) apply false
-    alias(libs.plugins.kotlin.serialization) apply false
-    alias(libs.plugins.ksp) apply false
-    alias(libs.plugins.google.services) apply false
-    alias(libs.plugins.room) apply false
-    alias(libs.plugins.download) apply false
-    alias(libs.plugins.android.test) apply false
-    alias(libs.plugins.baselineprofile) apply false
+    alias(libs.plugins.compose.compiler)
+    alias(libs.plugins.android.application)
+    alias(libs.plugins.kotlin.parcelize)
+    alias(libs.plugins.kotlin.serialization)
+    alias(libs.plugins.room)
+    alias(libs.plugins.ksp)
+    alias(libs.plugins.google.services)
+    alias(libs.plugins.baselineprofile)
 }
 
-tasks.register<Delete>("clean") {
-    delete(rootProject.layout.buildDirectory)
+apply(from = "download.gradle")
+
+val versionPropsFile = file("version.properties")
+val versionProps = Properties().apply {
+    if (versionPropsFile.exists()) {
+        load(FileInputStream(versionPropsFile))
+    }
 }
 
-val verifyConfigArchitecture = tasks.register<VerifyConfigArchitectureTask>(
-    "verifyConfigArchitecture"
-) {
-    group = "verification"
-    description = "禁止配置架构回退、UI 层(ViewModel 及其它)新增 DAO 直连和新增旧偏好调用"
-    sourceRoot.set(layout.projectDirectory.dir("app/src/main/java"))
-    legacyPreferenceCallBaseline.set(
-        mapOf(
-            "io/legado/app/App.kt" to 3,
-            "io/legado/app/base/BaseActivity.kt" to 2,
-            "io/legado/app/base/BaseService.kt" to 1,
-            "io/legado/app/data/repository/CoverAlbumRepository.kt" to 4,
-            "io/legado/app/data/repository/HighlightRuleRepository.kt" to 9,
-            "io/legado/app/data/repository/HomeDashboardRepository.kt" to 3,
-            "io/legado/app/data/repository/ReadRecordRepository.kt" to 1,
-            "io/legado/app/data/repository/SettingsRepository.kt" to 7,
-            "io/legado/app/help/config/LocalConfig.kt" to 3,
-            "io/legado/app/help/config/ThemeConfigStore.kt" to 8,
-            "io/legado/app/help/storage/Restore.kt" to 2,
-            "io/legado/app/receiver/MediaButtonReceiver.kt" to 2,
-            "io/legado/app/service/WebService.kt" to 2,
-            "io/legado/app/ui/association/ImportReplaceRuleDialog.kt" to 1,
-            "io/legado/app/ui/book/explore/ExploreShowViewModel.kt" to 2,
-            "io/legado/app/ui/book/read/ReadBookViewModel.kt" to 2,
-            "io/legado/app/ui/book/readRecord/ReadRecordViewModel.kt" to 1,
-            "io/legado/app/ui/book/search/SearchViewModel.kt" to 3,
-            "io/legado/app/ui/config/CheckSourceConfig.kt" to 1,
-            "io/legado/app/ui/config/otherConfig/OtherConfigViewModel.kt" to 1,
-            "io/legado/app/ui/replace/ReplaceRuleViewModel.kt" to 2,
-            "io/legado/app/utils/ContextExtensions.kt" to 12,
-            "io/legado/app/web/socket/BookSearchWebSocket.kt" to 2,
-        )
-    )
-    legacyDaoInjectionBaseline.set(
-        mapOf(
-            // R2.1 已清零：ReadBookViewModel 的书籍/目录读写全部经 BookRepository。
-            // 保留 0 值条目让棘轮继续盯着这个文件——新增一处直连就报红。
-            "io/legado/app/ui/book/read/ReadBookViewModel.kt" to 0,
-            // 护栏缺席期间（MAD-3 未合并窗口）main 新增的直连，随合并冻结，清理归 Track A/F2
-            "io/legado/app/ui/book/readaloud/cloudtts/CloudTtsViewModel.kt" to 13,
-        )
-    )
-    // 非 ViewModel 的 UI 层文件直连 DAO 的历史债，只冻结不修复；
-    // 清理时逐条下调/删除。护栏会自动要求"减少了就下调基线"，防止回退。
-    legacyUiDaoAccessBaseline.set(
-        mapOf(
-            "io/legado/app/ui/association/AddToBookshelfDialog.kt" to 5,
-            "io/legado/app/ui/association/ImportReplaceRuleDialog.kt" to 1,
-            "io/legado/app/ui/association/ImportRssSourceDialog.kt" to 1,
-            "io/legado/app/ui/book/read/ReadBookController.kt" to 3,
-            // 护栏缺席期间 main 新增（整书页码估算），随合并冻结
-            "io/legado/app/ui/book/read/pageestimate/ExactChapterPageCountStore.kt" to 3,
-            "io/legado/app/ui/book/search/SearchScope.kt" to 4,
-            "io/legado/app/ui/config/bookshelfConfig/BookshelfManageScreenConfig.kt" to 1,
-            "io/legado/app/ui/main/MainNavGraph.kt" to 2,
-            "io/legado/app/ui/rss/article/RssArticlesCompose.kt" to 1,
-            "io/legado/app/ui/rss/read/RssJsExtensions.kt" to 8,
-            "io/legado/app/ui/widget/dialog/BottomWebViewDialog.kt" to 1,
-        )
-    )
-}
+val versionMajor = versionProps["VERSION_MAJOR"]?.toString()?.toInt() ?: 0
+val versionMinor = versionProps["VERSION_MINOR"]?.toString()?.toInt() ?: 0
+val versionPatch = versionProps["VERSION_PATCH"]?.toString()?.toInt() ?: 0
+val appName = "legado"
+val projectVersionName = "$versionMajor.$versionMinor.$versionPatch"
+val enableAbiSplits = providers.gradleProperty("enableAbiSplits")
+    .map(String::toBoolean)
+    .getOrElse(true)
 
-subprojects {
-    tasks.configureEach {
-        if (name.startsWith("assemble") || name.startsWith("compile")) {
-            dependsOn(verifyConfigArchitecture)
+android {
+    compileSdk = 37
+    namespace = "io.legado.app"
+
+    signingConfigs {
+        create("myConfig") {
+            storeFile = file("../keystore/mykey.jks")
+            storePassword = "123456"
+            keyAlias = "key0"
+            keyPassword = "123456"
+            enableV1Signing = true
+            enableV2Signing = true
+            enableV3Signing = true
+            enableV4Signing = true
         }
     }
+
+    defaultConfig {
+        applicationId = "com.mie.reading"
+        minSdk = 26
+        targetSdk = 37
+        // 💡 从 Gradle 属性读取版本，未传入则回退
+        val versionNameFromArg = project.findProperty("appVersionName") as? String ?: "1.0"
+        val versionCodeFromArg = project.findProperty("appVersionCode") as? String ?: "1"
+        versionName = versionNameFromArg
+        versionCode = versionCodeFromArg.toIntOrNull() ?: 1
+        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+
+        buildConfigField("String", "Cronet_Version", "\"${project.findProperty("CronetVersion")}\"")
+        buildConfigField(
+            "String",
+            "Cronet_Main_Version",
+            "\"${project.findProperty("CronetMainVersion")}\""
+        )
+
+        javaCompileOptions {
+            annotationProcessorOptions {
+                arguments += mapOf(
+                    "room.incremental" to "true",
+                    "room.expandProjection" to "true",
+                    "room.schemaLocation" to "$projectDir/schemas"
+                )
+            }
+        }
+    }
+
+    buildFeatures {
+        compose = true
+        buildConfig = true
+        viewBinding = true
+    }
+
+    buildTypes {
+        getByName("release") {
+            signingConfig = signingConfigs.getByName("myConfig")
+            manifestPlaceholders["app_name"] = "@string/app_name"
+            isMinifyEnabled = true
+            isShrinkResources = true
+            proguardFiles(
+                getDefaultProguardFile("proguard-android-optimize.txt"),
+                "proguard-rules.pro",
+                "cronet-proguard-rules.pro"
+            )
+        }
+        create("noR8") {
+            initWith(getByName("release"))
+            isMinifyEnabled = false
+            isShrinkResources = false
+            matchingFallbacks += listOf("release")
+            versionNameSuffix = "-noR8"
+        }
+        getByName("debug") {
+            signingConfig = signingConfigs.getByName("myConfig")
+            manifestPlaceholders["app_name"] = "@string/app_name"
+            versionNameSuffix = "_debug"
+            isMinifyEnabled = false
+            proguardFiles(
+                getDefaultProguardFile("proguard-android-optimize.txt"),
+                "proguard-rules.pro",
+                "cronet-proguard-rules.pro"
+            )
+        }
+    }
+
+    splits {
+        abi {
+            isEnable = true
+            reset()
+            include("arm64-v8a")
+            isUniversalApk = false
+        }
+    }
+
+    flavorDimensions += "mode"
+    productFlavors {
+        create("app") {
+            dimension = "mode"
+            manifestPlaceholders["APP_CHANNEL_VALUE"] = "app"
+        }
+    }
+
+    compileOptions {
+        isCoreLibraryDesugaringEnabled = true
+        sourceCompatibility = JavaVersion.VERSION_21
+        targetCompatibility = JavaVersion.VERSION_21
+    }
+
+    packaging {
+        resources.excludes.add("META-INF/*")
+        resources.excludes.add("META-INF/versions/9/OSGI-INF/MANIFEST.MF")
+        resources.pickFirsts.add("META-INF/versions/9/OSGI-INF/MANIFEST.MF")
+    }
+
+    sourceSets {
+        getByName("androidTest").assets.directories.add("$projectDir/schemas")
+    }
+
+    lint {
+        baseline = file("lint-baseline.xml")
+        checkDependencies = true
+        disable += "UnusedResources"
+    }
+
+    testOptions {
+        unitTests {
+            isIncludeAndroidResources = true
+        }
+    }
+}
+
+kotlin {
+    jvmToolchain {
+        languageVersion.set(JavaLanguageVersion.of(21))
+    }
+}
+
+room {
+    schemaDirectory("$projectDir/schemas")
+}
+
+ksp {
+    arg("room.incremental", "true")
+    arg("room.expandProjection", "true")
+    arg("room.generateKotlin", "false")
+}
+
+dependencies {
+    implementation(libs.androidx.profileinstaller)
+    "baselineProfile"(project(":baselineprofile"))
+    coreLibraryDesugaring(libs.desugar)
+    testImplementation(libs.junit)
+    testImplementation(libs.robolectric)
+    testImplementation(libs.kotlinx.coroutines.test)
+    androidTestImplementation(libs.bundles.androidTest)
+    implementation(libs.kotlin.stdlib)
+    implementation(libs.kotlinx.collections.immutable)
+    implementation(libs.kotlinx.serialization.json)
+    implementation(libs.bundles.coroutines)
+    implementation(libs.core.ktx)
+    implementation(libs.appcompat.appcompat)
+    implementation(libs.activity.ktx)
+    implementation(libs.fragment.ktx)
+    implementation(libs.preference.ktx)
+    implementation(libs.androidx.constraintlayout)
+    implementation(libs.androidx.swiperefreshlayout)
+    implementation(libs.androidx.recyclerview)
+    implementation(libs.androidx.viewpager2)
+    implementation(libs.androidx.webkit)
+    implementation(libs.material)
+    implementation(libs.flexbox)
+    implementation(libs.gson)
+    implementation(libs.lifecycle.common.java8)
+    implementation(libs.lifecycle.service)
+    implementation(libs.media.media)
+    
+    // ===== 播放器模块 =====
+    implementation(libs.media3.exoplayer)
+    implementation(libs.media3.datasource.okhttp)
+    implementation("androidx.media3:media3-ui:1.2.1")
+    implementation("androidx.media3:media3-exoplayer-hls:1.2.1")
+    // =====================
+
+    implementation(libs.splitties.appctx)
+    implementation(libs.splitties.systemservices)
+    implementation(libs.splitties.views)
+    implementation(libs.room.runtime)
+    implementation(libs.room.ktx)
+    ksp(libs.room.compiler)
+    androidTestImplementation(libs.room.testing)
+    implementation(libs.liveeventbus)
+    implementation(libs.jsoup)
+    implementation(libs.json.path)
+    implementation(libs.jsoupxpath)
+    implementation(libs.intellij.markdown)
+    implementation(project(":modules:book"))
+    implementation(project(":modules:rhino"))
+    implementation(libs.okhttp)
+    implementation(fileTree(mapOf("dir" to "cronetlib", "include" to listOf("*.jar", "*.aar"))))
+    implementation(libs.protobuf.javalite)
+    implementation(libs.glide.glide)
+    implementation(libs.glide.okhttp)
+    ksp(libs.glide.ksp)
+    implementation(libs.androidsvg)
+    implementation(libs.glide.svg)
+    implementation(libs.glide.recyclerview)
+    
+    // ===== Ktor 模块（用于本地视频代理） =====
+    implementation(libs.ktor.server.core)
+    implementation(libs.ktor.server.cio)
+    implementation(libs.ktor.server.content.negotiation)
+    implementation(libs.ktor.serialization.gson)
+    implementation(libs.ktor.server.cors)
+    implementation(libs.ktor.server.websockets)
+    // ========================================
+
+    implementation(libs.zxing.lite)
+    implementation(libs.colorpicker)
+    implementation(libs.colorpicker.compose)
+    implementation(libs.libarchive)
+    implementation(libs.commons.text)
+    implementation(libs.markwon.core)
+    implementation(libs.markwon.image.glide)
+    implementation(libs.markwon.ext.tables)
+    implementation(libs.markwon.html)
+    implementation(libs.quick.chinese.transfer.core)
+    implementation(libs.hutool.crypto)
+    implementation(platform(libs.firebase.bom))
+    implementation(libs.firebase.analytics)
+    implementation(libs.firebase.perf)
+    implementation(libs.androidx.datastore.preferences)
+    implementation(libs.androidx.palette)
+    implementation(libs.androidx.biometric)
+    implementation(libs.androidx.core.splashscreen)
+    implementation(libs.androidx.startup.runtime)
+    implementation(platform(libs.androidx.compose.bom))
+    implementation(libs.activity.compose)
+    implementation(libs.androidx.compose.ui)
+    implementation(libs.androidx.compose.ui.tooling.preview)
+    debugImplementation(libs.androidx.compose.ui.tooling)
+    implementation(libs.androidx.compose.material3)
+    implementation(libs.androidx.lifecycle.runtime.compose)
+    implementation(libs.coil.compose)
+    implementation(libs.coil.gif)
+    implementation(libs.coil.svg)
+    implementation(libs.coil.network.okhttp)
+    implementation(libs.telephoto.zoomable.image.coil3)
+    implementation(libs.accompanist.webview)
+    implementation(libs.kotlinx.coroutines.android)
+    implementation(libs.kotlinx.datetime)
+    implementation(libs.androidx.lifecycle.viewmodel.compose)
+    implementation(libs.androidx.lifecycle.viewmodel.navigation3)
+    implementation(libs.androidx.compose.animation)
+    implementation(libs.androidx.compose.foundation)
+    implementation(libs.androidx.constraintlayout.compose)
+    implementation(libs.androidx.compose.ui.viewbinding)
+    implementation(libs.androidx.navigation3.runtime)
+    implementation(libs.androidx.navigation3.ui)
+    implementation(libs.androidx.navigationevent)
+    implementation(libs.androidx.navigationevent.compose)
+    implementation(libs.androidx.compose.adaptive)
+    implementation(libs.androidx.compose.adaptive.layout)
+    implementation(libs.androidx.compose.adaptive.navigation)
+    implementation(libs.androidx.navigation.compose)
+    implementation(libs.androidx.compose.material)
+    implementation(libs.compose.materialIcons)
+    implementation(platform(libs.koin.bom))
+    implementation(libs.koin.core)
+    implementation(libs.koin.android)
+    implementation(libs.koin.compose)
+    implementation(libs.koin.compose.viewmodel)
+    implementation(libs.reorderable)
+    implementation(libs.material.kolor)
+    implementation(libs.haze.core)
+    implementation(libs.haze.materials)
+    implementation(libs.miuix.ui.android)
+    implementation(libs.miuix.preference.android)
+    implementation(libs.miuix.icons.android)
+    implementation(libs.miuix.blur.android)
+    implementation(libs.miuix.core)
+    implementation(libs.capsule)
+    implementation(libs.backdrop)
+    implementation(libs.lyricViewx)
+    implementation(libs.timber)
+}
+
+tasks.withType<Test>().configureEach {
+    forkEvery = 1
+    maxParallelForks = 1
 }
