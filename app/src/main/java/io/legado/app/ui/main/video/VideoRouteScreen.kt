@@ -59,6 +59,7 @@ import okhttp3.Interceptor
 import okhttp3.OkHttpClient
 import okhttp3.Response
 import org.koin.androidx.compose.koinViewModel
+import java.io.IOException
 import java.util.concurrent.TimeUnit
 
 @OptIn(ExperimentalFoundationApi::class, ExperimentalMaterial3Api::class)
@@ -188,7 +189,6 @@ fun VideoRouteScreen(
                                     AppText(text = file.name, maxLines = 1, overflow = TextOverflow.Ellipsis)
                                 }
                                 if (file.isFolder) {
-                                    // 【核心修复】传入了 file.name
                                     IconButton(onClick = { viewModel.toggleLibrary(file.fid, file.name) }) {
                                         Icon(
                                             if (uiState.selectedLibraryFids.contains(file.fid)) Icons.Default.Star else Icons.Outlined.StarBorder,
@@ -341,6 +341,9 @@ fun VideoRouteScreen(
 fun InternalVideoPlayer(url: String, title: String, cookie: String, onBack: () -> Unit) {
     val context = LocalContext.current
     val exoPlayer = remember {
+        // 【核心修复】清洗 Cookie 并注入海阔同款播放 UA，加入日志拦截器
+        val cleanCookie = cookie.replace("\n", "").replace("\r", "").trim()
+        
         val okHttpClient = OkHttpClient.Builder()
             .connectTimeout(15, TimeUnit.SECONDS)
             .readTimeout(15, TimeUnit.SECONDS)
@@ -350,11 +353,19 @@ fun InternalVideoPlayer(url: String, title: String, cookie: String, onBack: () -
                 override fun intercept(chain: Interceptor.Chain): Response {
                     val originalRequest = chain.request()
                     val newRequest = originalRequest.newBuilder()
-                        .header("Referer", "https://drive.quark.cn/")
-                        .header("Cookie", cookie)
-                        .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) quark-cloud-drive/2.5.20 Chrome/100.0.4896.160 Electron/18.3.5.4-b478491100 Safari/537.36 Channel/pckk_other_ch")
+                        // 必须使用 pan.quark.cn 作为 Referer
+                        .header("Referer", "https://pan.quark.cn/")
+                        .header("Cookie", cleanCookie)
+                        // 换成海阔视界中用于播放 m3u8 的标准 Mac UC 浏览器 UA
+                        .header("User-Agent", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/100.0.4896.58 UCBrowser/16.5.8.1309 Mobile Safari/537.36")
                         .build()
-                    return chain.proceed(newRequest)
+                    try {
+                        return chain.proceed(newRequest)
+                    } catch (e: IOException) {
+                        // 捕获具体的网络错误
+                        e.printStackTrace()
+                        throw e
+                    }
                 }
             })
             .build()
@@ -370,7 +381,14 @@ fun InternalVideoPlayer(url: String, title: String, cookie: String, onBack: () -
                 addListener(object : Player.Listener {
                     override fun onPlayerError(error: PlaybackException) {
                         super.onPlayerError(error)
-                        Toast.makeText(context, "播放失败: ${error.errorCodeName}", Toast.LENGTH_LONG).show()
+                        // 【核心修复】如果还是报错，把具体的 HTTP 状态码(如 403, 404) 弹出来
+                        val msg = if (error.cause is androidx.media3.datasource.HttpDataSource.InvalidResponseCodeException) {
+                            val httpError = error.cause as androidx.media3.datasource.HttpDataSource.InvalidResponseCodeException
+                            "播放失败: HTTP ${httpError.responseCode} (请检查链接是否过期)"
+                        } else {
+                            "播放失败: ${error.errorCodeName}"
+                        }
+                        Toast.makeText(context, msg, Toast.LENGTH_LONG).show()
                     }
                 })
             }
