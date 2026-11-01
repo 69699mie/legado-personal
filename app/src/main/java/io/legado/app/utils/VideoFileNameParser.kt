@@ -12,7 +12,7 @@ object VideoFileNameParser {
 
     private val videoExts = listOf(".mp4", ".mkv", ".avi", ".ts", ".m3u8", ".mov", ".rmvb", ".flv")
 
-    // 全面扩充噪音词，直接干掉 DDP2 2Audios 这种
+    // 全面扩充噪音词
     private val noiseWords = listOf(
         "2160p", "1080p", "720p", "480p", "4k", "8k", "hdr", "sdr", "dv", "dolby", "vision",
         "bluray", "bdrip", "web-dl", "webrip", "hdtv", "dvdrip", "remux", "x264", "x265",
@@ -36,39 +36,51 @@ object VideoFileNameParser {
         var name = fileName
         videoExts.forEach { if (name.lowercase().endsWith(it)) { name = name.dropLast(it.length) } }
 
-        // 1. 提取季集
         var season: Int? = null
         var episode: Int? = null
         
-        // 类似 S01E01
+        // 1. 优先匹配 SxxExx 格式
         val seRegex = Regex("(?i)S(\\d{1,2})E(\\d{1,3})")
         seRegex.find(name)?.let {
             season = it.groupValues[1].toIntOrNull()
             episode = it.groupValues[2].toIntOrNull()
             name = name.replace(it.value, " ")
         } ?: run {
-            // 类似 EP01
-            val eRegex = Regex("(?i)(?:^|[^a-z])E(\\d{1,3})(?:[^a-z]|$)")
+            // 2. 匹配 EPxx 格式
+            val eRegex = Regex("(?i)(?:^|[^a-z])EP?(\\d{1,3})(?:[^a-z]|$)")
             eRegex.find(name)?.let {
                 episode = it.groupValues[1].toIntOrNull()
                 name = name.replace(it.value, " ")
             }
-            // 类似 第01集
+            
+            // 3. 匹配 第xx集/话/期
             val cnEpRegex = Regex("第(\\d{1,3})[集话期]")
             cnEpRegex.find(name)?.let {
                 episode = it.groupValues[1].toIntOrNull()
                 name = name.replace(it.value, " ")
             }
             
-            // 海阔视界同款：提取纯数字作为集数
+            // 4. 终极海阔视界同款：剔除干扰后，找纯数字作为集数
             if (episode == null) {
-                val allNums = Regex("\\d+").findAll(name).map { it.value }.toList()
+                // 预清理：去掉年份、分辨率后缀，防止它们被误认为集数
+                var cleanForNum = name
+                    .replace(Regex("(19|20)\\d{2}"), " ") // 剔除年份
+                    .replace(Regex("(?i)\\d{3,4}p"), " ") // 剔除 1080p 等
+                    .replace(Regex("(?i)\\d{3,4}k"), " ") // 剔除 4k 等
+                    .replace(Regex("(?i)[xh]26[45]"), " ") // 剔除 x264, h265
+                    .replace(Regex("(?i)ddp\\d(?:\\.\\d)?"), " ") // 剔除 ddp5.1
+                    .replace(Regex("(?i)\\d+audios?"), " ") // 剔除 2audios
+
+                // 找剩下的所有数字
+                val allNums = Regex("\\d+").findAll(cleanForNum).map { it.value }.toList()
+                val excludeNums = setOf("720", "1080", "2160", "480", "360", "264", "265", "1440", "4320", "60", "25", "24", "120", "10", "8")
+                
                 for (numStr in allNums) {
                     val num = numStr.toIntOrNull() ?: continue
-                    if (num in listOf(720, 1080, 2160, 480, 360, 264, 265, 1440, 4320)) continue
-                    if (num in 1..999 && numStr.length <= 3) {
+                    if (excludeNums.contains(numStr)) continue
+                    // 正常的集数通常在 1 到 999 之间
+                    if (num in 1..999) {
                         episode = num
-                        // 只剔除第一个找到的符合条件的数字
                         name = name.replaceFirst(numStr, " ")
                         break
                     }
@@ -76,6 +88,7 @@ object VideoFileNameParser {
             }
         }
         
+        // 提取季数
         val cnSeasonRegex = Regex("第([0-9一二三四五六七八九十]+)季")
         cnSeasonRegex.find(name)?.let {
             val sStr = it.groupValues[1]
@@ -98,7 +111,7 @@ object VideoFileNameParser {
             }
         }
 
-        // 2. 提取年份
+        // 提取年份
         var year: Int? = null
         val yearRegex = Regex("(19|20)\\d{2}")
         yearRegex.find(name)?.let {
@@ -106,7 +119,7 @@ object VideoFileNameParser {
             name = name.replace(it.value, " ")
         }
 
-        // 3. 清理无意义标签
+        // 清理无意义标签
         var cleanName = name.replace(Regex("[._\\-\\[\\]()【】]"), " ")
         
         cleanName = cleanName.split(" ")
@@ -114,12 +127,12 @@ object VideoFileNameParser {
                 val w = word.trim()
                 w.isNotEmpty() && 
                 !noiseWords.contains(w.lowercase()) && 
-                !w.matches(Regex("^[a-zA-Z]{1,2}$")) // 过滤掉 DDP 这种短字母
+                !w.matches(Regex("^[a-zA-Z]{1,2}$"))
             }
             .joinToString(" ")
 
-        // 4. 终极兜底
-        if (cleanName.isBlank() || cleanName.length < 2 || cleanName.all { it.isDigit() }) {
+        // 终极兜底
+        if (cleanName.isBlank() || cleanName.length < 2 || cleanName.matches(Regex("^\\d+$"))) {
             if (!parentFolder.isNullOrBlank() && !isSeasonFolder(parentFolder) && !listOf("电影", "电视剧", "动漫", "未观看", "已观看").contains(parentFolder)) {
                 cleanName = parentFolder
             } else {
