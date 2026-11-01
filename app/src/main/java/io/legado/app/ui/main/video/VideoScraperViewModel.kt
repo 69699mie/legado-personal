@@ -35,7 +35,7 @@ data class QuarkFile(
 data class MediaSeries(
     val id: String,
     val title: String,
-    val originalParsedTitle: String,
+    val originalParsedTitle: String, // 用于 TMDB 搜索的关键词（可能包含多级父目录）
     val year: Int?,
     val category: String,
     val posterUrl: String? = null,
@@ -162,31 +162,36 @@ class VideoScraperViewModel(
         for (v in videos) {
             val parsed = v.parsedInfo ?: continue
             var baseTitle = ""
-            var finalCategory = v.category // 默认使用传入的根目录名作为分类
-            
-            // 1. 向上追溯寻找真实的父文件夹名（如：狂飙）
+            var finalCategory = v.category 
+            val validFolders = mutableListOf<String>()
+
+            // 1. 向上追溯寻找真实的父文件夹名和分类
             if (v.folderPath.isNotEmpty()) {
                 for (i in v.folderPath.indices.reversed()) {
                     val folder = v.folderPath[i]
-                    // 2. 极简分类逻辑：根据路径中包含的词来强行判定分类
+                    // 极简分类逻辑
                     if (folder.contains("动漫") || folder.contains("动画")) finalCategory = "动漫"
                     else if (folder.contains("电视剧") || folder.contains("剧集")) finalCategory = "剧集"
                     else if (folder.contains("电影")) finalCategory = "电影"
                     
-                    // 剔除无意义的分类目录，找到真实名称
+                    // 剔除无意义的分类目录和季目录，将有效目录（如 仙逆剧场版、弑仙之战）收集起来
                     if (!ignoreFolders.contains(folder) && !VideoFileNameParser.isSeasonFolder(folder)) {
-                        baseTitle = folder
-                        break
+                        validFolders.add(0, folder) // 保持从高到低的顺序
                     }
                 }
             }
             
-            if (baseTitle.isBlank()) {
+            // 取最底层的文件夹名作为聚合的 Key 和展示名称（兜底用）
+            if (validFolders.isNotEmpty()) {
+                baseTitle = validFolders.last()
+            } else {
                 baseTitle = parsed.title
                 if (baseTitle.isBlank() || baseTitle == "未知影视") continue
             }
 
             val key = baseTitle
+            // 将多级目录拼接作为 TMDB 搜索词，如 "仙逆剧场版 弑仙之战"
+            val searchKeyword = if (validFolders.isNotEmpty()) validFolders.joinToString(" ") else parsed.title
             
             if (seriesMap.containsKey(key)) {
                 val exist = seriesMap[key]!!
@@ -197,9 +202,9 @@ class VideoScraperViewModel(
                 seriesMap[key] = MediaSeries(
                     id = key,
                     title = baseTitle,
-                    originalParsedTitle = baseTitle,
+                    originalParsedTitle = searchKeyword, // 使用拼接词去搜索
                     year = parsed.year,
-                    category = finalCategory, // 使用根据目录强判的分类
+                    category = finalCategory,
                     videos = listOf(v)
                 )
             }
@@ -274,13 +279,18 @@ class VideoScraperViewModel(
     private fun scrapeSeriesPosters(seriesList: List<MediaSeries>, apiKey: String, baseUrl: String) {
         viewModelScope.launch(Dispatchers.IO) {
             val updatedList = seriesList.map { series ->
-                // 用父文件夹名（如“狂飙”）去搜索
-                val match = searchTmdbWithFallback(series.originalParsedTitle, series.year, apiKey, baseUrl)
+                // 传入系列名作为兜底，如果拼接词搜不到，就用底层文件夹名搜
+                val match = searchTmdbWithFallback(series.originalParsedTitle, series.title, series.year, apiKey, baseUrl)
                 if (match != null) {
                     var finalTitle = match.title
-                    // 如果原文件夹是纯中文，无视TMDB返回，强制保留原中文名
-                    if (series.originalParsedTitle.matches(Regex("^[\\u4e00-\\u9fa5]+$"))) {
-                        finalTitle = series.originalParsedTitle
+                    
+                    // 核心防错：如果 TMDB 返回的标题是纯英文/数字，且我们的原目录名是纯中文，强制保留原目录名！
+                    val isMatchTitleEnglish = finalTitle.matches(Regex("^[a-zA-Z0-9\\s\\p{Punct}]+$"))
+                    val isOriginalTitleChinese = series.title.any { it.code > 127 }
+                    
+                    if (isMatchTitleEnglish && isOriginalTitleChinese) {
+                        // 如果原目录名包含了上级（如：仙逆剧场版 弑仙之战），这里直接用 series.title（即底层名）或者 originalParsedTitle
+                        finalTitle = if (series.originalParsedTitle.any { it.code > 127 }) series.originalParsedTitle else series.title
                     }
 
                     val epTitles = mutableMapOf<String, String>()
@@ -296,7 +306,6 @@ class VideoScraperViewModel(
 
                     series.copy(
                         title = finalTitle,
-                        // 这里不再判断 genreIds，直接使用 aggregateToSeries 里根据路径定好的 category
                         posterUrl = match.posterUrl,
                         overview = match.overview,
                         rating = match.rating,
@@ -313,13 +322,22 @@ class VideoScraperViewModel(
         }
     }
 
-    private fun searchTmdbWithFallback(title: String, year: Int?, apiKey: String, baseUrl: String): TmdbSearchResult? {
-        val languages = listOf("zh-CN", "zh-SG", "en-US")
-        for (lang in languages) {
-            val result = searchTmdb(title, year, apiKey, baseUrl, lang)
-            if (result != null) return result
+    private fun searchTmdbWithFallback(primaryTitle: String, fallbackTitle: String, year: Int?, apiKey: String, baseUrl: String): TmdbSearchResult? {
+        // 1. 优先用完整路径词搜中文
+        var result = searchTmdb(primaryTitle, year, apiKey, baseUrl, "zh-CN")
+        
+        // 2. 如果搜不到，并且有备用词（底层文件夹名），用备用词搜中文
+        if (result == null && primaryTitle != fallbackTitle) {
+            result = searchTmdb(fallbackTitle, year, apiKey, baseUrl, "zh-CN")
         }
-        return null
+        if (result != null) return result
+
+        // 3. 如果还没有，直接搜英文（逻辑上少用，但作为兜底）
+        result = searchTmdb(primaryTitle, year, apiKey, baseUrl, "en-US")
+        if (result == null && primaryTitle != fallbackTitle) {
+            result = searchTmdb(fallbackTitle, year, apiKey, baseUrl, "en-US")
+        }
+        return result
     }
 
     private fun searchTmdb(title: String, year: Int?, apiKey: String, baseUrl: String, language: String): TmdbSearchResult? {
@@ -343,7 +361,12 @@ class VideoScraperViewModel(
                             val releaseYear = item.optString("release_date").take(4).toIntOrNull() ?: item.optString("first_air_date").take(4).toIntOrNull()
                             
                             var score = 0.0
+                            // 如果官方标题包含搜索词，或者搜索词包含官方标题，加高分
                             if (officialTitle.contains(title) || title.contains(officialTitle)) score += 5.0
+                            // 如果是多个词拼接，只要包含其中一个长词，也给分
+                            title.split(" ").forEach { word ->
+                                if (word.length > 1 && officialTitle.contains(word)) score += 3.0
+                            }
                             if (year != null && releaseYear == year) score += 5.0
                             
                             if (score > topScore && score > 0) {
