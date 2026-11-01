@@ -14,7 +14,6 @@ class VideoSettingsRepository(context: Context) {
         get() = prefs.getString("tmdb_api_key", "") ?: ""
         set(value) { prefs.edit().putString("tmdb_api_key", value).apply() }
 
-    // ➕ 新增：TMDB API 代理地址（解决国内网络直连失败问题）
     var tmdbBaseUrl: String
         get() = prefs.getString("tmdb_base_url", "https://api.tmdb.org") ?: "https://api.tmdb.org"
         set(value) { prefs.edit().putString("tmdb_base_url", value).apply() }
@@ -22,4 +21,9 @@ class VideoSettingsRepository(context: Context) {
     var libraryFids: String
         get() = prefs.getString("library_fids", "") ?: ""
         set(value) { prefs.edit().putString("library_fids", value).apply() }
+
+    // 用于持久化片头片尾数据 (JSON格式)
+    var introOutroData: String
+        get() = prefs.getString("intro_outro_data", "{}") ?: "{}"
+        set(value) { prefs.edit().putString("intro_outro_data", value).apply() }
 }
