@@ -21,10 +21,8 @@ import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
-import androidx.compose.foundation.gestures.awaitEachGesture
-import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.detectDragGestures
-import androidx.compose.foundation.gestures.waitForUpOrCancellation
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
@@ -79,7 +77,6 @@ import androidx.media3.ui.PlayerView
 import coil3.compose.AsyncImage
 import io.legado.app.ui.widget.components.text.AppText
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.launch
 import org.koin.androidx.compose.koinViewModel
 import kotlin.math.roundToInt
 
@@ -336,7 +333,7 @@ fun WebLoginView(onLoginSuccess: (String) -> Unit, onCancel: () -> Unit) {
 }
 
 // ==========================================
-// 核心播放器组件 (无占位，完整逻辑)
+// 核心播放器组件 (无报错，完整逻辑)
 // ==========================================
 
 enum class ResizeMode { FIT, FILL, ZOOM }
@@ -348,7 +345,7 @@ fun InternalVideoPlayer(
     title: String,
     cookie: String,
     series: MediaSeries,
-    currentFile: QuarkFile, // 明确传入当前文件
+    currentFile: QuarkFile,
     viewModel: VideoScraperViewModel,
     onBack: () -> Unit
 ) {
@@ -356,9 +353,6 @@ fun InternalVideoPlayer(
     val activity = context as? Activity
     val configuration = LocalConfiguration.current
     val isLandscape = configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
-    val density = context.resources.displayMetrics.density
-    val screenWidth = configuration.screenWidthDp * density
-    val screenHeight = configuration.screenHeightDp * density
 
     // 沉浸式全屏
     DisposableEffect(Unit) {
@@ -478,23 +472,23 @@ fun InternalVideoPlayer(
 
     BackHandler { onBack() }
 
-    var lastTapTime by remember { mutableLongStateOf(0L) }
-    
-    Box(modifier = Modifier.fillMaxSize().background(Color.Black).pointerInput(isLocked) {
-        if (isLocked) return@pointerInput
-        awaitEachGesture {
-            val down = awaitFirstDown()
-            val startPos = down.position
-            val startTime = System.currentTimeMillis()
-            var isDragging = false
-            var isLongPressTriggered = false
-
-            val dragJob = launch {
+    // 手势处理（修复编译错误，使用标准组合手势）
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Color.Black)
+            .pointerInput(isLocked) {
+                if (isLocked) return@pointerInput
                 detectDragGestures(
                     onDragStart = { offset ->
-                        isDragging = true
-                        if (offset.x < size.width / 2) { gestureType = "brightness"; gestureValue = activity?.window?.attributes?.screenBrightness ?: 0.5f } 
-                        else { gestureType = "volume"; gestureValue = audioManager.getStreamVolume(AudioManager.STREAM_MUSIC).toFloat() / audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC) }
+                        if (offset.x < size.width / 2) {
+                            gestureType = "brightness"
+                            val currentB = activity?.window?.attributes?.screenBrightness ?: 0.5f
+                            gestureValue = if (currentB < 0) 0.5f else currentB
+                        } else {
+                            gestureType = "volume"
+                            gestureValue = audioManager.getStreamVolume(AudioManager.STREAM_MUSIC).toFloat() / audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC)
+                        }
                     },
                     onDrag = { change, dragAmount ->
                         change.consume()
@@ -507,36 +501,31 @@ fun InternalVideoPlayer(
                             audioManager.setStreamVolume(AudioManager.STREAM_MUSIC, (gestureValue * maxVol).roundToInt(), 0)
                         }
                     },
-                    onDragEnd = { gestureType = "" }
+                    onDragEnd = { gestureType = "" },
+                    onDragCancel = { gestureType = "" }
                 )
             }
-
-            val longPressJob = launch {
-                delay(500)
-                if (!isDragging && !isLocked) { isLongPressTriggered = true; exoPlayer.setPlaybackSpeed(2.0f) }
-            }
-
-            val up = waitForUpOrCancellation()
-            dragJob.cancel(); longPressJob.cancel()
-
-            if (isLongPressTriggered) exoPlayer.setPlaybackSpeed(playbackSpeed)
-            else if (!isDragging && up != null) {
-                val durationTime = System.currentTimeMillis() - startTime
-                if (durationTime < 500) {
-                    val tapTime = System.currentTimeMillis()
-                    if (tapTime - lastTapTime < 300) {
-                        val x = startPos.x
+            .pointerInput(isLocked) {
+                if (isLocked) return@pointerInput
+                detectTapGestures(
+                    onTap = { showControls = !showControls },
+                    onDoubleTap = { offset ->
                         when {
-                            x < size.width / 3 -> exoPlayer.seekTo((exoPlayer.currentPosition - 10000).coerceAtLeast(0))
-                            x > size.width * 2 / 3 -> exoPlayer.seekTo((exoPlayer.currentPosition + 10000).coerceAtMost(exoPlayer.duration))
+                            offset.x < size.width / 3 -> exoPlayer.seekTo((exoPlayer.currentPosition - 10000).coerceAtLeast(0))
+                            offset.x > size.width * 2 / 3 -> exoPlayer.seekTo((exoPlayer.currentPosition + 10000).coerceAtMost(if (duration > 0) duration else Long.MAX_VALUE))
                             else -> { if (isPlaying) exoPlayer.pause() else exoPlayer.play() }
                         }
-                    } else { showControls = !showControls }
-                    lastTapTime = tapTime
-                }
+                    },
+                    onLongPress = {
+                        exoPlayer.setPlaybackSpeed(2.0f)
+                    },
+                    onPress = {
+                        tryAwaitRelease()
+                        exoPlayer.setPlaybackSpeed(playbackSpeed)
+                    }
+                )
             }
-        }
-    }) {
+    ) {
         AndroidView(
             factory = { ctx ->
                 PlayerView(ctx).apply {
@@ -632,7 +621,7 @@ fun InternalVideoPlayer(
                             IconButton(onClick = { if (isPlaying) exoPlayer.pause() else exoPlayer.play() }) {
                                 Icon(if (isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow, null, tint = Color.White, modifier = Modifier.size(36.dp))
                             }
-                            IconButton(onClick = { exoPlayer.seekTo((exoPlayer.currentPosition + 10000).coerceAtMost(exoPlayer.duration)) }) {
+                            IconButton(onClick = { exoPlayer.seekTo((exoPlayer.currentPosition + 10000).coerceAtMost(if (duration > 0) duration else Long.MAX_VALUE)) }) {
                                 Icon(Icons.Default.FastForward, null, tint = Color.White)
                             }
                             
