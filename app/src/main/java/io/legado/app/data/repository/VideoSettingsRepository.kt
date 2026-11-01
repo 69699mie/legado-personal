@@ -22,8 +22,13 @@ class VideoSettingsRepository(context: Context) {
         get() = prefs.getString("library_fids", "") ?: ""
         set(value) { prefs.edit().putString("library_fids", value).apply() }
 
-    // 用于持久化片头片尾数据 (JSON格式)
+    // 片头片尾
     var introOutroData: String
         get() = prefs.getString("intro_outro_data", "{}") ?: "{}"
         set(value) { prefs.edit().putString("intro_outro_data", value).apply() }
+
+    // 播放进度记录（JSON: {"fid":"position_ms"}）
+    var videoProgressData: String
+        get() = prefs.getString("video_progress_data", "{}") ?: "{}"
+        set(value) { prefs.edit().putString("video_progress_data", value).apply() }
 }
