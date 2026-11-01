@@ -157,17 +157,23 @@ class VideoScraperViewModel(
     
     private fun aggregateToSeries(videos: List<QuarkFile>): List<MediaSeries> {
         val seriesMap = mutableMapOf<String, MediaSeries>()
-        // 严格跳过分类目录
         val ignoreFolders = setOf("电影", "动漫", "电视剧", "纪录片", "综艺", "未分类", "其他", "未观看", "已观看")
 
         for (v in videos) {
             val parsed = v.parsedInfo ?: continue
             var baseTitle = ""
+            var finalCategory = v.category // 默认使用传入的根目录名作为分类
             
-            // 查找真实名称
+            // 1. 向上追溯寻找真实的父文件夹名（如：狂飙）
             if (v.folderPath.isNotEmpty()) {
                 for (i in v.folderPath.indices.reversed()) {
                     val folder = v.folderPath[i]
+                    // 2. 极简分类逻辑：根据路径中包含的词来强行判定分类
+                    if (folder.contains("动漫") || folder.contains("动画")) finalCategory = "动漫"
+                    else if (folder.contains("电视剧") || folder.contains("剧集")) finalCategory = "剧集"
+                    else if (folder.contains("电影")) finalCategory = "电影"
+                    
+                    // 剔除无意义的分类目录，找到真实名称
                     if (!ignoreFolders.contains(folder) && !VideoFileNameParser.isSeasonFolder(folder)) {
                         baseTitle = folder
                         break
@@ -175,10 +181,9 @@ class VideoScraperViewModel(
                 }
             }
             
-            // 如果文件夹里找不到，就用解析出来的名字
-            if (baseTitle.isBlank() || ignoreFolders.contains(baseTitle)) {
+            if (baseTitle.isBlank()) {
                 baseTitle = parsed.title
-                if (baseTitle.isBlank() || baseTitle == "未知影视" || baseTitle == "未分类") continue
+                if (baseTitle.isBlank() || baseTitle == "未知影视") continue
             }
 
             val key = baseTitle
@@ -194,7 +199,7 @@ class VideoScraperViewModel(
                     title = baseTitle,
                     originalParsedTitle = baseTitle,
                     year = parsed.year,
-                    category = v.category,
+                    category = finalCategory, // 使用根据目录强判的分类
                     videos = listOf(v)
                 )
             }
@@ -269,18 +274,13 @@ class VideoScraperViewModel(
     private fun scrapeSeriesPosters(seriesList: List<MediaSeries>, apiKey: String, baseUrl: String) {
         viewModelScope.launch(Dispatchers.IO) {
             val updatedList = seriesList.map { series ->
+                // 用父文件夹名（如“狂飙”）去搜索
                 val match = searchTmdbWithFallback(series.originalParsedTitle, series.year, apiKey, baseUrl)
                 if (match != null) {
                     var finalTitle = match.title
+                    // 如果原文件夹是纯中文，无视TMDB返回，强制保留原中文名
                     if (series.originalParsedTitle.matches(Regex("^[\\u4e00-\\u9fa5]+$"))) {
                         finalTitle = series.originalParsedTitle
-                    }
-
-                    var finalCategory = series.category
-                    if (match.genreIds.contains(16)) {
-                        finalCategory = "动漫"
-                    } else if (match.genreIds.isNotEmpty()) {
-                        finalCategory = if (series.videos.size > 1) "剧集" else "电影"
                     }
 
                     val epTitles = mutableMapOf<String, String>()
@@ -296,7 +296,7 @@ class VideoScraperViewModel(
 
                     series.copy(
                         title = finalTitle,
-                        category = finalCategory,
+                        // 这里不再判断 genreIds，直接使用 aggregateToSeries 里根据路径定好的 category
                         posterUrl = match.posterUrl,
                         overview = match.overview,
                         rating = match.rating,
@@ -499,7 +499,6 @@ class VideoScraperViewModel(
                         .url(apiUrl)
                         .post(body)
                         .header("Cookie", cookie)
-                        // 海阔视界标准请求头修复 Referer
                         .header("Referer", "https://drive.quark.cn/")
                         .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) quark-cloud-drive/2.5.20 Chrome/100.0.4896.160 Electron/18.3.5.4-b478491100 Safari/537.36 Channel/pckk_other_ch")
                         .header("Accept", "application/json, text/plain, */*")
