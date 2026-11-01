@@ -15,6 +15,7 @@ import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed // 新增导入
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
@@ -345,17 +346,17 @@ fun InternalVideoPlayer(url: String, title: String, cookie: String, onBack: () -
     
     val exoPlayer = remember {
         val okHttpClient = OkHttpClient.Builder()
-            .connectTimeout(15, TimeUnit.SECONDS)
-            .readTimeout(15, TimeUnit.SECONDS)
+            .connectTimeout(20, TimeUnit.SECONDS)
+            .readTimeout(20, TimeUnit.SECONDS)
             .followRedirects(true)
             .followSslRedirects(true)
             .build()
 
         val okHttpDataSourceFactory = OkHttpDataSource.Factory(okHttpClient)
+            // 采用海阔同款 UA
             .setUserAgent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) quark-cloud-drive/2.5.20 Chrome/100.0.4896.160 Electron/18.3.5.4-b478491100 Safari/537.36 Channel/pckk_other_ch")
             .setDefaultRequestProperties(
                 mapOf(
-                    // 修正：必须是 drive.quark.cn，否则 CDN 校验不通过
                     "Referer" to "https://drive.quark.cn/",
                     "Cookie" to cookie
                 )
@@ -566,14 +567,21 @@ fun MediaDetailScreen(series: MediaSeries, onBack: () -> Unit, onPlay: (QuarkFil
         
         item {
             LazyRow(contentPadding = PaddingValues(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                items(currentVideos) { file ->
+                itemsIndexed(currentVideos) { index, file ->
                     val s = file.parsedInfo?.season ?: 1
-                    val e = file.parsedInfo?.episode
+                    // 【核心兜底】如果解析器没拿到集数，用当前列表的 index + 1 代替
+                    val e = file.parsedInfo?.episode ?: (index + 1)
                     
-                    val tmdbTitle = if (e != null) series.episodeTitles["${s}_${e}"] else null
-                    val label = if (e != null) {
+                    val tmdbTitle = series.episodeTitles["${s}_${e}"]
+                    
+                    // 【显示逻辑】如果有 TMDB 单集标题，显示“第X集 标题”；如果没有，只显示“第X集”
+                    // 绝对不用 file.name
+                    val label = if (currentVideos.size == 1 && series.videos.size == 1) {
+                        // 如果是纯单集电影
+                        series.title
+                    } else {
                         "第${e}集" + if (!tmdbTitle.isNullOrBlank()) " $tmdbTitle" else ""
-                    } else file.name
+                    }
 
                     Column(modifier = Modifier.width(160.dp).clickable { onPlay(file) }) {
                         Box(modifier = Modifier.fillMaxWidth().aspectRatio(16f/9f).clip(RoundedCornerShape(8.dp)).background(Color.DarkGray), contentAlignment = Alignment.Center) {
