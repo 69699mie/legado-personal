@@ -82,6 +82,7 @@ import androidx.media3.common.Player
 import androidx.media3.common.VideoSize
 import androidx.media3.datasource.DefaultHttpDataSource
 import androidx.media3.datasource.HttpDataSource
+import androidx.media3.exoplayer.DefaultLoadControl
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.hls.HlsMediaSource
 import androidx.media3.exoplayer.source.ProgressiveMediaSource
@@ -406,6 +407,7 @@ fun InternalVideoPlayer(
     }
 
     var isPlaying by remember { mutableStateOf(true) }
+    var isBuffering by remember { mutableStateOf(false) }
     var currentPosition by remember { mutableLongStateOf(0L) }
     var duration by remember { mutableLongStateOf(0L) }
     var resolution by remember { mutableStateOf("") }
@@ -458,6 +460,7 @@ fun InternalVideoPlayer(
         }
     }
 
+    // 核心修复：自定义 LoadControl 和 WakeMode，解决自动暂停问题
     val exoPlayer = remember {
         val cleanCookie = cookie.replace("\n", "").replace("\r", "").trim()
         val dataSourceFactory = DefaultHttpDataSource.Factory()
@@ -468,7 +471,21 @@ fun InternalVideoPlayer(
         val isHls = try { Uri.parse(url).path?.contains(".m3u8") == true } catch (e: Exception) { url.contains(".m3u8") }
         val mediaSource = if (isHls) HlsMediaSource.Factory(dataSourceFactory).setAllowChunklessPreparation(true).createMediaSource(mediaItem) else ProgressiveMediaSource.Factory(dataSourceFactory).createMediaSource(mediaItem)
 
-        ExoPlayer.Builder(context).build().apply { setMediaSource(mediaSource); prepare(); playWhenReady = true }
+        // 增大缓冲区：最少缓冲 30 秒，最大缓冲 2 分钟，防频繁暂停
+        val loadControl = DefaultLoadControl.Builder()
+            .setBufferDurationsMs(30000, 120000, 1500, 3000)
+            .build()
+
+        ExoPlayer.Builder(context)
+            .setLoadControl(loadControl)
+            .build()
+            .apply { 
+                setMediaSource(mediaSource); 
+                prepare(); 
+                playWhenReady = true
+                // 保持 CPU 唤醒
+                setWakeMode(androidx.media3.common.C.WAKE_MODE_NETWORK) 
+            }
     }
 
     LaunchedEffect(url) {
@@ -487,6 +504,9 @@ fun InternalVideoPlayer(
         val listener = object : Player.Listener {
             override fun onIsPlayingChanged(playing: Boolean) { isPlaying = playing }
             override fun onPlaybackStateChanged(state: Int) {
+                // 监听缓冲状态
+                isBuffering = state == Player.STATE_BUFFERING
+                
                 if (state == Player.STATE_READY) {
                     duration = exoPlayer.duration.coerceAtLeast(0L)
                     if (!hasRestoredProgress) {
@@ -515,18 +535,17 @@ fun InternalVideoPlayer(
         }
         exoPlayer.addListener(listener)
         onDispose { 
+            // 仅在退出时保存进度，避免高频 I/O 卡顿
             if (exoPlayer.currentPosition > 0) viewModel.saveVideoProgress(currentFile.fid, exoPlayer.currentPosition)
             exoPlayer.removeListener(listener)
             exoPlayer.release() 
         }
     }
 
+    // 仅更新 UI 进度，不再每秒写本地存储
     LaunchedEffect(isPlaying) {
         while (isPlaying) {
             currentPosition = exoPlayer.currentPosition
-            if (currentPosition > 0 && currentPosition % 5000 < 1000) {
-                viewModel.saveVideoProgress(currentFile.fid, currentPosition)
-            }
 
             if (introSeconds > 0 && currentPosition in (introSeconds * 1000L)..(introSeconds * 1000L + 1000L)) showSkipIntro = true
             else if (currentPosition > introSeconds * 1000L) showSkipIntro = false
@@ -633,6 +652,15 @@ fun InternalVideoPlayer(
             modifier = Modifier.fillMaxSize()
         )
 
+        // 缓冲提示 UI
+        if (isBuffering) {
+            Box(
+                modifier = Modifier.align(Alignment.Center).background(Color.Black.copy(alpha = 0.5f), CircleShape).padding(16.dp)
+            ) {
+                CircularProgressIndicator(color = Color.White, modifier = Modifier.size(36.dp))
+            }
+        }
+
         if (gestureType.isNotEmpty()) {
             Box(modifier = Modifier.align(Alignment.Center).background(Color.Black.copy(alpha = 0.6f), RoundedCornerShape(8.dp)).padding(16.dp)) {
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
@@ -720,14 +748,13 @@ fun InternalVideoPlayer(
                 ) {
                     IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, null, tint = Color.White) }
                     
-                    // 标题增加滚动，并拉开与分辨率的距离
                     AppText(
                         text = title, 
                         color = Color.White, 
                         maxLines = 1, 
                         modifier = Modifier
                             .weight(1f)
-                            .padding(start = 8.dp, end = 16.dp) // 增加右侧 padding
+                            .padding(start = 8.dp, end = 16.dp)
                             .basicMarquee()
                     )
                     
@@ -788,7 +815,7 @@ fun InternalVideoPlayer(
                                 // 片头快捷设置（仅横屏）
                                 if (isLandscape) {
                                     AppText(
-                                        text = if (introSeconds > 0) "片头 ${formatTime(introSeconds * 1000L)}" else "片头", 
+                                        text = if (introSeconds > 0) formatTime(introSeconds * 1000L) else "片头", 
                                         color = Color.White, fontSize = 12.sp,
                                         modifier = Modifier.combinedClickable(
                                             onClick = {
@@ -810,18 +837,8 @@ fun InternalVideoPlayer(
                                     if (idx > 0) viewModel.playVideo(context, series, series.videos[idx - 1])
                                 }) { Icon(Icons.Default.SkipPrevious, null, tint = Color.White) }
                                 
-                                if (isLandscape) {
-                                    IconButton(onClick = { exoPlayer.seekTo((exoPlayer.currentPosition - 10000).coerceAtLeast(0)); seekMessage = "快退 10 秒" }) {
-                                        Icon(Icons.Default.FastRewind, null, tint = Color.White)
-                                    }
-                                }
                                 IconButton(onClick = { if (isPlaying) exoPlayer.pause() else exoPlayer.play() }) {
                                     Icon(if (isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow, null, tint = Color.White, modifier = Modifier.size(32.dp))
-                                }
-                                if (isLandscape) {
-                                    IconButton(onClick = { exoPlayer.seekTo((exoPlayer.currentPosition + 10000).coerceAtMost(if (duration > 0) duration else Long.MAX_VALUE)); seekMessage = "快进 10 秒" }) {
-                                        Icon(Icons.Default.FastForward, null, tint = Color.White)
-                                    }
                                 }
                                 
                                 IconButton(onClick = {
@@ -832,7 +849,7 @@ fun InternalVideoPlayer(
                                 // 片尾快捷设置（仅横屏）
                                 if (isLandscape) {
                                     AppText(
-                                        text = if (outroSeconds > 0) "片尾 ${formatTime(outroSeconds * 1000L)}" else "片尾", 
+                                        text = if (outroSeconds > 0) formatTime(outroSeconds * 1000L) else "片尾", 
                                         color = Color.White, fontSize = 12.sp,
                                         modifier = Modifier.combinedClickable(
                                             onClick = {
