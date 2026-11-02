@@ -83,6 +83,7 @@ import androidx.media3.common.VideoSize
 import androidx.media3.datasource.DefaultHttpDataSource
 import androidx.media3.datasource.HttpDataSource
 import androidx.media3.exoplayer.DefaultLoadControl
+import androidx.media3.exoplayer.DefaultRenderersFactory
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.hls.HlsMediaSource
 import androidx.media3.exoplayer.source.ProgressiveMediaSource
@@ -372,7 +373,6 @@ fun InternalVideoPlayer(
     val configuration = LocalConfiguration.current
     val isLandscape = configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
 
-    // 直接控制 Dialog 的 Window 来实现真正的全屏隐藏状态栏
     LaunchedEffect(isLandscape) {
         if (view.isInEditMode) return@LaunchedEffect
         val window = (view.parent as? DialogWindowProvider)?.window ?: activity?.window
@@ -392,7 +392,6 @@ fun InternalVideoPlayer(
     val originalBrightness = remember { activity?.window?.attributes?.screenBrightness ?: WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE }
     DisposableEffect(Unit) {
         onDispose {
-            // 退出时恢复状态栏
             val window = (view.parent as? DialogWindowProvider)?.window ?: activity?.window
             window?.let {
                 WindowCompat.setDecorFitsSystemWindows(it, true)
@@ -443,7 +442,6 @@ fun InternalVideoPlayer(
 
     var hasRestoredProgress by remember { mutableStateOf(false) }
 
-    // 实时网速监听
     LaunchedEffect(Unit) {
         var lastRxBytes = TrafficStats.getUidRxBytes(Process.myUid())
         while (true) {
@@ -470,19 +468,20 @@ fun InternalVideoPlayer(
         val isHls = try { Uri.parse(url).path?.contains(".m3u8") == true } catch (e: Exception) { url.contains(".m3u8") }
         val mediaSource = if (isHls) HlsMediaSource.Factory(dataSourceFactory).setAllowChunklessPreparation(true).createMediaSource(mediaItem) else ProgressiveMediaSource.Factory(dataSourceFactory).createMediaSource(mediaItem)
 
-        // 增大缓冲区：最少缓冲 30 秒，最大缓冲 2 分钟，防频繁暂停
-        val loadControl = DefaultLoadControl.Builder()
-            .setBufferDurationsMs(30000, 120000, 1500, 3000)
-            .build()
+        val loadControl = DefaultLoadControl.Builder().setBufferDurationsMs(30000, 120000, 1500, 3000).build()
+        
+        // 【音画质提升核心】：开启浮点音频输出、优先硬件解码、支持更多格式
+        val renderersFactory = DefaultRenderersFactory(context)
+            .setEnableAudioFloatOutput(true) // 开启高精度浮点音频，提升音质
+            .setExtensionRendererMode(DefaultRenderersFactory.EXTENSION_RENDERER_MODE_PREFER) // 优先调用硬件拓展渲染，处理杜比/HDR
 
-        ExoPlayer.Builder(context)
+        ExoPlayer.Builder(context, renderersFactory)
             .setLoadControl(loadControl)
             .build()
             .apply { 
                 setMediaSource(mediaSource); 
                 prepare(); 
                 playWhenReady = true
-                // 保持 CPU 唤醒
                 setWakeMode(androidx.media3.common.C.WAKE_MODE_NETWORK) 
             }
     }
@@ -647,7 +646,6 @@ fun InternalVideoPlayer(
             modifier = Modifier.fillMaxSize()
         )
 
-        // 【UI修改】缓冲提示：去掉黑色背景，仅留指示圈
         if (isBuffering) {
             Box(
                 modifier = Modifier.align(Alignment.Center).padding(16.dp)
@@ -689,9 +687,7 @@ fun InternalVideoPlayer(
         AnimatedVisibility(visible = showControls, enter = fadeIn(), exit = fadeOut(), modifier = Modifier.fillMaxSize()) {
             Box(modifier = Modifier.fillMaxSize()) {
                 
-                // 左右悬浮按钮
                 Column(modifier = Modifier.align(Alignment.CenterStart).padding(start = 16.dp), verticalArrangement = Arrangement.spacedBy(30.dp)) {
-                    // 1. 横竖屏切换
                     Surface(color = Color.White.copy(alpha = 0.1f), shape = CircleShape, border = BorderStroke(1.dp, Color.White.copy(alpha = 0.2f))) {
                         IconButton(onClick = { 
                             if (isLandscape) activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_PORTRAIT 
@@ -701,7 +697,6 @@ fun InternalVideoPlayer(
                         }
                     }
                     
-                    // 2. 选集（仅在横屏时显示在左侧，竖屏不显示）
                     if (isLandscape) {
                         Surface(color = Color.White.copy(alpha = 0.1f), shape = CircleShape, border = BorderStroke(1.dp, Color.White.copy(alpha = 0.2f))) {
                             IconButton(onClick = { showEpisodeDrawer = true }) {
@@ -712,19 +707,16 @@ fun InternalVideoPlayer(
                 }
 
                 Column(modifier = Modifier.align(Alignment.CenterEnd).padding(end = 16.dp), verticalArrangement = Arrangement.spacedBy(30.dp)) {
-                    // 音频（仅横屏）
                     if (isLandscape) {
                         Surface(color = Color.White.copy(alpha = 0.1f), shape = CircleShape, border = BorderStroke(1.dp, Color.White.copy(alpha = 0.2f))) {
                             IconButton(onClick = { Toast.makeText(context, "暂无音频轨道", Toast.LENGTH_SHORT).show() }) { Icon(Icons.Default.Headset, null, tint = Color.White) }
                         }
                     }
                     
-                    // 锁屏（始终显示）
                     Surface(color = Color.White.copy(alpha = 0.1f), shape = CircleShape, border = BorderStroke(1.dp, Color.White.copy(alpha = 0.2f))) {
                         IconButton(onClick = { isLocked = true; showControls = false; showUnlockIcon = true }) { Icon(Icons.Default.Lock, null, tint = Color.White) }
                     }
                     
-                    // 字幕（仅横屏）
                     if (isLandscape) {
                         Surface(color = Color.White.copy(alpha = 0.1f), shape = CircleShape, border = BorderStroke(1.dp, Color.White.copy(alpha = 0.2f))) {
                             IconButton(onClick = { Toast.makeText(context, "暂无字幕", Toast.LENGTH_SHORT).show() }) { Icon(Icons.Default.Subtitles, null, tint = Color.White) }
@@ -732,7 +724,6 @@ fun InternalVideoPlayer(
                     }
                 }
 
-                // 顶部区域
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -763,7 +754,6 @@ fun InternalVideoPlayer(
                     IconButton(onClick = { showSettingsPanel = true }) { Icon(Icons.Default.Settings, contentDescription = "设置", tint = Color.White) }
                 }
 
-                // 底部悬浮胶囊控制栏
                 Box(
                     modifier = Modifier
                         .align(Alignment.BottomCenter)
@@ -776,7 +766,6 @@ fun InternalVideoPlayer(
                         .padding(horizontal = 16.dp, vertical = 12.dp)
                 ) {
                     Column(modifier = Modifier.fillMaxWidth()) {
-                        // 进度条
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             AppText(text = formatTime(currentPosition), color = Color.White, fontSize = 12.sp)
                             Slider(
@@ -791,7 +780,6 @@ fun InternalVideoPlayer(
 
                         Spacer(modifier = Modifier.height(8.dp))
 
-                        // 按钮
                         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                             Text(
                                 text = "${playbackSpeed}x", color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.Bold,
@@ -804,10 +792,8 @@ fun InternalVideoPlayer(
                                 }.padding(8.dp)
                             )
 
-                            // 中间控制按钮区，使用 weight 自动分配空间
                             Row(modifier = Modifier.weight(1f), horizontalArrangement = Arrangement.Center, verticalAlignment = Alignment.CenterVertically) {
                                 
-                                // 片头快捷设置（仅横屏）
                                 if (isLandscape) {
                                     AppText(
                                         text = if (introSeconds > 0) formatTime(introSeconds * 1000L) else "片头", 
@@ -841,7 +827,6 @@ fun InternalVideoPlayer(
                                     if (idx != -1 && idx < series.videos.size - 1) viewModel.playVideo(context, series, series.videos[idx + 1])
                                 }) { Icon(Icons.Default.SkipNext, null, tint = Color.White) }
 
-                                // 片尾快捷设置（仅横屏）
                                 if (isLandscape) {
                                     AppText(
                                         text = if (outroSeconds > 0) formatTime(outroSeconds * 1000L) else "片尾", 
@@ -865,7 +850,6 @@ fun InternalVideoPlayer(
                                 }
                             }
 
-                            // 选集按钮
                             if (isLandscape) {
                                 AppText(text = "选集", color = Color.White, modifier = Modifier.clickable { showEpisodeDrawer = true }.padding(8.dp))
                             } else {
@@ -887,7 +871,6 @@ fun InternalVideoPlayer(
             }
         }
 
-        // 【全局层】长按 2x 提示和快进快退提示（放在最上层，避免被遮挡）
         if (isLongPressing) {
             Box(
                 modifier = Modifier
@@ -910,7 +893,6 @@ fun InternalVideoPlayer(
             }
         }
 
-        // 右侧抽屉：选集 (包含遮罩)
         if (showEpisodeDrawer) {
             Box(modifier = Modifier.fillMaxSize().clickable(indication = null, interactionSource = remember { MutableInteractionSource() }) { showEpisodeDrawer = false })
             AnimatedVisibility(
@@ -949,7 +931,6 @@ fun InternalVideoPlayer(
             }
         }
 
-        // 右侧抽屉：播放设置
         if (showSettingsPanel) {
             Box(modifier = Modifier.fillMaxSize().clickable(indication = null, interactionSource = remember { MutableInteractionSource() }) { showSettingsPanel = false })
             AnimatedVisibility(
@@ -1062,14 +1043,12 @@ fun MediaDetailScreen(
 ) {
     val viewModel: VideoScraperViewModel = koinViewModel()
     
-    // 找到最新进度的一集，用于决定默认选中的季
     val latestWatchedFile = series.videos.maxByOrNull { viewModel.getVideoProgress(it.fid) }
     val latestPlayedSeason = latestWatchedFile?.parsedInfo?.season ?: 1
     
     val seasons = remember(series) { series.videos.map { it.parsedInfo?.season ?: 1 }.distinct().sorted() }
     var selectedSeason by remember { mutableStateOf(latestPlayedSeason) }
     
-    // 过滤当前选中季的剧集
     val currentSeasonVideos = remember(series, selectedSeason) {
         series.videos.filter { (it.parsedInfo?.season ?: 1) == selectedSeason }
     }
@@ -1122,7 +1101,6 @@ fun MediaDetailScreen(
             }
         }
         
-        // 【新增】多季切换 Tab
         if (seasons.size > 1) {
             item {
                 ScrollableTabRow(
@@ -1176,7 +1154,6 @@ fun MediaDetailScreen(
                 AppText(text = "文件信息", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
                 series.videos.firstOrNull()?.let { firstFile ->
                     AppText(text = firstFile.name, style = MaterialTheme.typography.bodySmall, color = Color.Gray, modifier = Modifier.padding(top = 8.dp))
-                    // 【修改】完整路径显示
                     val pathStr = firstFile.folderPath.joinToString(" / ")
                     AppText(text = "夸克网盘: /$pathStr", style = MaterialTheme.typography.bodySmall, color = Color.Gray, modifier = Modifier.padding(top = 4.dp))
                     val sizeMb = firstFile.size / (1024 * 1024)
