@@ -458,7 +458,6 @@ fun InternalVideoPlayer(
         }
     }
 
-    // 【核心修复】去除单线程代理，直接注入 Header 给 ExoPlayer 自己进行多线程分片下载
     val dataSourceFactory = remember(cookie) {
         DefaultHttpDataSource.Factory()
             .setDefaultRequestProperties(
@@ -478,7 +477,6 @@ fun InternalVideoPlayer(
         val isHls = try { Uri.parse(url).path?.contains(".m3u8") == true } catch (e: Exception) { url.contains(".m3u8") }
         val mediaSource = if (isHls) HlsMediaSource.Factory(dataSourceFactory).setAllowChunklessPreparation(true).createMediaSource(mediaItem) else ProgressiveMediaSource.Factory(dataSourceFactory).createMediaSource(mediaItem)
 
-        // 扩大缓冲，支持更流畅的多线程预加载
         val loadControl = DefaultLoadControl.Builder().setBufferDurationsMs(30000, 120000, 1500, 3000).build()
         
         val renderersFactory = DefaultRenderersFactory(context)
@@ -760,7 +758,6 @@ fun InternalVideoPlayer(
                     IconButton(onClick = { showSettingsPanel = true }) { Icon(Icons.Default.Settings, contentDescription = "设置", tint = Color.White) }
                 }
 
-                // 【UI缩小】底部控制栏
                 Box(
                     modifier = Modifier
                         .align(Alignment.BottomCenter)
@@ -1050,19 +1047,30 @@ fun MediaDetailScreen(
 ) {
     val viewModel: VideoScraperViewModel = koinViewModel()
     
+    val seasons = remember(series) { series.videos.map { it.parsedInfo?.season ?: 1 }.distinct().sorted() }
+    
+    // 找到全局最近播放的季数，作为默认选中项
     val latestWatchedFile = series.videos.maxByOrNull { viewModel.getVideoProgress(it.fid) }
     val latestPlayedSeason = latestWatchedFile?.parsedInfo?.season ?: 1
     
-    val seasons = remember(series) { series.videos.map { it.parsedInfo?.season ?: 1 }.distinct().sorted() }
     var selectedSeason by remember { mutableStateOf(latestPlayedSeason) }
     
     val currentSeasonVideos = remember(series, selectedSeason) {
         series.videos.filter { (it.parsedInfo?.season ?: 1) == selectedSeason }
     }
 
-    val hasProgress = latestWatchedFile != null && viewModel.getVideoProgress(latestWatchedFile.fid) > 0
-    val playBtnText = if (hasProgress && latestWatchedFile != null) {
-        val ep = latestWatchedFile.parsedInfo?.episode
+    // 【修复】大按钮的文本与点击逻辑，完全绑定到当前选中的季
+    val latestWatchedInCurrentSeason = currentSeasonVideos.maxByOrNull { viewModel.getVideoProgress(it.fid) }
+    val hasProgressInCurrentSeason = latestWatchedInCurrentSeason != null && viewModel.getVideoProgress(latestWatchedInCurrentSeason.fid) > 0
+    
+    val targetPlayFile = if (hasProgressInCurrentSeason && latestWatchedInCurrentSeason != null) {
+        latestWatchedInCurrentSeason
+    } else {
+        currentSeasonVideos.firstOrNull()
+    }
+
+    val playBtnText = if (targetPlayFile != null && viewModel.getVideoProgress(targetPlayFile.fid) > 0) {
+        val ep = targetPlayFile.parsedInfo?.episode
         if (ep != null) "继续播放 第${ep}集" else "继续播放"
     } else {
         "播放"
@@ -1095,8 +1103,7 @@ fun MediaDetailScreen(
                 }
                 Button(
                     onClick = { 
-                        if (hasProgress && latestWatchedFile != null) onPlay(series, latestWatchedFile)
-                        else onPlay(series, series.videos.firstOrNull() ?: return@Button)
+                        targetPlayFile?.let { onPlay(series, it) }
                     }, 
                     modifier = Modifier.fillMaxWidth().height(50.dp), 
                     colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF333333))
@@ -1108,7 +1115,6 @@ fun MediaDetailScreen(
             }
         }
         
-        // 【修复】多季切换 Tab
         if (seasons.size > 1) {
             item {
                 ScrollableTabRow(
