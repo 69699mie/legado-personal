@@ -26,6 +26,7 @@ import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
+import androidx.compose.foundation.basicMarquee
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
@@ -353,7 +354,7 @@ fun WebLoginView(onLoginSuccess: (String) -> Unit, onCancel: () -> Unit) {
 // 核心播放器组件
 // ==========================================
 
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
 fun InternalVideoPlayer(
     url: String,
@@ -419,6 +420,7 @@ fun InternalVideoPlayer(
     var showIntroOutroDialog by remember { mutableStateOf(false) }
     
     var seekMessage by remember { mutableStateOf<String?>(null) }
+    var isLongPressing by remember { mutableStateOf(false) }
     var gestureType by remember { mutableStateOf("") }
     var gestureValue by remember { mutableFloatStateOf(0f) }
 
@@ -609,8 +611,15 @@ fun InternalVideoPlayer(
                             else -> { if (isPlaying) exoPlayer.pause() else exoPlayer.play() }
                         }
                     },
-                    onLongPress = { exoPlayer.setPlaybackSpeed(2.0f) },
-                    onPress = { tryAwaitRelease(); exoPlayer.setPlaybackSpeed(playbackSpeed) }
+                    onLongPress = { 
+                        isLongPressing = true
+                        exoPlayer.setPlaybackSpeed(2.0f) 
+                    },
+                    onPress = { 
+                        tryAwaitRelease()
+                        isLongPressing = false
+                        exoPlayer.setPlaybackSpeed(playbackSpeed) 
+                    }
                 )
             }
     ) {
@@ -623,19 +632,6 @@ fun InternalVideoPlayer(
             },
             modifier = Modifier.fillMaxSize()
         )
-
-        // 快退快进提示文字位置上移
-        if (seekMessage != null) {
-            Box(
-                modifier = Modifier
-                    .align(Alignment.TopCenter)
-                    .padding(top = if (isLandscape) 80.dp else 120.dp)
-                    .background(Color.Black.copy(alpha = 0.6f), RoundedCornerShape(8.dp))
-                    .padding(horizontal = 16.dp, vertical = 8.dp)
-            ) {
-                AppText(text = seekMessage!!, color = Color.White, fontSize = 16.sp)
-            }
-        }
 
         if (gestureType.isNotEmpty()) {
             Box(modifier = Modifier.align(Alignment.Center).background(Color.Black.copy(alpha = 0.6f), RoundedCornerShape(8.dp)).padding(16.dp)) {
@@ -713,7 +709,7 @@ fun InternalVideoPlayer(
                     }
                 }
 
-                // 顶部区域：仅在竖屏时加 statusBarsPadding，横屏时不加，彻底贴顶
+                // 顶部区域
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -723,14 +719,24 @@ fun InternalVideoPlayer(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, null, tint = Color.White) }
-                    AppText(text = title, color = Color.White, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f).padding(start = 8.dp))
                     
-                    // 【仅在横屏显示】网速和分辨率
+                    // 【修复】标题增加滚动，并允许占满剩余空间
+                    AppText(
+                        text = title, 
+                        color = Color.White, 
+                        maxLines = 1, 
+                        modifier = Modifier
+                            .weight(1f)
+                            .padding(start = 8.dp)
+                            .basicMarquee() // 跑马灯滚动
+                    )
+                    
+                    // 【修复】网速（仅横屏）和分辨率（横竖屏都显示）
                     if (isLandscape) {
                         AppText(text = networkSpeed, color = Color.White, fontSize = 12.sp, modifier = Modifier.padding(end = 12.dp))
-                        if (resolution.isNotBlank()) {
-                            AppText(text = resolution, color = Color.White, fontSize = 12.sp, modifier = Modifier.padding(end = 16.dp))
-                        }
+                    }
+                    if (resolution.isNotBlank()) {
+                        AppText(text = resolution, color = Color.White, fontSize = 12.sp, modifier = Modifier.padding(end = 16.dp))
                     }
                     
                     IconButton(onClick = { showSettingsPanel = true }) { Icon(Icons.Default.Settings, contentDescription = "设置", tint = Color.White) }
@@ -742,11 +748,11 @@ fun InternalVideoPlayer(
                         .align(Alignment.BottomCenter)
                         .navigationBarsPadding()
                         .padding(bottom = 16.dp)
-                        .widthIn(max = if (isLandscape) 640.dp else 400.dp)
-                        .fillMaxWidth(0.9f)
+                        .widthIn(max = if (isLandscape) 680.dp else 400.dp) // 横屏稍微加宽以容纳新按钮
+                        .fillMaxWidth(0.95f) // 竖屏占比稍微放大
                         .background(Color(0xB31A1A1A), RoundedCornerShape(20.dp))
                         .border(1.dp, Color.White.copy(alpha = 0.1f), RoundedCornerShape(20.dp))
-                        .padding(horizontal = 20.dp, vertical = 12.dp)
+                        .padding(horizontal = 16.dp, vertical = 12.dp)
                 ) {
                     Column(modifier = Modifier.fillMaxWidth()) {
                         // 进度条
@@ -777,8 +783,21 @@ fun InternalVideoPlayer(
                                 }.padding(8.dp)
                             )
 
-                            // 中间控制按钮区，使用 weight 自动分配空间，避免被挤压
+                            // 中间控制按钮区，使用 weight 自动分配空间
                             Row(modifier = Modifier.weight(1f), horizontalArrangement = Arrangement.Center, verticalAlignment = Alignment.CenterVertically) {
+                                
+                                // 片头快捷设置（仅横屏）
+                                if (isLandscape) {
+                                    AppText(
+                                        text = "片头", color = Color.White, fontSize = 12.sp,
+                                        modifier = Modifier.clickable {
+                                            introSeconds = (currentPosition / 1000).toInt()
+                                            viewModel.saveIntroOutro(series.title, season, introSeconds, outroSeconds)
+                                            Toast.makeText(context, "已将 ${formatTime(currentPosition)} 设为片头", Toast.LENGTH_SHORT).show()
+                                        }.padding(horizontal = 8.dp, vertical = 4.dp)
+                                    )
+                                }
+
                                 IconButton(onClick = {
                                     val idx = series.videos.indexOfFirst { it.fid == currentFile.fid }
                                     if (idx > 0) viewModel.playVideo(context, series, series.videos[idx - 1])
@@ -802,6 +821,21 @@ fun InternalVideoPlayer(
                                     val idx = series.videos.indexOfFirst { it.fid == currentFile.fid }
                                     if (idx != -1 && idx < series.videos.size - 1) viewModel.playVideo(context, series, series.videos[idx + 1])
                                 }) { Icon(Icons.Default.SkipNext, null, tint = Color.White) }
+
+                                // 片尾快捷设置（仅横屏）
+                                if (isLandscape) {
+                                    AppText(
+                                        text = "片尾", color = Color.White, fontSize = 12.sp,
+                                        modifier = Modifier.clickable {
+                                            val remain = duration - currentPosition
+                                            if (remain > 0) {
+                                                outroSeconds = (remain / 1000).toInt()
+                                                viewModel.saveIntroOutro(series.title, season, introSeconds, outroSeconds)
+                                                Toast.makeText(context, "已将剩余 ${formatTime(remain)} 设为片尾", Toast.LENGTH_SHORT).show()
+                                            }
+                                        }.padding(horizontal = 8.dp, vertical = 4.dp)
+                                    )
+                                }
                             }
 
                             // 选集按钮
@@ -823,6 +857,29 @@ fun InternalVideoPlayer(
                         if (idx != -1 && idx < series.videos.size - 1) viewModel.playVideo(context, series, series.videos[idx + 1])
                     }, modifier = Modifier.align(Alignment.BottomEnd).padding(bottom = 100.dp, end = 16.dp)) { AppText("下一集") }
                 }
+            }
+        }
+
+        // 【全局层】长按 2x 提示和快进快退提示（放在最上层，避免被遮挡）
+        if (isLongPressing) {
+            Box(
+                modifier = Modifier
+                    .align(Alignment.TopCenter)
+                    .padding(top = if (isLandscape) 80.dp else 120.dp)
+                    .background(Color.Black.copy(alpha = 0.6f), RoundedCornerShape(8.dp))
+                    .padding(horizontal = 16.dp, vertical = 8.dp)
+            ) {
+                AppText(text = "2.0x快进中", color = Color.White, fontSize = 16.sp)
+            }
+        } else if (seekMessage != null) {
+            Box(
+                modifier = Modifier
+                    .align(Alignment.TopCenter)
+                    .padding(top = if (isLandscape) 80.dp else 120.dp)
+                    .background(Color.Black.copy(alpha = 0.6f), RoundedCornerShape(8.dp))
+                    .padding(horizontal = 16.dp, vertical = 8.dp)
+            ) {
+                AppText(text = seekMessage!!, color = Color.White, fontSize = 16.sp)
             }
         }
 
@@ -955,7 +1012,17 @@ fun SeriesPosterCard(series: MediaSeries, onClick: () -> Unit, onLongClick: () -
                 AppText(text = series.rating, color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.ExtraBold, style = TextStyle(shadow = Shadow(color = Color.Black, offset = Offset(1f, 1f), blurRadius = 3f)), modifier = Modifier.align(Alignment.BottomEnd).padding(6.dp))
             }
         }
-        AppText(text = series.title, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 4.dp), style = MaterialTheme.typography.bodyMedium)
+        
+        // 【修复】列表标题增加滚动
+        AppText(
+            text = series.title, 
+            maxLines = 1, 
+            modifier = Modifier
+                .padding(top = 4.dp)
+                .basicMarquee(), 
+            style = MaterialTheme.typography.bodyMedium
+        )
+        
         val seasons = series.videos.mapNotNull { it.parsedInfo?.season }.distinct().size
         if (seasons > 1) AppText(text = "共 $seasons 季", color = Color.Gray, style = MaterialTheme.typography.bodySmall)
         else AppText(text = "共 1 季", color = Color.Gray, style = MaterialTheme.typography.bodySmall)
