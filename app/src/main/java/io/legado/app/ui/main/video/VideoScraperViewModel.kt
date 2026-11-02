@@ -202,11 +202,18 @@ class VideoScraperViewModel(
 
             val meaningfulPaths = v.folderPath.filter { !excludeFolders.contains(it) }
             var baseTitle = ""
+            var folderSeason: Int? = null // 从文件夹路径提取季数
+
             if (meaningfulPaths.isNotEmpty()) {
                 if (VideoFileNameParser.isSeasonFolder(meaningfulPaths.last())) {
+                    folderSeason = parseSeasonFromFolder(meaningfulPaths.last())
                     baseTitle = if (meaningfulPaths.size >= 2) meaningfulPaths[meaningfulPaths.size - 2] else meaningfulPaths.last()
                 } else {
                     baseTitle = meaningfulPaths.last()
+                    // 检查是否有上一级是季数
+                    if (meaningfulPaths.size >= 2 && VideoFileNameParser.isSeasonFolder(meaningfulPaths[meaningfulPaths.size - 2])) {
+                        folderSeason = parseSeasonFromFolder(meaningfulPaths[meaningfulPaths.size - 2])
+                    }
                 }
             } else {
                 baseTitle = parsed.title
@@ -215,18 +222,48 @@ class VideoScraperViewModel(
             if (baseTitle.isBlank() || baseTitle == "未知影视") baseTitle = parsed.title
 
             val key = baseTitle
+            
+            // 合并季数：如果从文件夹提取到了季数，则覆盖文件本身的季数
+            val finalParsedInfo = if (folderSeason != null) {
+                parsed.copy(season = folderSeason)
+            } else {
+                parsed
+            }
+
+            val updatedV = v.copy(parsedInfo = finalParsedInfo)
+
             if (seriesMap.containsKey(key)) {
                 val exist = seriesMap[key]!!
-                val combinedVideos = (exist.videos + v).sortedBy { it.parsedInfo?.episode ?: 0 }
+                val combinedVideos = (exist.videos + updatedV).sortedBy { 
+                    if (it.parsedInfo?.season != exist.videos.firstOrNull()?.parsedInfo?.season) {
+                        it.parsedInfo?.season ?: 1
+                    } else {
+                        it.parsedInfo?.episode ?: 0
+                    }
+                }
                 seriesMap[key] = exist.copy(videos = combinedVideos)
             } else {
                 seriesMap[key] = MediaSeries(
                     id = key, title = baseTitle, originalParsedTitle = baseTitle,
-                    year = parsed.year, category = finalCategory, videos = listOf(v)
+                    year = parsed.year, category = finalCategory, videos = listOf(updatedV)
                 )
             }
         }
         return seriesMap.values.toList()
+    }
+
+    private fun parseSeasonFromFolder(folderName: String): Int? {
+        val cnMatch = Regex("第([0-9一二三四五六七八九十]+)季").find(folderName)
+        if (cnMatch != null) {
+            val sStr = cnMatch.groupValues[1]
+            return when(sStr) {
+                "一" -> 1; "二" -> 2; "三" -> 3; "四" -> 4; "五" -> 5
+                "六" -> 6; "七" -> 7; "八" -> 8; "九" -> 9; "十" -> 10
+                else -> sStr.toIntOrNull()
+            }
+        }
+        val enMatch = Regex("(?i)season\\s*(\\d+)").find(folderName) ?: Regex("(?i)^s(\\d{1,2})$").find(folderName)
+        return enMatch?.groupValues?.get(1)?.toIntOrNull()
     }
 
     private suspend fun fetchVideosRecursively(
