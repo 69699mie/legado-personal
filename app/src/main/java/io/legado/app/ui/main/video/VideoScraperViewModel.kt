@@ -74,6 +74,8 @@ class VideoScraperViewModel(
     private val libraryNames = mutableMapOf<String, String>()
 
     init {
+        QuarkProxyServer.start() // 启动本地代理服务
+        
         val savedLibs = videoSettingsRepository.libraryFids.split(",").filter { it.isNotBlank() }
         val fids = mutableSetOf<String>()
         savedLibs.forEach { item ->
@@ -502,18 +504,14 @@ class VideoScraperViewModel(
         } else { file.name }
         
         _uiState.update { it.copy(playUrl = null, playTitle = titleText, currentSeries = series, currentPlayFile = file) }
-        Toast.makeText(context, "正在获取高速播放流...", Toast.LENGTH_SHORT).show()
+        Toast.makeText(context, "正在获取无损原画直链...", Toast.LENGTH_SHORT).show()
 
         viewModelScope.launch {
             val url = withContext(Dispatchers.IO) {
                 try {
-                    // 回退到 v2/play 获取 m3u8，这不仅有原画画质，且 CDN 分配更好速度极快
-                    val apiUrl = "https://drive.quark.cn/1/clouddrive/file/v2/play?pr=ucpro&fr=pc"
-                    val jsonBody = JSONObject().apply {
-                        put("fid", file.fid)
-                        put("resolutions", "4k,2k,super,high,normal,low")
-                        put("supports", "fmp4,m3u8")
-                    }
+                    // 请求原画下载直链
+                    val apiUrl = "https://drive-pc.quark.cn/1/clouddrive/file/download?pr=ucpro&fr=pc"
+                    val jsonBody = JSONObject().apply { put("fids", JSONArray().put(file.fid)) }
                     val body = jsonBody.toString().toRequestBody("application/json".toMediaType())
                     
                     val request = Request.Builder()
@@ -528,22 +526,12 @@ class VideoScraperViewModel(
                         if (!resBody.isNullOrBlank()) {
                             val json = JSONObject(resBody)
                             if (json.optInt("code", -1) == 0) {
-                                val videoList = json.optJSONObject("data")?.optJSONArray("video_list")
-                                if (videoList != null && videoList.length() > 0) {
-                                    for (i in 0 until videoList.length()) {
-                                        val video = videoList.getJSONObject(i)
-                                        if (video.optBoolean("accessable", false)) {
-                                            val videoUrl = video.optJSONObject("video_info")?.optString("url")
-                                            if (!videoUrl.isNullOrBlank()) {
-                                                return@withContext videoUrl
-                                            }
-                                        }
+                                val data = json.optJSONArray("data")
+                                if (data != null && data.length() > 0) {
+                                    val downloadUrl = data.getJSONObject(0).optString("download_url")
+                                    if (!downloadUrl.isNullOrBlank()) {
+                                        return@withContext downloadUrl
                                     }
-                                }
-                            } else {
-                                val msg = json.optString("message")
-                                withContext(Dispatchers.Main) {
-                                    Toast.makeText(context, "接口报错: $msg", Toast.LENGTH_SHORT).show()
                                 }
                             }
                         }
@@ -553,9 +541,12 @@ class VideoScraperViewModel(
             }
 
             if (url != null) {
-                _uiState.update { it.copy(playUrl = url) }
+                // 将原画直链传给本地代理
+                QuarkProxyServer.setPlayInfo(url, cookie)
+                // 播放器直接请求本地代理接口即可
+                _uiState.update { it.copy(playUrl = "http://127.0.0.1:8090/play") }
             } else {
-                Toast.makeText(context, "获取播放流失败，请检查登录状态", Toast.LENGTH_LONG).show()
+                Toast.makeText(context, "获取原画直链失败，请检查登录状态", Toast.LENGTH_LONG).show()
             }
         }
     }
