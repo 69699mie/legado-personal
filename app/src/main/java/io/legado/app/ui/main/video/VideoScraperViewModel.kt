@@ -58,7 +58,6 @@ data class TmdbSearchResult(
     val genreIds: List<Int> = emptyList()
 )
 
-// 刮削本地缓存实体
 data class ScrapeCacheItem(
     val title: String,
     val category: String,
@@ -87,14 +86,10 @@ class VideoScraperViewModel(
     
     private var isProxyInitialized = false
     private var lastQuarkError: String? = null
-
-    // 内存中的缓存表
     private val scrapedCache = mutableMapOf<String, ScrapeCacheItem>()
 
     init {
-        // 加载本地缓存
         loadScrapedCache()
-
         val savedLibs = videoSettingsRepository.libraryFids.split(",").filter { it.isNotBlank() }
         val fids = mutableSetOf<String>()
         savedLibs.forEach { item ->
@@ -118,7 +113,6 @@ class VideoScraperViewModel(
         if (fids.isNotEmpty()) loadLibraryVideos()
     }
 
-    // 加载缓存
     private fun loadScrapedCache() {
         try {
             val jsonStr = videoSettingsRepository.scrapedCacheData
@@ -147,7 +141,6 @@ class VideoScraperViewModel(
         } catch(e: Exception) { e.printStackTrace() }
     }
 
-    // 保存缓存
     private fun saveScrapedCache() {
         try {
             val jsonObj = JSONObject()
@@ -241,21 +234,17 @@ class VideoScraperViewModel(
                 }
                 val groupedSeries = aggregateToSeries(allVideos)
                 
-                // 【核心优化】应用缓存，筛选出需要刮削的新剧或更新了新集的剧
                 val needScrapeList = mutableListOf<MediaSeries>()
                 val finalSeriesList = groupedSeries.map { series ->
                     val cached = scrapedCache[series.id]
                     if (cached != null) {
-                        // 检查是否有新集更新 (对比网盘扫出的最大集数 和 缓存里的最大集数)
                         val cachedMaxEp = cached.episodeTitles.keys.maxOrNull() ?: 0
                         val currentMaxEp = series.videos.maxOfOrNull { it.parsedInfo?.episode ?: 0 } ?: 0
                         
                         if (currentMaxEp > cachedMaxEp) {
-                            // 说明更新了新集，需要重新刮削补全新集信息
                             needScrapeList.add(series)
                             series
                         } else {
-                            // 没有更新，直接使用缓存，秒出结果
                             series.copy(
                                 title = cached.title,
                                 category = cached.category,
@@ -267,7 +256,6 @@ class VideoScraperViewModel(
                             )
                         }
                     } else {
-                        // 全新的剧，加入刮削队列
                         needScrapeList.add(series)
                         series
                     }
@@ -338,13 +326,12 @@ class VideoScraperViewModel(
 
             if (seriesMap.containsKey(key)) {
                 val exist = seriesMap[key]!!
-                val combinedVideos = (exist.videos + updatedV).sortedBy {
-                    if (it.parsedInfo?.season != exist.videos.firstOrNull()?.parsedInfo?.season) {
-                        it.parsedInfo?.season ?: 1
-                    } else {
-                        it.parsedInfo?.episode ?: 0
-                    }
-                }
+                // 【修复】按 season, episode, name 依次进行稳定排序
+                val combinedVideos = (exist.videos + updatedV).sortedWith(
+                    compareBy<QuarkFile> { it.parsedInfo?.season ?: 1 }
+                        .thenBy { it.parsedInfo?.episode ?: 0 }
+                        .thenBy { it.name }
+                )
                 seriesMap[key] = exist.copy(videos = combinedVideos)
             } else {
                 seriesMap[key] = MediaSeries(
@@ -407,7 +394,6 @@ class VideoScraperViewModel(
         }
     }
 
-    // 只接收需要刮削的新剧列表，刮削完成后写入缓存
     private fun scrapeSeriesPosters(needScrapeList: List<MediaSeries>, apiKey: String, baseUrl: String) {
         viewModelScope.launch(Dispatchers.IO) {
             val scrapedList = needScrapeList.map { series ->
@@ -440,7 +426,6 @@ class VideoScraperViewModel(
                         overview = match.overview, rating = match.rating, episodeTitles = epTitles, episodeStills = epStills
                     )
                     
-                    // 写入缓存
                     scrapedCache[newSeries.id] = ScrapeCacheItem(
                         title = newSeries.title,
                         category = newSeries.category,
@@ -459,7 +444,6 @@ class VideoScraperViewModel(
             saveScrapedCache()
             
             withContext(Dispatchers.Main) {
-                // 将新刮削的结果合并回 UI 列表
                 val currentList = _uiState.value.seriesList.map { old ->
                     scrapedList.find { it.id == old.id } ?: old
                 }
@@ -620,7 +604,6 @@ class VideoScraperViewModel(
             it.copy(seriesList = currentList, currentSeries = updatedCurrent ?: it.currentSeries)
         }
         
-        // 手动修正后同步写入缓存，下次打开不丢失
         val updatedSeries = currentList.find { it.id == seriesId }
         if (updatedSeries != null) {
             scrapedCache[seriesId] = ScrapeCacheItem(
