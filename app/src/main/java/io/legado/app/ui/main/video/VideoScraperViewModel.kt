@@ -72,7 +72,7 @@ class VideoScraperViewModel(
     private val pathHistory = mutableListOf<String>()
     private var hasLoadedLibrary = false
     private val libraryNames = mutableMapOf<String, String>()
-    
+
     private var isProxyInitialized = false
 
     init {
@@ -198,7 +198,7 @@ class VideoScraperViewModel(
             for (pathNode in v.folderPath) {
                 if (categoryMap.containsKey(pathNode)) {
                     finalCategory = categoryMap[pathNode]!!
-                    break 
+                    break
                 }
             }
 
@@ -223,7 +223,7 @@ class VideoScraperViewModel(
             if (baseTitle.isBlank() || baseTitle == "未知影视") baseTitle = parsed.title
 
             val key = baseTitle
-            
+
             val finalParsedInfo = if (folderSeason != null) {
                 parsed.copy(season = folderSeason)
             } else {
@@ -234,7 +234,7 @@ class VideoScraperViewModel(
 
             if (seriesMap.containsKey(key)) {
                 val exist = seriesMap[key]!!
-                val combinedVideos = (exist.videos + updatedV).sortedBy { 
+                val combinedVideos = (exist.videos + updatedV).sortedBy {
                     if (it.parsedInfo?.season != exist.videos.firstOrNull()?.parsedInfo?.season) {
                         it.parsedInfo?.season ?: 1
                     } else {
@@ -502,7 +502,7 @@ class VideoScraperViewModel(
             if (!tmdbEpTitle.isNullOrBlank()) "${series.title} 第${epNum}集 $tmdbEpTitle"
             else "${series.title} 第${epNum}集"
         } else { file.name }
-        
+
         _uiState.update { it.copy(playUrl = null, playTitle = titleText, currentSeries = series, currentPlayFile = file) }
         Toast.makeText(context, "正在获取无损原画直链...", Toast.LENGTH_SHORT).show()
 
@@ -538,29 +538,51 @@ class VideoScraperViewModel(
             val apiUrl = "https://drive-pc.quark.cn/1/clouddrive/file/download?pr=ucpro&fr=pc"
             val jsonBody = JSONObject().apply { put("fids", JSONArray().put(fid)) }
             val body = jsonBody.toString().toRequestBody("application/json".toMediaType())
-            
+
             val request = Request.Builder()
-                .url(apiUrl).post(body).header("Cookie", cookie)
+                .url(apiUrl).post(body)
+                .header("Cookie", cookie)
                 .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) quark-cloud-drive/2.5.20 Chrome/100.0.4896.160 Electron/18.3.5.4-b478491100 Safari/537.36 Channel/pckk_other_ch")
-                .header("Referer", "https://pan.quark.cn/") 
+                .header("Referer", "https://pan.quark.cn/")
+                .header("Origin", "https://pan.quark.cn")
                 .header("Accept", "application/json, text/plain, */*")
                 .build()
 
             client.newCall(request).execute().use { response ->
+                val httpCode = response.code
                 val resBody = response.body?.string()
+
+                // 【新增】打印 HTTP 状态码 + 响应体原文，用于定位 500 的真实原因
+                android.util.Log.d("QuarkDownload", "HTTP=$httpCode fid=$fid body=$resBody")
+
                 if (!resBody.isNullOrBlank()) {
                     val json = JSONObject(resBody)
-                    if (json.optInt("code", -1) == 0) {
+                    val code = json.optInt("code", -1)
+                    val message = json.optString("message")
+
+                    // 【新增】业务码非 0 时，打印 code 和 message
+                    if (code != 0) {
+                        android.util.Log.w("QuarkDownload", "code=$code message=$message fid=$fid")
+                    }
+
+                    if (code == 0) {
                         val data = json.optJSONArray("data")
                         if (data != null && data.length() > 0) {
-                            return data.getJSONObject(0).optString("download_url")
+                            val downloadUrl = data.getJSONObject(0).optString("download_url")
+                            // 【新增】空链接兜底与日志
+                            if (downloadUrl.isBlank()) {
+                                android.util.Log.w("QuarkDownload", "download_url 为空 fid=$fid")
+                                return null
+                            }
+                            return downloadUrl
                         }
                     }
                 }
             }
             null
         } catch (e: Exception) {
-            e.printStackTrace()
+            // 【新增】异常日志带 fid，便于定位
+            android.util.Log.e("QuarkDownload", "fetchDirectDownloadUrl 异常 fid=$fid", e)
             null
         }
     }
