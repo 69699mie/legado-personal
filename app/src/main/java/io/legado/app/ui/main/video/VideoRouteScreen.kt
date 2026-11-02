@@ -57,6 +57,7 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.PasswordVisualTransformation
@@ -66,6 +67,7 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
+import androidx.compose.ui.window.DialogWindowProvider
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
@@ -361,13 +363,16 @@ fun InternalVideoPlayer(
 ) {
     val context = LocalContext.current
     val activity = context.findActivity()
+    val view = LocalView.current
     val configuration = LocalConfiguration.current
     val isLandscape = configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
 
-    // 监听横竖屏状态来隐藏/显示状态栏
+    // 【核心修复 1】：直接控制 Dialog 的 Window 来实现真正的全屏隐藏状态栏
     LaunchedEffect(isLandscape) {
-        activity?.window?.let { window ->
-            val controller = WindowInsetsControllerCompat(window, window.decorView)
+        if (view.isInEditMode) return@LaunchedEffect
+        val window = (view.parent as? DialogWindowProvider)?.window ?: activity?.window
+        if (window != null) {
+            val controller = WindowCompat.getInsetsController(window, window.decorView)
             if (isLandscape) {
                 WindowCompat.setDecorFitsSystemWindows(window, false)
                 controller.hide(WindowInsetsCompat.Type.systemBars())
@@ -382,6 +387,12 @@ fun InternalVideoPlayer(
     val originalBrightness = remember { activity?.window?.attributes?.screenBrightness ?: WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE }
     DisposableEffect(Unit) {
         onDispose {
+            // 退出时恢复状态栏
+            val window = (view.parent as? DialogWindowProvider)?.window ?: activity?.window
+            window?.let {
+                WindowCompat.setDecorFitsSystemWindows(it, true)
+                WindowCompat.getInsetsController(it, it.decorView).show(WindowInsetsCompat.Type.systemBars())
+            }
             activity?.window?.let {
                 val params = it.attributes
                 params.screenBrightness = originalBrightness
@@ -592,8 +603,15 @@ fun InternalVideoPlayer(
             modifier = Modifier.fillMaxSize()
         )
 
+        // 【核心修复 2】：快退快进提示文字位置上移
         if (seekMessage != null) {
-            Box(modifier = Modifier.align(Alignment.Center).background(Color.Black.copy(alpha = 0.6f), RoundedCornerShape(8.dp)).padding(horizontal = 16.dp, vertical = 8.dp)) {
+            Box(
+                modifier = Modifier
+                    .align(Alignment.TopCenter)
+                    .padding(top = if (isLandscape) 80.dp else 120.dp) // 横屏和竖屏下移的位置
+                    .background(Color.Black.copy(alpha = 0.6f), RoundedCornerShape(8.dp))
+                    .padding(horizontal = 16.dp, vertical = 8.dp)
+            ) {
                 AppText(text = seekMessage!!, color = Color.White, fontSize = 16.sp)
             }
         }
@@ -674,7 +692,7 @@ fun InternalVideoPlayer(
                     }
                 }
 
-                // 【核心修复】顶部区域：仅在竖屏时加 statusBarsPadding，横屏时不加，彻底贴顶
+                // 顶部区域：仅在竖屏时加 statusBarsPadding，横屏时不加，彻底贴顶
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
