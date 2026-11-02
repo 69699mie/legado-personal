@@ -53,7 +53,8 @@ object QuarkProxyServer {
                         )
                         val success = downloader!!.prepare()
                         if (!success) {
-                            call.respond(HttpStatusCode.InternalServerError, "Prepare failed")
+                            // 【新增】将具体的错误信息返回给 ExoPlayer
+                            call.respond(HttpStatusCode.InternalServerError, downloader!!.lastError.ifBlank { "Prepare failed" })
                             return@get
                         }
                     }
