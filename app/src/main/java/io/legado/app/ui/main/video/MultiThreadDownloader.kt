@@ -31,6 +31,9 @@ class MultiThreadDownloader(
     lateinit var cacheFile: File
     private var raf: RandomAccessFile? = null
 
+    // 【新增】记录准备阶段的具体错误信息，供代理服务器透传
+    var lastError: String = ""
+
     fun getTotalLength(): Long = totalLength
 
     suspend fun prepare(): Boolean = withContext(Dispatchers.IO) {
@@ -39,6 +42,7 @@ class MultiThreadDownloader(
             .header("Cookie", cookie)
             .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) quark-cloud-drive/2.5.20 Chrome/100.0.4896.160 Electron/18.3.5.4-b478491100 Safari/537.36 Channel/pckk_other_ch")
             .header("Referer", "https://pan.quark.cn/")
+            .header("Origin", "https://pan.quark.cn") // 【新增】补全 Origin
             .build()
         try {
             client.newCall(req).execute().use { res ->
@@ -49,9 +53,14 @@ class MultiThreadDownloader(
                     raf = RandomAccessFile(cacheFile, "rw")
                     raf?.setLength(totalLength)
                     return@withContext true
+                } else {
+                    // 【新增】获取具体的错误响应体
+                    val errBody = res.body?.string() ?: "Empty body"
+                    lastError = "HTTP ${res.code}: $errBody"
                 }
             }
         } catch (e: Exception) {
+            lastError = "Exception: ${e.message}"
             e.printStackTrace()
         }
         return@withContext false
@@ -84,6 +93,7 @@ class MultiThreadDownloader(
             .header("Cookie", cookie)
             .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) quark-cloud-drive/2.5.20 Chrome/100.0.4896.160 Electron/18.3.5.4-b478491100 Safari/537.36 Channel/pckk_other_ch")
             .header("Referer", "https://pan.quark.cn/")
+            .header("Origin", "https://pan.quark.cn") // 【新增】补全 Origin
             .header("Range", "bytes=$start-$end")
             .build()
 
