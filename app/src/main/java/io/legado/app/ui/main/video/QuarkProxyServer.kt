@@ -1,5 +1,7 @@
 package io.legado.app.ui.main.video
 
+import android.content.Context
+import io.ktor.http.ContentType
 import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpStatusCode
 import io.ktor.server.application.*
@@ -7,24 +9,26 @@ import io.ktor.server.cio.*
 import io.ktor.server.engine.*
 import io.ktor.server.response.*
 import io.ktor.server.routing.*
-import okhttp3.OkHttpClient
-import okhttp3.Request
-import java.util.concurrent.TimeUnit
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+import java.io.File
+import java.io.RandomAccessFile
 
 object QuarkProxyServer {
-    // 【修复】将 ApplicationEngine? 改为通用泛型类型以适配新版 Ktor
     private var server: EmbeddedServer<*, *>? = null
     private var currentUrl: String = ""
     private var currentCookie: String = ""
+    private var currentFid: String = ""
+    private var threadCount = 4
+    private var downloader: MultiThreadDownloader? = null
 
-    // 针对视频流配置专门的客户端，增加超时和长连接
-    private val client = OkHttpClient.Builder()
-        .connectTimeout(30, TimeUnit.SECONDS)
-        .readTimeout(30, TimeUnit.SECONDS)
-        .build()
+    // 提供给外部的刷新链接回调
+    var onRefreshUrlNeeded: (suspend (fid: String, cookie: String) -> String?)? = null
 
-    fun start() {
+    fun start(context: Context) {
         if (server != null) return
+        val cacheDir = File(context.cacheDir, "QuarkProxyCache").apply { mkdirs() }
+
         server = embeddedServer(CIO, port = 8090) {
             routing {
                 get("/play") {
@@ -33,49 +37,89 @@ object QuarkProxyServer {
                         return@get
                     }
 
-                    // 获取播放器传来的 Range 请求头（支持进度条拖动）
-                    val range = call.request.headers[HttpHeaders.Range]
-                    val reqBuilder = Request.Builder()
-                        .url(currentUrl)
-                        .header("Cookie", currentCookie)
-                        .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) quark-cloud-drive/2.5.20 Chrome/100.0.4896.160 Electron/18.3.5.4-b478491100 Safari/537.36 Channel/pckk_other_ch")
-                        .header("Referer", "https://pan.quark.cn/")
-
-                    if (range != null) {
-                        reqBuilder.header("Range", range)
+                    val rangeHeader = call.request.headers[HttpHeaders.Range]
+                    
+                    // 如果下载器未初始化，先初始化
+                    if (downloader == null) {
+                        downloader = MultiThreadDownloader(
+                            context = context,
+                            cacheDir = cacheDir,
+                            initialUrl = currentUrl,
+                            cookie = currentCookie,
+                            threadCount = threadCount,
+                            onRefreshUrl = {
+                                onRefreshUrlNeeded?.invoke(currentFid, currentCookie)
+                            }
+                        )
+                        val success = downloader!!.prepare()
+                        if (!success) {
+                            call.respond(HttpStatusCode.InternalServerError, "Prepare failed")
+                            return@get
+                        }
                     }
 
-                    try {
-                        client.newCall(reqBuilder.build()).execute().use { response ->
-                            call.response.status(HttpStatusCode.fromValue(response.code))
-                            
-                            // 继承响应头，确保客户端获取到总大小、文件类型等信息
-                            response.header("Content-Type")?.let { 
-                                call.response.header(HttpHeaders.ContentType, it) 
-                            }
-                            response.header("Content-Length")?.let { 
-                                call.response.header(HttpHeaders.ContentLength, it) 
-                            }
-                            response.header("Content-Range")?.let { 
-                                call.response.header(HttpHeaders.ContentRange, it) 
-                            }
+                    val totalLength = downloader!!.getTotalLength()
+                    if (totalLength <= 0) {
+                        call.respond(HttpStatusCode.InternalServerError, "Unknown length")
+                        return@get
+                    }
 
-                            // 流式输出
-                            call.respondOutputStream {
-                                response.body?.byteStream()?.copyTo(this)
-                            }
+                    var start = 0L
+                    var end = totalLength - 1
+
+                    if (rangeHeader != null) {
+                        val range = rangeHeader.replace("bytes=", "").split("-")
+                        start = range.getOrNull(0)?.toLongOrNull() ?: 0L
+                        if (range.size > 1 && range[1].isNotEmpty()) {
+                            end = range[1].toLongOrNull() ?: end
                         }
-                    } catch (e: Exception) {
-                        e.printStackTrace()
-                        call.respond(HttpStatusCode.InternalServerError)
+                    }
+
+                    // 启动后台多线程下载当前请求的区间
+                    downloader!!.startDownload(start, end)
+
+                    call.response.status(HttpStatusCode.PartialContent)
+                    call.response.header(HttpHeaders.AcceptRanges, "bytes")
+                    call.response.header(HttpHeaders.ContentLength, (end - start + 1).toString())
+                    call.response.header(HttpHeaders.ContentRange, "bytes $start-$end/$totalLength")
+                    call.response.header(HttpHeaders.ContentType, "video/mp4")
+
+                    call.respondOutputStream {
+                        val raf = RandomAccessFile(downloader!!.cacheFile, "r")
+                        raf.seek(start)
+                        val buffer = ByteArray(64 * 1024)
+                        var remaining = end - start + 1
+                        
+                        while (remaining > 0) {
+                            // 等待当前偏移量之前的数据下载完毕
+                            downloader!!.awaitDataReady(start + (end - start + 1) - remaining)
+                            
+                            val toRead = minOf(buffer.size.toLong(), remaining).toInt()
+                            val read = raf.read(buffer, 0, toRead)
+                            if (read == -1) break
+                            
+                            this.write(buffer, 0, read)
+                            remaining -= read
+                        }
+                        raf.close()
                     }
                 }
             }
         }.start(wait = false)
     }
 
-    fun setPlayInfo(url: String, cookie: String) {
-        currentUrl = url
-        currentCookie = cookie
+    fun setPlayInfo(url: String, cookie: String, fid: String, threads: Int = 4) {
+        this.currentUrl = url
+        this.currentCookie = cookie
+        this.currentFid = fid
+        this.threadCount = threads
+        // 如果切集或换源，先清理旧的下载器
+        downloader?.stop()
+        downloader = null
+    }
+
+    fun stop() {
+        downloader?.stop()
+        downloader = null
     }
 }
