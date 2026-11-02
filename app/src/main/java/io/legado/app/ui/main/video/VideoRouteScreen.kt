@@ -90,17 +90,11 @@ import androidx.media3.exoplayer.source.ProgressiveMediaSource
 import androidx.media3.ui.AspectRatioFrameLayout
 import androidx.media3.ui.PlayerView
 import coil3.compose.AsyncImage
-import com.danikula.videocache.HttpProxyCacheServer
-import com.danikula.videocache.headers.HeaderInjector
 import io.legado.app.ui.widget.components.text.AppText
 import kotlinx.coroutines.delay
 import org.koin.androidx.compose.koinViewModel
 import java.util.Locale
 import kotlin.math.roundToInt
-
-// ==========================================
-// 主屏幕与列表
-// ==========================================
 
 @OptIn(ExperimentalFoundationApi::class, ExperimentalMaterial3Api::class)
 @Composable
@@ -250,7 +244,6 @@ fun VideoRouteScreen(
         }
     }
 
-    // 设置弹窗（与原版一致）
     if (showSettingsDialog) {
         var inputCookie by remember { mutableStateOf(uiState.cookie) }
         var inputTmdbKey by remember { mutableStateOf(uiState.tmdbApiKey) }
@@ -380,7 +373,6 @@ fun InternalVideoPlayer(
     val configuration = LocalConfiguration.current
     val isLandscape = configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
 
-    // 直接控制 Dialog 的 Window 来实现真正的全屏隐藏状态栏
     LaunchedEffect(isLandscape) {
         if (view.isInEditMode) return@LaunchedEffect
         val window = (view.parent as? DialogWindowProvider)?.window ?: activity?.window
@@ -450,7 +442,6 @@ fun InternalVideoPlayer(
 
     var hasRestoredProgress by remember { mutableStateOf(false) }
 
-    // 实时网速监听
     LaunchedEffect(Unit) {
         var lastRxBytes = TrafficStats.getUidRxBytes(Process.myUid())
         while (true) {
@@ -467,31 +458,27 @@ fun InternalVideoPlayer(
         }
     }
 
-    // 【核心修复】使用 AndroidVideoCache 代理，接口名为 HeaderInjector（带包名 com.danikula.videocache.headers）
-    val proxyUrl = remember(url, cookie) {
-        val proxyServer = HttpProxyCacheServer.Builder(context.applicationContext)
-            .maxCacheSize(1024 * 1024 * 1024) // 1GB 缓存
-            .headerInjector(object : HeaderInjector {
-                override fun addHeaders(url: String?): Map<String, String> {
-                    return mapOf(
-                        "Referer" to "https://pan.quark.cn/",
-                        "Cookie" to cookie.replace("\n", "").replace("\r", "").trim(),
-                        "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) quark-cloud-drive/2.5.20 Chrome/100.0.4896.160 Electron/18.3.5.4-b478491100 Safari/537.36 Channel/pckk_other_ch"
-                    )
-                }
-            })
-            .build()
-        proxyServer.getProxyUrl(url, true)
+    // 【核心修复】去除单线程代理，直接注入 Header 给 ExoPlayer 自己进行多线程分片下载
+    val dataSourceFactory = remember(cookie) {
+        DefaultHttpDataSource.Factory()
+            .setDefaultRequestProperties(
+                mapOf(
+                    "Referer" to "https://pan.quark.cn/",
+                    "Cookie" to cookie.replace("\n", "").replace("\r", "").trim(),
+                    "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) quark-cloud-drive/2.5.20 Chrome/100.0.4896.160 Electron/18.3.5.4-b478491100 Safari/537.36 Channel/pckk_other_ch"
+                )
+            )
+            .setAllowCrossProtocolRedirects(true)
+            .setConnectTimeoutMs(15000)
+            .setReadTimeoutMs(15000)
     }
 
     val exoPlayer = remember {
-        val dataSourceFactory = DefaultHttpDataSource.Factory()
-            .setAllowCrossProtocolRedirects(true).setConnectTimeoutMs(15000).setReadTimeoutMs(15000)
-        
-        val mediaItem = MediaItem.Builder().setUri(proxyUrl).setMediaMetadata(MediaMetadata.Builder().setTitle(title).build()).build()
-        val isHls = try { Uri.parse(proxyUrl).path?.contains(".m3u8") == true } catch (e: Exception) { proxyUrl.contains(".m3u8") }
+        val mediaItem = MediaItem.Builder().setUri(url).setMediaMetadata(MediaMetadata.Builder().setTitle(title).build()).build()
+        val isHls = try { Uri.parse(url).path?.contains(".m3u8") == true } catch (e: Exception) { url.contains(".m3u8") }
         val mediaSource = if (isHls) HlsMediaSource.Factory(dataSourceFactory).setAllowChunklessPreparation(true).createMediaSource(mediaItem) else ProgressiveMediaSource.Factory(dataSourceFactory).createMediaSource(mediaItem)
 
+        // 扩大缓冲，支持更流畅的多线程预加载
         val loadControl = DefaultLoadControl.Builder().setBufferDurationsMs(30000, 120000, 1500, 3000).build()
         
         val renderersFactory = DefaultRenderersFactory(context)
@@ -509,11 +496,10 @@ fun InternalVideoPlayer(
             }
     }
 
-    LaunchedEffect(proxyUrl) {
+    LaunchedEffect(url) {
         hasRestoredProgress = false
-        val dataSourceFactory = DefaultHttpDataSource.Factory().setAllowCrossProtocolRedirects(true)
-        val mediaItem = MediaItem.Builder().setUri(proxyUrl).setMediaMetadata(MediaMetadata.Builder().setTitle(title).build()).build()
-        val isHls = try { Uri.parse(proxyUrl).path?.contains(".m3u8") == true } catch (e: Exception) { proxyUrl.contains(".m3u8") }
+        val mediaItem = MediaItem.Builder().setUri(url).setMediaMetadata(MediaMetadata.Builder().setTitle(title).build()).build()
+        val isHls = try { Uri.parse(url).path?.contains(".m3u8") == true } catch (e: Exception) { url.contains(".m3u8") }
         val mediaSource = if (isHls) HlsMediaSource.Factory(dataSourceFactory).setAllowChunklessPreparation(true).createMediaSource(mediaItem) else ProgressiveMediaSource.Factory(dataSourceFactory).createMediaSource(mediaItem)
         exoPlayer.setMediaSource(mediaSource); exoPlayer.prepare(); exoPlayer.playWhenReady = true
     }
@@ -774,16 +760,17 @@ fun InternalVideoPlayer(
                     IconButton(onClick = { showSettingsPanel = true }) { Icon(Icons.Default.Settings, contentDescription = "设置", tint = Color.White) }
                 }
 
+                // 【UI缩小】底部控制栏
                 Box(
                     modifier = Modifier
                         .align(Alignment.BottomCenter)
                         .navigationBarsPadding()
-                        .padding(bottom = 16.dp)
-                        .widthIn(max = if (isLandscape) 700.dp else 400.dp)
-                        .fillMaxWidth(0.95f)
-                        .background(Color(0xB31A1A1A), RoundedCornerShape(20.dp))
-                        .border(1.dp, Color.White.copy(alpha = 0.1f), RoundedCornerShape(20.dp))
-                        .padding(horizontal = 16.dp, vertical = 12.dp)
+                        .padding(bottom = 12.dp)
+                        .widthIn(max = if (isLandscape) 600.dp else 360.dp)
+                        .fillMaxWidth(0.9f)
+                        .background(Color(0xB31A1A1A), RoundedCornerShape(16.dp))
+                        .border(1.dp, Color.White.copy(alpha = 0.1f), RoundedCornerShape(16.dp))
+                        .padding(horizontal = 12.dp, vertical = 8.dp)
                 ) {
                     Column(modifier = Modifier.fillMaxWidth()) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -792,13 +779,13 @@ fun InternalVideoPlayer(
                                 value = if (duration > 0) currentPosition.toFloat() / duration else 0f,
                                 onValueChange = { currentPosition = (it * duration).toLong() },
                                 onValueChangeFinished = { exoPlayer.seekTo(currentPosition); if (isPlaying) exoPlayer.play() },
-                                modifier = Modifier.weight(1f).padding(horizontal = 8.dp).height(20.dp),
+                                modifier = Modifier.weight(1f).padding(horizontal = 8.dp).height(16.dp),
                                 colors = SliderDefaults.colors(thumbColor = Color.White, activeTrackColor = Color.White, inactiveTrackColor = Color.White.copy(alpha = 0.3f))
                             )
                             AppText(text = formatTime(duration), color = Color.White, fontSize = 12.sp)
                         }
 
-                        Spacer(modifier = Modifier.height(8.dp))
+                        Spacer(modifier = Modifier.height(4.dp))
 
                         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                             Text(
@@ -836,16 +823,16 @@ fun InternalVideoPlayer(
                                 IconButton(onClick = {
                                     val idx = series.videos.indexOfFirst { it.fid == currentFile.fid }
                                     if (idx > 0) viewModel.playVideo(context, series, series.videos[idx - 1])
-                                }) { Icon(Icons.Default.SkipPrevious, null, tint = Color.White) }
+                                }, modifier = Modifier.size(36.dp)) { Icon(Icons.Default.SkipPrevious, null, tint = Color.White, modifier = Modifier.size(24.dp)) }
                                 
-                                IconButton(onClick = { if (isPlaying) exoPlayer.pause() else exoPlayer.play() }) {
-                                    Icon(if (isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow, null, tint = Color.White, modifier = Modifier.size(32.dp))
+                                IconButton(onClick = { if (isPlaying) exoPlayer.pause() else exoPlayer.play() }, modifier = Modifier.size(40.dp)) {
+                                    Icon(if (isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow, null, tint = Color.White, modifier = Modifier.size(28.dp))
                                 }
                                 
                                 IconButton(onClick = {
                                     val idx = series.videos.indexOfFirst { it.fid == currentFile.fid }
                                     if (idx != -1 && idx < series.videos.size - 1) viewModel.playVideo(context, series, series.videos[idx + 1])
-                                }) { Icon(Icons.Default.SkipNext, null, tint = Color.White) }
+                                }, modifier = Modifier.size(36.dp)) { Icon(Icons.Default.SkipNext, null, tint = Color.White, modifier = Modifier.size(24.dp)) }
 
                                 if (isLandscape) {
                                     AppText(
@@ -873,7 +860,7 @@ fun InternalVideoPlayer(
                             if (isLandscape) {
                                 AppText(text = "选集", color = Color.White, modifier = Modifier.clickable { showEpisodeDrawer = true }.padding(8.dp))
                             } else {
-                                Spacer(modifier = Modifier.width(40.dp))
+                                Spacer(modifier = Modifier.width(32.dp))
                             }
                         }
                     }
@@ -1121,6 +1108,7 @@ fun MediaDetailScreen(
             }
         }
         
+        // 【修复】多季切换 Tab
         if (seasons.size > 1) {
             item {
                 ScrollableTabRow(
