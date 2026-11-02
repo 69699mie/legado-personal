@@ -58,6 +58,17 @@ data class TmdbSearchResult(
     val genreIds: List<Int> = emptyList()
 )
 
+// 【新增】刮削本地缓存实体
+data class ScrapeCacheItem(
+    val title: String,
+    val category: String,
+    val posterUrl: String?,
+    val overview: String?,
+    val rating: String?,
+    val episodeTitles: Map<Int, String>,
+    val episodeStills: Map<Int, String>
+)
+
 class VideoScraperViewModel(
     private val videoSettingsRepository: VideoSettingsRepository
 ) : ViewModel() {
@@ -73,13 +84,17 @@ class VideoScraperViewModel(
     private val pathHistory = mutableListOf<String>()
     private var hasLoadedLibrary = false
     private val libraryNames = mutableMapOf<String, String>()
-
+    
     private var isProxyInitialized = false
-
-    // 最近一次获取直链失败时的详细错误，用于弹窗显示
     private var lastQuarkError: String? = null
 
+    // 【新增】内存中的缓存表
+    private val scrapedCache = mutableMapOf<String, ScrapeCacheItem>()
+
     init {
+        // 加载本地缓存
+        loadScrapedCache()
+
         val savedLibs = videoSettingsRepository.libraryFids.split(",").filter { it.isNotBlank() }
         val fids = mutableSetOf<String>()
         savedLibs.forEach { item ->
@@ -101,6 +116,58 @@ class VideoScraperViewModel(
         }
         fetchQuarkFiles("0")
         if (fids.isNotEmpty()) loadLibraryVideos()
+    }
+
+    // 【新增】加载缓存
+    private fun loadScrapedCache() {
+        try {
+            val jsonStr = videoSettingsRepository.scrapedCacheData
+            if (jsonStr.isNotBlank()) {
+                val jsonObj = JSONObject(jsonStr)
+                for (key in jsonObj.keys()) {
+                    val itemObj = jsonObj.getJSONObject(key)
+                    val epTitlesObj = itemObj.optJSONObject("episodeTitles")
+                    val epTitles = mutableMapOf<Int, String>()
+                    epTitlesObj?.keys()?.forEach { k -> epTitles[k.toInt()] = epTitlesObj.getString(k) }
+                    val epStillsObj = itemObj.optJSONObject("episodeStills")
+                    val epStills = mutableMapOf<Int, String>()
+                    epStillsObj?.keys()?.forEach { k -> epStills[k.toInt()] = epStillsObj.getString(k) }
+                    
+                    scrapedCache[key] = ScrapeCacheItem(
+                        title = itemObj.optString("title"),
+                        category = itemObj.optString("category"),
+                        posterUrl = itemObj.optString("posterUrl").takeIf { it.isNotBlank() && it != "null" },
+                        overview = itemObj.optString("overview").takeIf { it.isNotBlank() && it != "null" },
+                        rating = itemObj.optString("rating").takeIf { it.isNotBlank() && it != "null" },
+                        episodeTitles = epTitles,
+                        episodeStills = epStills
+                    )
+                }
+            }
+        } catch(e: Exception) { e.printStackTrace() }
+    }
+
+    // 【新增】保存缓存
+    private fun saveScrapedCache() {
+        try {
+            val jsonObj = JSONObject()
+            scrapedCache.forEach { (key, item) ->
+                val itemObj = JSONObject()
+                itemObj.put("title", item.title)
+                itemObj.put("category", item.category)
+                itemObj.put("posterUrl", item.posterUrl ?: "")
+                itemObj.put("overview", item.overview ?: "")
+                itemObj.put("rating", item.rating ?: "")
+                val epTitlesObj = JSONObject()
+                item.episodeTitles.forEach { (k, v) -> epTitlesObj.put(k.toString(), v) }
+                itemObj.put("episodeTitles", epTitlesObj)
+                val epStillsObj = JSONObject()
+                item.episodeStills.forEach { (k, v) -> epStillsObj.put(k.toString(), v) }
+                itemObj.put("episodeStills", epStillsObj)
+                jsonObj.put(key, itemObj)
+            }
+            videoSettingsRepository.scrapedCacheData = jsonObj.toString()
+        } catch(e: Exception) { e.printStackTrace() }
     }
 
     fun saveSettings(cookie: String, tmdbKey: String, baseUrl: String) {
@@ -173,13 +240,35 @@ class VideoScraperViewModel(
                     }
                 }
                 val groupedSeries = aggregateToSeries(allVideos)
-                _uiState.update { it.copy(seriesList = groupedSeries) }
+                
+                // 【核心优化】应用缓存，筛选出需要刮削的新剧
+                val needScrapeList = mutableListOf<MediaSeries>()
+                val finalSeriesList = groupedSeries.map { series ->
+                    val cached = scrapedCache[series.id]
+                    if (cached != null) {
+                        // 直接使用缓存，秒出结果
+                        series.copy(
+                            title = cached.title,
+                            category = cached.category,
+                            posterUrl = cached.posterUrl,
+                            overview = cached.overview,
+                            rating = cached.rating,
+                            episodeTitles = cached.episodeTitles,
+                            episodeStills = cached.episodeStills
+                        )
+                    } else {
+                        needScrapeList.add(series)
+                        series
+                    }
+                }
+                
+                _uiState.update { it.copy(seriesList = finalSeriesList) }
 
-                if (apiKey.isNotBlank()) {
-                    scrapeSeriesPosters(groupedSeries, apiKey, _uiState.value.tmdbBaseUrl)
+                if (apiKey.isNotBlank() && needScrapeList.isNotEmpty()) {
+                    scrapeSeriesPosters(needScrapeList, apiKey, _uiState.value.tmdbBaseUrl)
                 } else {
                     hasLoadedLibrary = true
-                    _uiState.update { it.copy(isLoading = false, errorMsg = "未配置 TMDB API Key") }
+                    _uiState.update { it.copy(isLoading = false) }
                 }
             } catch (e: Exception) {
                 _uiState.update { it.copy(isLoading = false, errorMsg = "扫描异常: ${e.message}") }
@@ -307,9 +396,10 @@ class VideoScraperViewModel(
         }
     }
 
-    private fun scrapeSeriesPosters(seriesList: List<MediaSeries>, apiKey: String, baseUrl: String) {
+    // 【核心优化】只接收需要刮削的新剧列表，刮削完成后写入缓存
+    private fun scrapeSeriesPosters(needScrapeList: List<MediaSeries>, apiKey: String, baseUrl: String) {
         viewModelScope.launch(Dispatchers.IO) {
-            val updatedList = seriesList.map { series ->
+            val scrapedList = needScrapeList.map { series ->
                 val match = searchTmdbWithFallback(series.originalParsedTitle, series.year, apiKey, baseUrl)
                 if (match != null) {
                     var finalTitle = match.title
@@ -333,15 +423,37 @@ class VideoScraperViewModel(
                         epTitles = pair.first
                         epStills = pair.second
                     }
-                    series.copy(
+                    
+                    val newSeries = series.copy(
                         title = finalTitle, category = finalCategory, posterUrl = match.posterUrl,
                         overview = match.overview, rating = match.rating, episodeTitles = epTitles, episodeStills = epStills
                     )
-                } else { series }
+                    
+                    // 写入缓存
+                    scrapedCache[newSeries.id] = ScrapeCacheItem(
+                        title = newSeries.title,
+                        category = newSeries.category,
+                        posterUrl = newSeries.posterUrl,
+                        overview = newSeries.overview,
+                        rating = newSeries.rating,
+                        episodeTitles = newSeries.episodeTitles,
+                        episodeStills = newSeries.episodeStills
+                    )
+                    newSeries
+                } else {
+                    series
+                }
             }
+            
+            saveScrapedCache()
+            
             withContext(Dispatchers.Main) {
+                // 将新刮削的结果合并回 UI 列表
+                val currentList = _uiState.value.seriesList.map { old ->
+                    scrapedList.find { it.id == old.id } ?: old
+                }
                 hasLoadedLibrary = true
-                _uiState.update { it.copy(isLoading = false, seriesList = updatedList) }
+                _uiState.update { it.copy(isLoading = false, seriesList = currentList) }
             }
         }
     }
@@ -496,6 +608,21 @@ class VideoScraperViewModel(
             val updatedCurrent = currentList.find { s -> s.id == seriesId }
             it.copy(seriesList = currentList, currentSeries = updatedCurrent ?: it.currentSeries)
         }
+        
+        // 【新增】手动修正后同步写入缓存，下次打开不丢失
+        val updatedSeries = currentList.find { it.id == seriesId }
+        if (updatedSeries != null) {
+            scrapedCache[seriesId] = ScrapeCacheItem(
+                title = updatedSeries.title,
+                category = updatedSeries.category,
+                posterUrl = updatedSeries.posterUrl,
+                overview = updatedSeries.overview,
+                rating = updatedSeries.rating,
+                episodeTitles = updatedSeries.episodeTitles,
+                episodeStills = updatedSeries.episodeStills
+            )
+            saveScrapedCache()
+        }
     }
 
     fun playVideo(context: Context, series: MediaSeries, file: QuarkFile) {
@@ -506,12 +633,11 @@ class VideoScraperViewModel(
             if (!tmdbEpTitle.isNullOrBlank()) "${series.title} 第${epNum}集 $tmdbEpTitle"
             else "${series.title} 第${epNum}集"
         } else { file.name }
-
+        
         _uiState.update { it.copy(playUrl = null, playTitle = titleText, currentSeries = series, currentPlayFile = file) }
         Toast.makeText(context, "正在获取无损原画直链...", Toast.LENGTH_SHORT).show()
 
         viewModelScope.launch {
-            // 初始化代理服务器 (只执行一次)
             if (!isProxyInitialized) {
                 QuarkProxyServer.start(context.applicationContext)
                 QuarkProxyServer.onRefreshUrlNeeded = { fid, ck ->
@@ -527,12 +653,9 @@ class VideoScraperViewModel(
             }
 
             if (url != null) {
-                // 将原画直链传给本地代理，并带上用户设置的并发数
                 QuarkProxyServer.setPlayInfo(url, cookie, file.fid, videoSettingsRepository.proxyThreads)
-                // 播放器请求本地代理接口即可
                 _uiState.update { it.copy(playUrl = "http://127.0.0.1:8090/play") }
             } else {
-                // 【方案A】弹窗显示详细错误
                 val detail = lastQuarkError ?: "未知错误"
                 withContext(Dispatchers.Main) {
                     AlertDialog.Builder(context)
