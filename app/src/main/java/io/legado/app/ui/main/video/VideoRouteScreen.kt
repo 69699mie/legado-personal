@@ -34,6 +34,7 @@ import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
@@ -99,15 +100,10 @@ fun VideoRouteScreen(
     var viewAllCategory by remember { mutableStateOf<String?>(null) }
 
     BackHandler(enabled = uiState.playUrl != null || uiState.currentSeries != null || viewAllCategory != null || (!uiState.isLibraryMode && uiState.currentFid != "0")) {
-        if (uiState.playUrl != null) {
-            viewModel.stopPlaying()
-        } else if (uiState.currentSeries != null) {
-            viewModel.selectSeries(null)
-        } else if (viewAllCategory != null) {
-            viewAllCategory = null
-        } else {
-            viewModel.goBack()
-        }
+        if (uiState.playUrl != null) viewModel.stopPlaying()
+        else if (uiState.currentSeries != null) viewModel.selectSeries(null)
+        else if (viewAllCategory != null) viewAllCategory = null
+        else viewModel.goBack()
     }
 
     if (uiState.playUrl != null && uiState.currentSeries != null && uiState.currentPlayFile != null) {
@@ -337,7 +333,7 @@ fun WebLoginView(onLoginSuccess: (String) -> Unit, onCancel: () -> Unit) {
 }
 
 // ==========================================
-// 核心播放器组件 (全面修复)
+// 核心播放器组件 (UI 重构 + 逻辑修复)
 // ==========================================
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -356,7 +352,7 @@ fun InternalVideoPlayer(
     val configuration = LocalConfiguration.current
     val isLandscape = configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
 
-    // 沉浸式全屏 (根据横竖屏切换隐藏状态栏)
+    // 沉浸式全屏 & 退出时恢复竖屏
     DisposableEffect(isLandscape) {
         activity?.window?.let { window ->
             val controller = WindowInsetsControllerCompat(window, window.decorView)
@@ -370,6 +366,8 @@ fun InternalVideoPlayer(
             }
         }
         onDispose {
+            // 强制恢复竖屏
+            activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
             activity?.window?.let { window ->
                 WindowCompat.setDecorFitsSystemWindows(window, true)
                 WindowInsetsControllerCompat(window, window.decorView).show(WindowInsetsCompat.Type.systemBars())
@@ -377,7 +375,6 @@ fun InternalVideoPlayer(
         }
     }
 
-    // 恢复默认亮度
     val originalBrightness = remember { activity?.window?.attributes?.screenBrightness ?: WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE }
     DisposableEffect(Unit) {
         onDispose {
@@ -398,14 +395,12 @@ fun InternalVideoPlayer(
     var showUnlockIcon by remember { mutableStateOf(false) }
     var playbackSpeed by remember { mutableStateOf(1.0f) }
     
-    // 面板控制
     var showSettingsPanel by remember { mutableStateOf(false) }
     var showEpisodeDrawer by remember { mutableStateOf(false) }
     var showIntroOutroDialog by remember { mutableStateOf(false) }
     
-    // 提示信息
     var seekMessage by remember { mutableStateOf<String?>(null) }
-    var gestureType by remember { mutableStateOf("") } // "volume", "brightness"
+    var gestureType by remember { mutableStateOf("") }
     var gestureValue by remember { mutableFloatStateOf(0f) }
 
     val season = currentFile.parsedInfo?.season ?: 1
@@ -423,10 +418,8 @@ fun InternalVideoPlayer(
 
     val audioManager = remember { context.getSystemService(Context.AUDIO_SERVICE) as AudioManager }
 
-    // 进度记录初始化标志
     var hasRestoredProgress by remember { mutableStateOf(false) }
 
-    // ExoPlayer 初始化
     val exoPlayer = remember {
         val cleanCookie = cookie.replace("\n", "").replace("\r", "").trim()
         val dataSourceFactory = DefaultHttpDataSource.Factory()
@@ -440,9 +433,8 @@ fun InternalVideoPlayer(
         ExoPlayer.Builder(context).build().apply { setMediaSource(mediaSource); prepare(); playWhenReady = true }
     }
 
-    // 无缝切集
     LaunchedEffect(url) {
-        hasRestoredProgress = false // 切集时重置进度恢复标志
+        hasRestoredProgress = false
         val cleanCookie = cookie.replace("\n", "").replace("\r", "").trim()
         val dataSourceFactory = DefaultHttpDataSource.Factory()
             .setDefaultRequestProperties(mapOf("Referer" to "https://pan.quark.cn/", "Cookie" to cleanCookie, "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) quark-cloud-drive/2.5.20 Chrome/100.0.4896.160 Electron/18.3.5.4-b478491100 Safari/537.36 Channel/pckk_other_ch"))
@@ -453,14 +445,12 @@ fun InternalVideoPlayer(
         exoPlayer.setMediaSource(mediaSource); exoPlayer.prepare(); exoPlayer.playWhenReady = true
     }
 
-    // 播放器状态监听
     DisposableEffect(exoPlayer) {
         val listener = object : Player.Listener {
             override fun onIsPlayingChanged(playing: Boolean) { isPlaying = playing }
             override fun onPlaybackStateChanged(state: Int) {
                 if (state == Player.STATE_READY) {
                     duration = exoPlayer.duration.coerceAtLeast(0L)
-                    // 首次加载 ready 时，读取进度并跳转
                     if (!hasRestoredProgress) {
                         hasRestoredProgress = true
                         val savedPos = viewModel.getVideoProgress(currentFile.fid)
@@ -487,18 +477,15 @@ fun InternalVideoPlayer(
         }
         exoPlayer.addListener(listener)
         onDispose { 
-            // 退出时保存进度
             if (exoPlayer.currentPosition > 0) viewModel.saveVideoProgress(currentFile.fid, exoPlayer.currentPosition)
             exoPlayer.removeListener(listener)
             exoPlayer.release() 
         }
     }
 
-    // 循环更新进度和UI标志
     LaunchedEffect(isPlaying) {
         while (isPlaying) {
             currentPosition = exoPlayer.currentPosition
-            // 每 5 秒自动保存一次进度
             if (currentPosition > 0 && currentPosition % 5000 < 1000) {
                 viewModel.saveVideoProgress(currentFile.fid, currentPosition)
             }
@@ -513,27 +500,18 @@ fun InternalVideoPlayer(
         }
     }
 
-    // 控制栏自动隐藏
     LaunchedEffect(showControls, isPlaying, gestureType, showSettingsPanel, showEpisodeDrawer) {
         if (showControls && isPlaying && !isLocked && gestureType.isEmpty() && !showSettingsPanel && !showEpisodeDrawer) { 
             delay(3000); showControls = false 
         }
     }
 
-    // 快进快退提示自动消失
     LaunchedEffect(seekMessage) {
-        if (seekMessage != null) {
-            delay(2000)
-            seekMessage = null
-        }
+        if (seekMessage != null) { delay(2000); seekMessage = null }
     }
 
-    // 锁屏图标自动隐藏
     LaunchedEffect(isLocked, showUnlockIcon) {
-        if (isLocked && showUnlockIcon) {
-            delay(3000)
-            showUnlockIcon = false
-        }
+        if (isLocked && showUnlockIcon) { delay(3000); showUnlockIcon = false }
     }
 
     BackHandler { 
@@ -543,7 +521,6 @@ fun InternalVideoPlayer(
         else onBack() 
     }
 
-    // 整个屏幕的触摸与手势
     Box(
         modifier = Modifier
             .fillMaxSize()
@@ -601,7 +578,6 @@ fun InternalVideoPlayer(
                 )
             }
     ) {
-        // 视频画面
         AndroidView(
             factory = { ctx ->
                 PlayerView(ctx).apply {
@@ -612,14 +588,12 @@ fun InternalVideoPlayer(
             modifier = Modifier.fillMaxSize()
         )
 
-        // 快进快退提示
         if (seekMessage != null) {
             Box(modifier = Modifier.align(Alignment.Center).background(Color.Black.copy(alpha = 0.6f), RoundedCornerShape(8.dp)).padding(horizontal = 16.dp, vertical = 8.dp)) {
                 AppText(text = seekMessage!!, color = Color.White, fontSize = 16.sp)
             }
         }
 
-        // 亮度/音量调节 UI
         if (gestureType.isNotEmpty()) {
             Box(modifier = Modifier.align(Alignment.Center).background(Color.Black.copy(alpha = 0.6f), RoundedCornerShape(8.dp)).padding(16.dp)) {
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
@@ -641,7 +615,6 @@ fun InternalVideoPlayer(
             }
         }
 
-        // 锁屏解锁按钮
         if (isLocked) {
             if (showUnlockIcon) {
                 IconButton(onClick = { isLocked = false; showControls = true }, modifier = Modifier.align(Alignment.CenterStart).padding(32.dp)) {
@@ -651,96 +624,109 @@ fun InternalVideoPlayer(
             return@Box
         }
 
-        // 主控制层
         AnimatedVisibility(visible = showControls, enter = fadeIn(), exit = fadeOut(), modifier = Modifier.fillMaxSize()) {
-            Box(modifier = Modifier.fillMaxSize().background(Color(0x22000000))) {
+            Box(modifier = Modifier.fillMaxSize()) {
                 
-                // 左侧栏
-                Column(modifier = Modifier.align(Alignment.CenterStart).padding(start = 16.dp), verticalArrangement = Arrangement.spacedBy(32.dp)) {
-                    // 横竖屏切换
-                    IconButton(onClick = { 
-                        if (isLandscape) activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_PORTRAIT 
-                        else activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE 
-                    }) { Icon(Icons.Default.ScreenRotation, null, tint = Color.White) }
-                    
-                    // 播放设置
-                    IconButton(onClick = { showSettingsPanel = true }) { Icon(Icons.Default.Settings, null, tint = Color.White) }
-                    
-                    // 选集
-                    IconButton(onClick = { showEpisodeDrawer = true }) { Icon(Icons.Default.Menu, null, tint = Color.White) }
+                // 左右悬浮按钮（去重、贴边、带半透明背景）
+                if (isLandscape) {
+                    Column(modifier = Modifier.align(Alignment.CenterStart).padding(start = 16.dp), verticalArrangement = Arrangement.spacedBy(30.dp)) {
+                        Surface(color = Color.White.copy(alpha = 0.1f), shape = CircleShape, border = BorderStroke(1.dp, Color.White.copy(alpha = 0.2f))) {
+                            IconButton(onClick = { activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_PORTRAIT }) {
+                                Icon(Icons.Default.ScreenRotation, null, tint = Color.White)
+                            }
+                        }
+                    }
+                    Column(modifier = Modifier.align(Alignment.CenterEnd).padding(end = 16.dp), verticalArrangement = Arrangement.spacedBy(30.dp)) {
+                        Surface(color = Color.White.copy(alpha = 0.1f), shape = CircleShape, border = BorderStroke(1.dp, Color.White.copy(alpha = 0.2f))) {
+                            IconButton(onClick = { Toast.makeText(context, "暂无音频轨道", Toast.LENGTH_SHORT).show() }) { Icon(Icons.Default.Headset, null, tint = Color.White) }
+                        }
+                        Surface(color = Color.White.copy(alpha = 0.1f), shape = CircleShape, border = BorderStroke(1.dp, Color.White.copy(alpha = 0.2f))) {
+                            IconButton(onClick = { isLocked = true; showControls = false; showUnlockIcon = true }) { Icon(Icons.Default.Lock, null, tint = Color.White) }
+                        }
+                        Surface(color = Color.White.copy(alpha = 0.1f), shape = CircleShape, border = BorderStroke(1.dp, Color.White.copy(alpha = 0.2f))) {
+                            IconButton(onClick = { Toast.makeText(context, "暂无字幕", Toast.LENGTH_SHORT).show() }) { Icon(Icons.Default.Subtitles, null, tint = Color.White) }
+                        }
+                    }
                 }
 
-                // 右侧栏
-                Column(modifier = Modifier.align(Alignment.CenterEnd).padding(end = 16.dp), verticalArrangement = Arrangement.spacedBy(32.dp)) {
-                    IconButton(onClick = { Toast.makeText(context, "暂无音频轨道切换", Toast.LENGTH_SHORT).show() }) { Icon(Icons.Default.Headset, null, tint = Color.White) }
-                    IconButton(onClick = { isLocked = true; showControls = false; showUnlockIcon = true }) { Icon(Icons.Default.Lock, null, tint = Color.White) }
-                    IconButton(onClick = { Toast.makeText(context, "暂无字幕", Toast.LENGTH_SHORT).show() }) { Icon(Icons.Default.Subtitles, null, tint = Color.White) }
-                }
-
-                // 顶部区域
+                // 顶部区域 (没有重复设置)
                 Row(modifier = Modifier.fillMaxWidth().background(Brush.verticalGradient(listOf(Color(0xAA000000), Color.Transparent))).statusBarsPadding().padding(horizontal = 16.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
                     IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, null, tint = Color.White) }
                     AppText(text = title, color = Color.White, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f).padding(start = 8.dp))
                     if (resolution.isNotBlank()) AppText(text = resolution, color = Color.White, fontSize = 12.sp, modifier = Modifier.padding(end = 16.dp))
-                    // 设置图标
                     IconButton(onClick = { showSettingsPanel = true }) { Icon(Icons.Default.Settings, contentDescription = "设置", tint = Color.White) }
                 }
 
-                // 底部区域
-                Column(modifier = Modifier.align(Alignment.BottomCenter).fillMaxWidth().background(Brush.verticalGradient(listOf(Color.Transparent, Color(0xAA000000)))).navigationBarsPadding().padding(horizontal = 16.dp, vertical = 8.dp)) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        AppText(text = formatTime(currentPosition), color = Color.White, fontSize = 12.sp)
-                        Slider(
-                            value = if (duration > 0) currentPosition.toFloat() / duration else 0f,
-                            onValueChange = { currentPosition = (it * duration).toLong() },
-                            onValueChangeFinished = { exoPlayer.seekTo(currentPosition); if (isPlaying) exoPlayer.play() },
-                            modifier = Modifier.weight(1f).padding(horizontal = 8.dp),
-                            colors = SliderDefaults.colors(thumbColor = Color.White, activeTrackColor = Color.White, inactiveTrackColor = Color.White.copy(alpha = 0.3f))
-                        )
-                        AppText(text = formatTime(duration), color = Color.White, fontSize = 12.sp)
-                    }
-
-                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                        // 倍速
-                        Text(
-                            text = "${playbackSpeed}x", color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.Bold,
-                            modifier = Modifier.clickable { 
-                                val nextSpeed = when(playbackSpeed) {
-                                    0.5f -> 0.75f; 0.75f -> 1.0f; 1.0f -> 1.25f; 1.25f -> 1.5f; 1.5f -> 2.0f; 2.0f -> 3.0f; else -> 0.5f
-                                }
-                                playbackSpeed = nextSpeed
-                                exoPlayer.setPlaybackSpeed(nextSpeed)
-                            }.padding(8.dp)
-                        )
-
-                        // 播放控制
-                        Row(horizontalArrangement = Arrangement.spacedBy(24.dp), verticalAlignment = Alignment.CenterVertically) {
-                            IconButton(onClick = {
-                                val idx = series.videos.indexOfFirst { it.fid == currentFile.fid }
-                                if (idx > 0) viewModel.playVideo(context, series, series.videos[idx - 1])
-                            }) { Icon(Icons.Default.SkipPrevious, null, tint = Color.White) }
-                            
-                            IconButton(onClick = { exoPlayer.seekTo((exoPlayer.currentPosition - 10000).coerceAtLeast(0)); seekMessage = "快退 10 秒" }) {
-                                Icon(Icons.Default.FastRewind, null, tint = Color.White)
-                            }
-                            IconButton(onClick = { if (isPlaying) exoPlayer.pause() else exoPlayer.play() }) {
-                                Icon(if (isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow, null, tint = Color.White, modifier = Modifier.size(36.dp))
-                            }
-                            IconButton(onClick = { exoPlayer.seekTo((exoPlayer.currentPosition + 10000).coerceAtMost(if (duration > 0) duration else Long.MAX_VALUE)); seekMessage = "快进 10 秒" }) {
-                                Icon(Icons.Default.FastForward, null, tint = Color.White)
-                            }
-                            
-                            IconButton(onClick = {
-                                val idx = series.videos.indexOfFirst { it.fid == currentFile.fid }
-                                if (idx != -1 && idx < series.videos.size - 1) viewModel.playVideo(context, series, series.videos[idx + 1])
-                            }) { Icon(Icons.Default.SkipNext, null, tint = Color.White) }
+                // 底部悬浮胶囊控制栏
+                Box(
+                    modifier = Modifier
+                        .align(Alignment.BottomCenter)
+                        .navigationBarsPadding()
+                        .padding(bottom = 24.dp, start = 48.dp, end = 48.dp)
+                        .background(Color(0xB31A1A1A), RoundedCornerShape(20.dp))
+                        .border(1.dp, Color.White.copy(alpha = 0.1f), RoundedCornerShape(20.dp))
+                        .padding(horizontal = 24.dp, vertical = 16.dp)
+                ) {
+                    Column(modifier = Modifier.fillMaxWidth()) {
+                        // 进度条
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            AppText(text = formatTime(currentPosition), color = Color.White, fontSize = 12.sp)
+                            Slider(
+                                value = if (duration > 0) currentPosition.toFloat() / duration else 0f,
+                                onValueChange = { currentPosition = (it * duration).toLong() },
+                                onValueChangeFinished = { exoPlayer.seekTo(currentPosition); if (isPlaying) exoPlayer.play() },
+                                modifier = Modifier.weight(1f).padding(horizontal = 8.dp),
+                                colors = SliderDefaults.colors(thumbColor = Color.White, activeTrackColor = Color.White, inactiveTrackColor = Color.White.copy(alpha = 0.3f))
+                            )
+                            AppText(text = formatTime(duration), color = Color.White, fontSize = 12.sp)
                         }
 
-                        AppText(text = "选集", color = Color.White, modifier = Modifier.clickable { showEpisodeDrawer = true }.padding(8.dp))
+                        Spacer(modifier = Modifier.height(12.dp))
+
+                        // 按钮
+                        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                            Text(
+                                text = "${playbackSpeed}x", color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.Bold,
+                                modifier = Modifier.clickable { 
+                                    val nextSpeed = when(playbackSpeed) {
+                                        0.5f -> 0.75f; 0.75f -> 1.0f; 1.0f -> 1.25f; 1.25f -> 1.5f; 1.5f -> 2.0f; 2.0f -> 3.0f; else -> 0.5f
+                                    }
+                                    playbackSpeed = nextSpeed
+                                    exoPlayer.setPlaybackSpeed(nextSpeed)
+                                }.padding(8.dp)
+                            )
+
+                            Row(horizontalArrangement = Arrangement.spacedBy(if (isLandscape) 24.dp else 32.dp), verticalAlignment = Alignment.CenterVertically) {
+                                IconButton(onClick = {
+                                    val idx = series.videos.indexOfFirst { it.fid == currentFile.fid }
+                                    if (idx > 0) viewModel.playVideo(context, series, series.videos[idx - 1])
+                                }) { Icon(Icons.Default.SkipPrevious, null, tint = Color.White) }
+                                
+                                if (isLandscape) {
+                                    IconButton(onClick = { exoPlayer.seekTo((exoPlayer.currentPosition - 10000).coerceAtLeast(0)); seekMessage = "快退 10 秒" }) {
+                                        Icon(Icons.Default.FastRewind, null, tint = Color.White)
+                                    }
+                                }
+                                IconButton(onClick = { if (isPlaying) exoPlayer.pause() else exoPlayer.play() }) {
+                                    Icon(if (isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow, null, tint = Color.White, modifier = Modifier.size(36.dp))
+                                }
+                                if (isLandscape) {
+                                    IconButton(onClick = { exoPlayer.seekTo((exoPlayer.currentPosition + 10000).coerceAtMost(if (duration > 0) duration else Long.MAX_VALUE)); seekMessage = "快进 10 秒" }) {
+                                        Icon(Icons.Default.FastForward, null, tint = Color.White)
+                                    }
+                                }
+                                
+                                IconButton(onClick = {
+                                    val idx = series.videos.indexOfFirst { it.fid == currentFile.fid }
+                                    if (idx != -1 && idx < series.videos.size - 1) viewModel.playVideo(context, series, series.videos[idx + 1])
+                                }) { Icon(Icons.Default.SkipNext, null, tint = Color.White) }
+                            }
+
+                            AppText(text = "选集", color = Color.White, modifier = Modifier.clickable { showEpisodeDrawer = true }.padding(8.dp))
+                        }
                     }
                 }
 
-                // 片头片尾跳过提示
                 if (showSkipIntro) {
                     Button(onClick = { exoPlayer.seekTo(introSeconds * 1000L); showSkipIntro = false }, modifier = Modifier.align(Alignment.BottomEnd).padding(bottom = 120.dp, end = 16.dp)) { AppText("跳过片头") }
                 }
@@ -753,36 +739,39 @@ fun InternalVideoPlayer(
             }
         }
 
-        // 右侧抽屉：选集
-        AnimatedVisibility(
-            visible = showEpisodeDrawer,
-            enter = slideInHorizontally(initialOffsetX = { it }, animationSpec = tween(300)),
-            exit = slideOutHorizontally(targetOffsetX = { it }, animationSpec = tween(300)),
-            modifier = Modifier.align(Alignment.CenterEnd).fillMaxHeight().width(280.dp)
-        ) {
-            Surface(color = Color(0xEE1A1A1A), modifier = Modifier.fillMaxSize()) {
-                Column(modifier = Modifier.fillMaxSize().padding(16.dp)) {
-                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                        AppText("选集", color = Color.White, fontSize = 18.sp, fontWeight = FontWeight.Bold)
-                        IconButton(onClick = { showEpisodeDrawer = false }) { Icon(Icons.Default.Close, null, tint = Color.White) }
-                    }
-                    Spacer(modifier = Modifier.height(16.dp))
-                    LazyColumn {
-                        items(series.videos) { file ->
-                            val e = file.parsedInfo?.episode
-                            val tmdbTitle = if (e != null) series.episodeTitles[e] else null
-                            val label = if (e != null) "第${e}集" + if (!tmdbTitle.isNullOrBlank()) " $tmdbTitle" else "" else file.name
-                            val isCurrent = file.fid == currentFile.fid
-                            AppText(
-                                text = label,
-                                color = if (isCurrent) MaterialTheme.colorScheme.primary else Color.White,
-                                fontWeight = if (isCurrent) FontWeight.Bold else FontWeight.Normal,
-                                fontSize = 15.sp,
-                                modifier = Modifier.fillMaxWidth().clickable { 
-                                    viewModel.playVideo(context, series, file)
-                                    showEpisodeDrawer = false
-                                }.padding(vertical = 12.dp)
-                            )
+        // 右侧抽屉：选集 (包含遮罩)
+        if (showEpisodeDrawer) {
+            Box(modifier = Modifier.fillMaxSize().clickable(indication = null, interactionSource = remember { MutableInteractionSource() }) { showEpisodeDrawer = false })
+            AnimatedVisibility(
+                visible = showEpisodeDrawer,
+                enter = slideInHorizontally(initialOffsetX = { it }, animationSpec = tween(300)),
+                exit = slideOutHorizontally(targetOffsetX = { it }, animationSpec = tween(300)),
+                modifier = Modifier.align(Alignment.CenterEnd).fillMaxHeight().width(280.dp)
+            ) {
+                Surface(color = Color(0xEE1A1A1A), modifier = Modifier.fillMaxSize()) {
+                    Column(modifier = Modifier.fillMaxSize().padding(16.dp)) {
+                        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                            AppText("选集", color = Color.White, fontSize = 18.sp, fontWeight = FontWeight.Bold)
+                            IconButton(onClick = { showEpisodeDrawer = false }) { Icon(Icons.Default.Close, null, tint = Color.White) }
+                        }
+                        Spacer(modifier = Modifier.height(16.dp))
+                        LazyColumn {
+                            items(series.videos) { file ->
+                                val e = file.parsedInfo?.episode
+                                val tmdbTitle = if (e != null) series.episodeTitles[e] else null
+                                val label = if (e != null) "第${e}集" + if (!tmdbTitle.isNullOrBlank()) " $tmdbTitle" else "" else file.name
+                                val isCurrent = file.fid == currentFile.fid
+                                AppText(
+                                    text = label,
+                                    color = if (isCurrent) Color.White else Color.Gray,
+                                    fontWeight = if (isCurrent) FontWeight.Bold else FontWeight.Normal,
+                                    fontSize = 15.sp,
+                                    modifier = Modifier.fillMaxWidth().background(if (isCurrent) Color(0x33FFFFFF) else Color.Transparent, RoundedCornerShape(8.dp)).clickable { 
+                                        viewModel.playVideo(context, series, file)
+                                        showEpisodeDrawer = false
+                                    }.padding(vertical = 12.dp, horizontal = 8.dp)
+                                )
+                            }
                         }
                     }
                 }
@@ -790,38 +779,39 @@ fun InternalVideoPlayer(
         }
 
         // 右侧抽屉：播放设置
-        AnimatedVisibility(
-            visible = showSettingsPanel,
-            enter = slideInHorizontally(initialOffsetX = { it }, animationSpec = tween(300)),
-            exit = slideOutHorizontally(targetOffsetX = { it }, animationSpec = tween(300)),
-            modifier = Modifier.align(Alignment.CenterEnd).fillMaxHeight().width(280.dp)
-        ) {
-            Surface(color = Color(0xEE1A1A1A), modifier = Modifier.fillMaxSize()) {
-                Column(modifier = Modifier.fillMaxSize().padding(16.dp)) {
-                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                        AppText("播放设置", color = Color.White, fontSize = 18.sp, fontWeight = FontWeight.Bold)
-                        IconButton(onClick = { showSettingsPanel = false }) { Icon(Icons.Default.Close, null, tint = Color.White) }
-                    }
-                    Spacer(modifier = Modifier.height(16.dp))
-                    // 设置项
-                    Row(
-                        modifier = Modifier.fillMaxWidth().background(Color(0xFF333333), RoundedCornerShape(8.dp))
-                            .clickable { showIntroOutroDialog = true; showSettingsPanel = false }.padding(16.dp),
-                        horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Column {
-                            AppText("设置片头片尾", color = Color.White, fontSize = 16.sp, fontWeight = FontWeight.Bold)
-                            Spacer(modifier = Modifier.height(4.dp))
-                            AppText("片头: ${formatTime(introSeconds * 1000L)}  片尾: ${formatTime(outroSeconds * 1000L)}", color = Color.Gray, fontSize = 12.sp)
+        if (showSettingsPanel) {
+            Box(modifier = Modifier.fillMaxSize().clickable(indication = null, interactionSource = remember { MutableInteractionSource() }) { showSettingsPanel = false })
+            AnimatedVisibility(
+                visible = showSettingsPanel,
+                enter = slideInHorizontally(initialOffsetX = { it }, animationSpec = tween(300)),
+                exit = slideOutHorizontally(targetOffsetX = { it }, animationSpec = tween(300)),
+                modifier = Modifier.align(Alignment.CenterEnd).fillMaxHeight().width(280.dp)
+            ) {
+                Surface(color = Color(0xEE1A1A1A), modifier = Modifier.fillMaxSize()) {
+                    Column(modifier = Modifier.fillMaxSize().padding(16.dp)) {
+                        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                            AppText("播放设置", color = Color.White, fontSize = 18.sp, fontWeight = FontWeight.Bold)
+                            IconButton(onClick = { showSettingsPanel = false }) { Icon(Icons.Default.Close, null, tint = Color.White) }
                         }
-                        Icon(Icons.Default.KeyboardArrowRight, null, tint = Color.Gray)
+                        Spacer(modifier = Modifier.height(16.dp))
+                        Row(
+                            modifier = Modifier.fillMaxWidth().background(Color(0xFF333333), RoundedCornerShape(8.dp))
+                                .clickable { showIntroOutroDialog = true; showSettingsPanel = false }.padding(16.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column {
+                                AppText("设置片头片尾", color = Color.White, fontSize = 16.sp, fontWeight = FontWeight.Bold)
+                                Spacer(modifier = Modifier.height(4.dp))
+                                AppText("片头: ${formatTime(introSeconds * 1000L)}  片尾: ${formatTime(outroSeconds * 1000L)}", color = Color.Gray, fontSize = 12.sp)
+                            }
+                            Icon(Icons.Default.KeyboardArrowRight, null, tint = Color.Gray)
+                        }
                     }
                 }
             }
         }
     }
 
-    // 片头片尾设置弹窗
     if (showIntroOutroDialog) {
         var inputIntro by remember { mutableFloatStateOf(introSeconds.toFloat()) }
         var inputOutro by remember { mutableFloatStateOf(outroSeconds.toFloat()) }
@@ -858,7 +848,6 @@ private fun formatTime(ms: Long): String {
     return String.format("%02d:%02d:%02d", hours, minutes, seconds)
 }
 
-// 扩展函数：查找 Activity
 private fun Context.findActivity(): Activity? {
     var context = this
     while (context is android.content.ContextWrapper) {
@@ -890,6 +879,17 @@ fun SeriesPosterCard(series: MediaSeries, onClick: () -> Unit, onLongClick: () -
 fun MediaDetailScreen(
     series: MediaSeries, onBack: () -> Unit, onPlay: (MediaSeries, QuarkFile) -> Unit, onLongClickPoster: (MediaSeries) -> Unit
 ) {
+    // 找到最新进度的一集
+    val viewModel: VideoScraperViewModel = koinViewModel()
+    val latestWatchedFile = series.videos.maxByOrNull { viewModel.getVideoProgress(it.fid) }
+    val hasProgress = latestWatchedFile != null && viewModel.getVideoProgress(latestWatchedFile.fid) > 0
+    val playBtnText = if (hasProgress && latestWatchedFile != null) {
+        val ep = latestWatchedFile.parsedInfo?.episode
+        if (ep != null) "继续播放 第${ep}集" else "继续播放"
+    } else {
+        "播放"
+    }
+
     LazyColumn(modifier = Modifier.fillMaxSize().background(Color.White)) {
         item {
             Box(modifier = Modifier.fillMaxWidth().height(350.dp)) {
@@ -915,8 +915,16 @@ fun MediaDetailScreen(
                     AppText(text = "${series.year ?: ""}", style = MaterialTheme.typography.bodyMedium)
                     AppText(text = " | ${series.category}", style = MaterialTheme.typography.bodyMedium, color = Color.Gray)
                 }
-                Button(onClick = { onPlay(series, series.videos.firstOrNull() ?: return@Button) }, modifier = Modifier.fillMaxWidth().height(50.dp), colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF333333))) {
-                    Icon(Icons.Default.PlayArrow, null, tint = Color.White); AppText(text = " 播放", color = Color.White, style = MaterialTheme.typography.titleMedium)
+                // 续播核心逻辑
+                Button(
+                    onClick = { 
+                        if (hasProgress && latestWatchedFile != null) onPlay(series, latestWatchedFile)
+                        else onPlay(series, series.videos.firstOrNull() ?: return@Button)
+                    }, 
+                    modifier = Modifier.fillMaxWidth().height(50.dp), 
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF333333))
+                ) {
+                    Icon(Icons.Default.PlayArrow, null, tint = Color.White); AppText(text = " $playBtnText", color = Color.White, style = MaterialTheme.typography.titleMedium)
                 }
                 AppText(text = "剧情简介", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, modifier = Modifier.padding(top = 16.dp))
                 AppText(text = series.overview ?: "暂无简介", style = MaterialTheme.typography.bodyMedium, color = Color.DarkGray, modifier = Modifier.padding(top = 8.dp))
