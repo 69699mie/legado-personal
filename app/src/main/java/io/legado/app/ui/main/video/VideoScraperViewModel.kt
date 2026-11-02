@@ -1,5 +1,6 @@
 package io.legado.app.ui.main.video
 
+import android.app.AlertDialog
 import android.content.Context
 import android.widget.Toast
 import androidx.lifecycle.ViewModel
@@ -74,6 +75,9 @@ class VideoScraperViewModel(
     private val libraryNames = mutableMapOf<String, String>()
 
     private var isProxyInitialized = false
+
+    // 最近一次获取直链失败时的详细错误，用于弹窗显示
+    private var lastQuarkError: String? = null
 
     init {
         val savedLibs = videoSettingsRepository.libraryFids.split(",").filter { it.isNotBlank() }
@@ -528,12 +532,21 @@ class VideoScraperViewModel(
                 // 播放器请求本地代理接口即可
                 _uiState.update { it.copy(playUrl = "http://127.0.0.1:8090/play") }
             } else {
-                Toast.makeText(context, "获取原画直链失败，请检查登录状态", Toast.LENGTH_LONG).show()
+                // 【方案A】弹窗显示详细错误
+                val detail = lastQuarkError ?: "未知错误"
+                withContext(Dispatchers.Main) {
+                    AlertDialog.Builder(context)
+                        .setTitle("获取原画直链失败")
+                        .setMessage(detail)
+                        .setPositiveButton("确定", null)
+                        .show()
+                }
             }
         }
     }
 
     private fun fetchDirectDownloadUrl(fid: String, cookie: String): String? {
+        lastQuarkError = null
         return try {
             val apiUrl = "https://drive-pc.quark.cn/1/clouddrive/file/download?pr=ucpro&fr=pc"
             val jsonBody = JSONObject().apply { put("fids", JSONArray().put(fid)) }
@@ -552,37 +565,38 @@ class VideoScraperViewModel(
                 val httpCode = response.code
                 val resBody = response.body?.string()
 
-                // 【新增】打印 HTTP 状态码 + 响应体原文，用于定位 500 的真实原因
-                android.util.Log.d("QuarkDownload", "HTTP=$httpCode fid=$fid body=$resBody")
-
-                if (!resBody.isNullOrBlank()) {
-                    val json = JSONObject(resBody)
-                    val code = json.optInt("code", -1)
-                    val message = json.optString("message")
-
-                    // 【新增】业务码非 0 时，打印 code 和 message
-                    if (code != 0) {
-                        android.util.Log.w("QuarkDownload", "code=$code message=$message fid=$fid")
-                    }
-
-                    if (code == 0) {
-                        val data = json.optJSONArray("data")
-                        if (data != null && data.length() > 0) {
-                            val downloadUrl = data.getJSONObject(0).optString("download_url")
-                            // 【新增】空链接兜底与日志
-                            if (downloadUrl.isBlank()) {
-                                android.util.Log.w("QuarkDownload", "download_url 为空 fid=$fid")
-                                return null
-                            }
-                            return downloadUrl
-                        }
-                    }
+                if (httpCode != 200) {
+                    lastQuarkError = "HTTP $httpCode\n\n$resBody"
+                    return null
                 }
+                if (resBody.isNullOrBlank()) {
+                    lastQuarkError = "响应体为空 (HTTP $httpCode)"
+                    return null
+                }
+
+                val json = JSONObject(resBody)
+                val code = json.optInt("code", -1)
+                val message = json.optString("message")
+                if (code != 0) {
+                    lastQuarkError = "code=$code\nmessage=$message\n\n$resBody"
+                    return null
+                }
+
+                val data = json.optJSONArray("data")
+                if (data == null || data.length() == 0) {
+                    lastQuarkError = "data 为空\n\n$resBody"
+                    return null
+                }
+
+                val downloadUrl = data.getJSONObject(0).optString("download_url")
+                if (downloadUrl.isBlank()) {
+                    lastQuarkError = "download_url 为空\n\n$resBody"
+                    return null
+                }
+                return downloadUrl
             }
-            null
         } catch (e: Exception) {
-            // 【新增】异常日志带 fid，便于定位
-            android.util.Log.e("QuarkDownload", "fetchDirectDownloadUrl 异常 fid=$fid", e)
+            lastQuarkError = "异常: ${e.message}\n\n${e.stackTraceToString()}"
             null
         }
     }
