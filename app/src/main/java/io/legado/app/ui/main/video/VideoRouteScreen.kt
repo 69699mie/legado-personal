@@ -90,8 +90,8 @@ import androidx.media3.exoplayer.source.ProgressiveMediaSource
 import androidx.media3.ui.AspectRatioFrameLayout
 import androidx.media3.ui.PlayerView
 import coil3.compose.AsyncImage
-import com.danikula.videocache.HeaderInjector
 import com.danikula.videocache.HttpProxyCacheServer
+import com.danikula.videocache.headers.HeaderInjector
 import io.legado.app.ui.widget.components.text.AppText
 import kotlinx.coroutines.delay
 import org.koin.androidx.compose.koinViewModel
@@ -467,7 +467,7 @@ fun InternalVideoPlayer(
         }
     }
 
-    // 【核心修复】使用 AndroidVideoCache 代理，接口名为 HeaderInjector
+    // 【核心修复】使用 AndroidVideoCache 代理，接口名为 HeaderInjector（带包名 com.danikula.videocache.headers）
     val proxyUrl = remember(url, cookie) {
         val proxyServer = HttpProxyCacheServer.Builder(context.applicationContext)
             .maxCacheSize(1024 * 1024 * 1024) // 1GB 缓存
