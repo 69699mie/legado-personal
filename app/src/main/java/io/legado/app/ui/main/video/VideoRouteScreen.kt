@@ -720,18 +720,17 @@ fun InternalVideoPlayer(
                 ) {
                     IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, null, tint = Color.White) }
                     
-                    // 【修复】标题增加滚动，并允许占满剩余空间
+                    // 标题增加滚动，并拉开与分辨率的距离
                     AppText(
                         text = title, 
                         color = Color.White, 
                         maxLines = 1, 
                         modifier = Modifier
                             .weight(1f)
-                            .padding(start = 8.dp)
-                            .basicMarquee() // 跑马灯滚动
+                            .padding(start = 8.dp, end = 16.dp) // 增加右侧 padding
+                            .basicMarquee()
                     )
                     
-                    // 【修复】网速（仅横屏）和分辨率（横竖屏都显示）
                     if (isLandscape) {
                         AppText(text = networkSpeed, color = Color.White, fontSize = 12.sp, modifier = Modifier.padding(end = 12.dp))
                     }
@@ -748,8 +747,8 @@ fun InternalVideoPlayer(
                         .align(Alignment.BottomCenter)
                         .navigationBarsPadding()
                         .padding(bottom = 16.dp)
-                        .widthIn(max = if (isLandscape) 680.dp else 400.dp) // 横屏稍微加宽以容纳新按钮
-                        .fillMaxWidth(0.95f) // 竖屏占比稍微放大
+                        .widthIn(max = if (isLandscape) 700.dp else 400.dp)
+                        .fillMaxWidth(0.95f)
                         .background(Color(0xB31A1A1A), RoundedCornerShape(20.dp))
                         .border(1.dp, Color.White.copy(alpha = 0.1f), RoundedCornerShape(20.dp))
                         .padding(horizontal = 16.dp, vertical = 12.dp)
@@ -789,12 +788,20 @@ fun InternalVideoPlayer(
                                 // 片头快捷设置（仅横屏）
                                 if (isLandscape) {
                                     AppText(
-                                        text = "片头", color = Color.White, fontSize = 12.sp,
-                                        modifier = Modifier.clickable {
-                                            introSeconds = (currentPosition / 1000).toInt()
-                                            viewModel.saveIntroOutro(series.title, season, introSeconds, outroSeconds)
-                                            Toast.makeText(context, "已将 ${formatTime(currentPosition)} 设为片头", Toast.LENGTH_SHORT).show()
-                                        }.padding(horizontal = 8.dp, vertical = 4.dp)
+                                        text = if (introSeconds > 0) "片头 ${formatTime(introSeconds * 1000L)}" else "片头", 
+                                        color = Color.White, fontSize = 12.sp,
+                                        modifier = Modifier.combinedClickable(
+                                            onClick = {
+                                                introSeconds = (currentPosition / 1000).toInt()
+                                                viewModel.saveIntroOutro(series.title, season, introSeconds, outroSeconds)
+                                                Toast.makeText(context, "片头已设为 ${formatTime(currentPosition)}", Toast.LENGTH_SHORT).show()
+                                            },
+                                            onLongClick = {
+                                                introSeconds = 0
+                                                viewModel.saveIntroOutro(series.title, season, introSeconds, outroSeconds)
+                                                Toast.makeText(context, "已清空片头", Toast.LENGTH_SHORT).show()
+                                            }
+                                        ).padding(horizontal = 8.dp, vertical = 4.dp)
                                     )
                                 }
 
@@ -825,15 +832,23 @@ fun InternalVideoPlayer(
                                 // 片尾快捷设置（仅横屏）
                                 if (isLandscape) {
                                     AppText(
-                                        text = "片尾", color = Color.White, fontSize = 12.sp,
-                                        modifier = Modifier.clickable {
-                                            val remain = duration - currentPosition
-                                            if (remain > 0) {
-                                                outroSeconds = (remain / 1000).toInt()
+                                        text = if (outroSeconds > 0) "片尾 ${formatTime(outroSeconds * 1000L)}" else "片尾", 
+                                        color = Color.White, fontSize = 12.sp,
+                                        modifier = Modifier.combinedClickable(
+                                            onClick = {
+                                                val remain = duration - currentPosition
+                                                if (remain > 0) {
+                                                    outroSeconds = (remain / 1000).toInt()
+                                                    viewModel.saveIntroOutro(series.title, season, introSeconds, outroSeconds)
+                                                    Toast.makeText(context, "片尾已设为剩余 ${formatTime(remain)}", Toast.LENGTH_SHORT).show()
+                                                }
+                                            },
+                                            onLongClick = {
+                                                outroSeconds = 0
                                                 viewModel.saveIntroOutro(series.title, season, introSeconds, outroSeconds)
-                                                Toast.makeText(context, "已将剩余 ${formatTime(remain)} 设为片尾", Toast.LENGTH_SHORT).show()
+                                                Toast.makeText(context, "已清空片尾", Toast.LENGTH_SHORT).show()
                                             }
-                                        }.padding(horizontal = 8.dp, vertical = 4.dp)
+                                        ).padding(horizontal = 8.dp, vertical = 4.dp)
                                     )
                                 }
                             }
@@ -1013,7 +1028,6 @@ fun SeriesPosterCard(series: MediaSeries, onClick: () -> Unit, onLongClick: () -
             }
         }
         
-        // 【修复】列表标题增加滚动
         AppText(
             text = series.title, 
             maxLines = 1, 
