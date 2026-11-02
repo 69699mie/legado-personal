@@ -460,7 +460,6 @@ fun InternalVideoPlayer(
         }
     }
 
-    // 核心修复：自定义 LoadControl 和 WakeMode，解决自动暂停问题
     val exoPlayer = remember {
         val cleanCookie = cookie.replace("\n", "").replace("\r", "").trim()
         val dataSourceFactory = DefaultHttpDataSource.Factory()
@@ -504,9 +503,7 @@ fun InternalVideoPlayer(
         val listener = object : Player.Listener {
             override fun onIsPlayingChanged(playing: Boolean) { isPlaying = playing }
             override fun onPlaybackStateChanged(state: Int) {
-                // 监听缓冲状态
                 isBuffering = state == Player.STATE_BUFFERING
-                
                 if (state == Player.STATE_READY) {
                     duration = exoPlayer.duration.coerceAtLeast(0L)
                     if (!hasRestoredProgress) {
@@ -535,14 +532,12 @@ fun InternalVideoPlayer(
         }
         exoPlayer.addListener(listener)
         onDispose { 
-            // 仅在退出时保存进度，避免高频 I/O 卡顿
             if (exoPlayer.currentPosition > 0) viewModel.saveVideoProgress(currentFile.fid, exoPlayer.currentPosition)
             exoPlayer.removeListener(listener)
             exoPlayer.release() 
         }
     }
 
-    // 仅更新 UI 进度，不再每秒写本地存储
     LaunchedEffect(isPlaying) {
         while (isPlaying) {
             currentPosition = exoPlayer.currentPosition
@@ -652,10 +647,10 @@ fun InternalVideoPlayer(
             modifier = Modifier.fillMaxSize()
         )
 
-        // 缓冲提示 UI
+        // 【UI修改】缓冲提示：去掉黑色背景，仅留指示圈
         if (isBuffering) {
             Box(
-                modifier = Modifier.align(Alignment.Center).background(Color.Black.copy(alpha = 0.5f), CircleShape).padding(16.dp)
+                modifier = Modifier.align(Alignment.Center).padding(16.dp)
             ) {
                 CircularProgressIndicator(color = Color.White, modifier = Modifier.size(36.dp))
             }
@@ -1060,12 +1055,25 @@ fun SeriesPosterCard(series: MediaSeries, onClick: () -> Unit, onLongClick: () -
     }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun MediaDetailScreen(
     series: MediaSeries, onBack: () -> Unit, onPlay: (MediaSeries, QuarkFile) -> Unit, onLongClickPoster: (MediaSeries) -> Unit
 ) {
     val viewModel: VideoScraperViewModel = koinViewModel()
+    
+    // 找到最新进度的一集，用于决定默认选中的季
     val latestWatchedFile = series.videos.maxByOrNull { viewModel.getVideoProgress(it.fid) }
+    val latestPlayedSeason = latestWatchedFile?.parsedInfo?.season ?: 1
+    
+    val seasons = remember(series) { series.videos.map { it.parsedInfo?.season ?: 1 }.distinct().sorted() }
+    var selectedSeason by remember { mutableStateOf(latestPlayedSeason) }
+    
+    // 过滤当前选中季的剧集
+    val currentSeasonVideos = remember(series, selectedSeason) {
+        series.videos.filter { (it.parsedInfo?.season ?: 1) == selectedSeason }
+    }
+
     val hasProgress = latestWatchedFile != null && viewModel.getVideoProgress(latestWatchedFile.fid) > 0
     val playBtnText = if (hasProgress && latestWatchedFile != null) {
         val ep = latestWatchedFile.parsedInfo?.episode
@@ -1113,10 +1121,41 @@ fun MediaDetailScreen(
                 AppText(text = series.overview ?: "暂无简介", style = MaterialTheme.typography.bodyMedium, color = Color.DarkGray, modifier = Modifier.padding(top = 8.dp))
             }
         }
-        item { AppText(text = "剧集列表", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, modifier = Modifier.padding(start = 16.dp, top = 24.dp, bottom = 8.dp)) }
+        
+        // 【新增】多季切换 Tab
+        if (seasons.size > 1) {
+            item {
+                ScrollableTabRow(
+                    selectedTabIndex = seasons.indexOf(selectedSeason),
+                    edgePadding = 16.dp,
+                    modifier = Modifier.padding(top = 16.dp),
+                    containerColor = Color.Transparent,
+                    contentColor = MaterialTheme.colorScheme.primary,
+                    divider = {}
+                ) {
+                    seasons.forEach { season ->
+                        Tab(
+                            selected = selectedSeason == season,
+                            onClick = { selectedSeason = season },
+                            text = { AppText("第${season}季") }
+                        )
+                    }
+                }
+            }
+        }
+
+        item { 
+            AppText(
+                text = "剧集列表", 
+                style = MaterialTheme.typography.titleMedium, 
+                fontWeight = FontWeight.Bold, 
+                modifier = Modifier.padding(start = 16.dp, top = 24.dp, bottom = 8.dp)
+            ) 
+        }
+        
         item {
             LazyRow(contentPadding = PaddingValues(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                items(series.videos) { file ->
+                items(currentSeasonVideos) { file ->
                     val e = file.parsedInfo?.episode
                     val tmdbTitle = if (e != null) series.episodeTitles[e] else null
                     val stillUrl = if (e != null) series.episodeStills[e] else null
@@ -1131,11 +1170,13 @@ fun MediaDetailScreen(
                 }
             }
         }
+        
         item {
             Column(modifier = Modifier.fillMaxWidth().background(Color(0xFFF5F5F5)).padding(16.dp).padding(top = 24.dp)) {
                 AppText(text = "文件信息", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
                 series.videos.firstOrNull()?.let { firstFile ->
                     AppText(text = firstFile.name, style = MaterialTheme.typography.bodySmall, color = Color.Gray, modifier = Modifier.padding(top = 8.dp))
+                    // 【修改】完整路径显示
                     val pathStr = firstFile.folderPath.joinToString(" / ")
                     AppText(text = "夸克网盘: /$pathStr", style = MaterialTheme.typography.bodySmall, color = Color.Gray, modifier = Modifier.padding(top = 4.dp))
                     val sizeMb = firstFile.size / (1024 * 1024)
