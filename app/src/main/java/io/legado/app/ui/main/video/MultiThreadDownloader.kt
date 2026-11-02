@@ -26,7 +26,9 @@ class MultiThreadDownloader(
     private val downloadedBytes = AtomicLong(0)
     private var isRunning = false
     private val downloadJobs = mutableListOf<Job>()
-    private lateinit var cacheFile: File
+    
+    // 【修复】去掉 private 关键字，允许 QuarkProxyServer 读取该文件
+    lateinit var cacheFile: File
     private var raf: RandomAccessFile? = null
 
     fun getTotalLength(): Long = totalLength
