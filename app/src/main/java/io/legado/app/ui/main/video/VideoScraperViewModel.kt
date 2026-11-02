@@ -202,7 +202,7 @@ class VideoScraperViewModel(
 
             val meaningfulPaths = v.folderPath.filter { !excludeFolders.contains(it) }
             var baseTitle = ""
-            var folderSeason: Int? = null // 从文件夹路径提取季数
+            var folderSeason: Int? = null
 
             if (meaningfulPaths.isNotEmpty()) {
                 if (VideoFileNameParser.isSeasonFolder(meaningfulPaths.last())) {
@@ -210,7 +210,6 @@ class VideoScraperViewModel(
                     baseTitle = if (meaningfulPaths.size >= 2) meaningfulPaths[meaningfulPaths.size - 2] else meaningfulPaths.last()
                 } else {
                     baseTitle = meaningfulPaths.last()
-                    // 检查是否有上一级是季数
                     if (meaningfulPaths.size >= 2 && VideoFileNameParser.isSeasonFolder(meaningfulPaths[meaningfulPaths.size - 2])) {
                         folderSeason = parseSeasonFromFolder(meaningfulPaths[meaningfulPaths.size - 2])
                     }
@@ -223,7 +222,6 @@ class VideoScraperViewModel(
 
             val key = baseTitle
             
-            // 合并季数：如果从文件夹提取到了季数，则覆盖文件本身的季数
             val finalParsedInfo = if (folderSeason != null) {
                 parsed.copy(season = folderSeason)
             } else {
@@ -504,14 +502,18 @@ class VideoScraperViewModel(
         } else { file.name }
         
         _uiState.update { it.copy(playUrl = null, playTitle = titleText, currentSeries = series, currentPlayFile = file) }
-        Toast.makeText(context, "正在获取原画直链...", Toast.LENGTH_SHORT).show()
+        Toast.makeText(context, "正在获取高速播放流...", Toast.LENGTH_SHORT).show()
 
         viewModelScope.launch {
             val url = withContext(Dispatchers.IO) {
                 try {
-                    // 获取原画下载链接
-                    val apiUrl = "https://drive-pc.quark.cn/1/clouddrive/file/download?pr=ucpro&fr=pc"
-                    val jsonBody = JSONObject().apply { put("fids", JSONArray().put(file.fid)) }
+                    // 回退到 v2/play 获取 m3u8，这不仅有原画画质，且 CDN 分配更好速度极快
+                    val apiUrl = "https://drive.quark.cn/1/clouddrive/file/v2/play?pr=ucpro&fr=pc"
+                    val jsonBody = JSONObject().apply {
+                        put("fid", file.fid)
+                        put("resolutions", "4k,2k,super,high,normal,low")
+                        put("supports", "fmp4,m3u8")
+                    }
                     val body = jsonBody.toString().toRequestBody("application/json".toMediaType())
                     
                     val request = Request.Builder()
@@ -526,12 +528,22 @@ class VideoScraperViewModel(
                         if (!resBody.isNullOrBlank()) {
                             val json = JSONObject(resBody)
                             if (json.optInt("code", -1) == 0) {
-                                val data = json.optJSONArray("data")
-                                if (data != null && data.length() > 0) {
-                                    val downloadUrl = data.getJSONObject(0).optString("download_url")
-                                    if (!downloadUrl.isNullOrBlank()) {
-                                        return@withContext downloadUrl
+                                val videoList = json.optJSONObject("data")?.optJSONArray("video_list")
+                                if (videoList != null && videoList.length() > 0) {
+                                    for (i in 0 until videoList.length()) {
+                                        val video = videoList.getJSONObject(i)
+                                        if (video.optBoolean("accessable", false)) {
+                                            val videoUrl = video.optJSONObject("video_info")?.optString("url")
+                                            if (!videoUrl.isNullOrBlank()) {
+                                                return@withContext videoUrl
+                                            }
+                                        }
                                     }
+                                }
+                            } else {
+                                val msg = json.optString("message")
+                                withContext(Dispatchers.Main) {
+                                    Toast.makeText(context, "接口报错: $msg", Toast.LENGTH_SHORT).show()
                                 }
                             }
                         }
@@ -543,7 +555,7 @@ class VideoScraperViewModel(
             if (url != null) {
                 _uiState.update { it.copy(playUrl = url) }
             } else {
-                Toast.makeText(context, "获取原画直链失败，可能是鉴权过期，请尝试重新登录", Toast.LENGTH_LONG).show()
+                Toast.makeText(context, "获取播放流失败，请检查登录状态", Toast.LENGTH_LONG).show()
             }
         }
     }
