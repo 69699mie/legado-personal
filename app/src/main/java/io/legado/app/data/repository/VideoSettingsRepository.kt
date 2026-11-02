@@ -30,8 +30,13 @@ class VideoSettingsRepository(context: Context) {
         get() = prefs.getString("video_progress_data", "{}") ?: "{}"
         set(value) { prefs.edit().putString("video_progress_data", value).apply() }
 
-    // 新增：本地代理多线程下载并发数
+    // 本地代理多线程下载并发数
     var proxyThreads: Int
         get() = prefs.getInt("proxy_threads", 4)
         set(value) { prefs.edit().putInt("proxy_threads", value).apply() }
+
+    // 【新增】刮削本地缓存数据
+    var scrapedCacheData: String
+        get() = prefs.getString("scraped_cache_data", "") ?: ""
+        set(value) { prefs.edit().putString("scraped_cache_data", value).apply() }
 }
