@@ -90,14 +90,17 @@ import androidx.media3.exoplayer.source.ProgressiveMediaSource
 import androidx.media3.ui.AspectRatioFrameLayout
 import androidx.media3.ui.PlayerView
 import coil3.compose.AsyncImage
-import com.danikula.videocache.HeadersInjector
+import com.danikula.videocache.HeaderInjector
 import com.danikula.videocache.HttpProxyCacheServer
-import com.danikula.videocache.HttpProxyCacheServer.Builder
 import io.legado.app.ui.widget.components.text.AppText
 import kotlinx.coroutines.delay
 import org.koin.androidx.compose.koinViewModel
 import java.util.Locale
 import kotlin.math.roundToInt
+
+// ==========================================
+// 主屏幕与列表
+// ==========================================
 
 @OptIn(ExperimentalFoundationApi::class, ExperimentalMaterial3Api::class)
 @Composable
@@ -125,9 +128,9 @@ fun VideoRouteScreen(
 
     if (uiState.playUrl != null && uiState.currentSeries != null && uiState.currentPlayFile != null) {
         Dialog(
-            onDismissRequest = { 
+            onDismissRequest = {
                 activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
-                viewModel.stopPlaying() 
+                viewModel.stopPlaying()
             },
             properties = DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false)
         ) {
@@ -138,9 +141,9 @@ fun VideoRouteScreen(
                 series = uiState.currentSeries!!,
                 currentFile = uiState.currentPlayFile!!,
                 viewModel = viewModel,
-                onBack = { 
+                onBack = {
                     activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
-                    viewModel.stopPlaying() 
+                    viewModel.stopPlaying()
                 }
             )
         }
@@ -247,6 +250,7 @@ fun VideoRouteScreen(
         }
     }
 
+    // 设置弹窗（与原版一致）
     if (showSettingsDialog) {
         var inputCookie by remember { mutableStateOf(uiState.cookie) }
         var inputTmdbKey by remember { mutableStateOf(uiState.tmdbApiKey) }
@@ -396,7 +400,6 @@ fun InternalVideoPlayer(
     val originalBrightness = remember { activity?.window?.attributes?.screenBrightness ?: WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE }
     DisposableEffect(Unit) {
         onDispose {
-            // 退出时恢复状态栏
             val window = (view.parent as? DialogWindowProvider)?.window ?: activity?.window
             window?.let {
                 WindowCompat.setDecorFitsSystemWindows(it, true)
@@ -464,17 +467,17 @@ fun InternalVideoPlayer(
         }
     }
 
-    // 【核心引入】AndroidVideoCache 代理层
+    // 【核心修复】使用 AndroidVideoCache 代理，接口名为 HeaderInjector
     val proxyUrl = remember(url, cookie) {
         val proxyServer = HttpProxyCacheServer.Builder(context.applicationContext)
             .maxCacheSize(1024 * 1024 * 1024) // 1GB 缓存
-            .headerInjector(object : HeadersInjector {
-                override fun addHeaders(url: String?, headers: MutableMap<String, String>?) {
-                    headers?.apply {
-                        put("Referer", "https://pan.quark.cn/")
-                        put("Cookie", cookie.replace("\n", "").replace("\r", "").trim())
-                        put("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) quark-cloud-drive/2.5.20 Chrome/100.0.4896.160 Electron/18.3.5.4-b478491100 Safari/537.36 Channel/pckk_other_ch")
-                    }
+            .headerInjector(object : HeaderInjector {
+                override fun addHeaders(url: String?): Map<String, String> {
+                    return mapOf(
+                        "Referer" to "https://pan.quark.cn/",
+                        "Cookie" to cookie.replace("\n", "").replace("\r", "").trim(),
+                        "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) quark-cloud-drive/2.5.20 Chrome/100.0.4896.160 Electron/18.3.5.4-b478491100 Safari/537.36 Channel/pckk_other_ch"
+                    )
                 }
             })
             .build()
@@ -491,7 +494,6 @@ fun InternalVideoPlayer(
 
         val loadControl = DefaultLoadControl.Builder().setBufferDurationsMs(30000, 120000, 1500, 3000).build()
         
-        // 音画质提升核心：开启浮点音频输出、优先硬件解码
         val renderersFactory = DefaultRenderersFactory(context)
             .setEnableAudioFloatOutput(true)
             .setExtensionRendererMode(DefaultRenderersFactory.EXTENSION_RENDERER_MODE_PREFER)
@@ -1061,15 +1063,12 @@ fun MediaDetailScreen(
 ) {
     val viewModel: VideoScraperViewModel = koinViewModel()
     
-    // 找到最新进度的一集，用于决定默认选中的季
     val latestWatchedFile = series.videos.maxByOrNull { viewModel.getVideoProgress(it.fid) }
     val latestPlayedSeason = latestWatchedFile?.parsedInfo?.season ?: 1
     
-    // 获取所有季数，并确保排序
     val seasons = remember(series) { series.videos.map { it.parsedInfo?.season ?: 1 }.distinct().sorted() }
     var selectedSeason by remember { mutableStateOf(latestPlayedSeason) }
     
-    // 过滤当前选中季的剧集
     val currentSeasonVideos = remember(series, selectedSeason) {
         series.videos.filter { (it.parsedInfo?.season ?: 1) == selectedSeason }
     }
@@ -1122,7 +1121,6 @@ fun MediaDetailScreen(
             }
         }
         
-        // 【修复】多季切换 Tab
         if (seasons.size > 1) {
             item {
                 ScrollableTabRow(
