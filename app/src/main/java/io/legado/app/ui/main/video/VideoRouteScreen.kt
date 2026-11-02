@@ -21,15 +21,15 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideOutHorizontally
-import androidx.compose.foundation.BorderStroke // 修复：补充了缺失的 BorderStroke
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border // 修复：补充了缺失的 border
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
-import androidx.compose.foundation.interaction.MutableInteractionSource // 修复：补充了缺失的 MutableInteractionSource
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
@@ -629,22 +629,43 @@ fun InternalVideoPlayer(
         AnimatedVisibility(visible = showControls, enter = fadeIn(), exit = fadeOut(), modifier = Modifier.fillMaxSize()) {
             Box(modifier = Modifier.fillMaxSize()) {
                 
-                // 左右悬浮按钮（去重、贴边、带半透明背景）
-                if (isLandscape) {
-                    Column(modifier = Modifier.align(Alignment.CenterStart).padding(start = 16.dp), verticalArrangement = Arrangement.spacedBy(30.dp)) {
+                // 左右悬浮按钮（始终显示横屏切换，其他功能按需显示）
+                Column(modifier = Modifier.align(Alignment.CenterStart).padding(start = 16.dp), verticalArrangement = Arrangement.spacedBy(30.dp)) {
+                    // 1. 横竖屏切换（竖屏、横屏都必须有）
+                    Surface(color = Color.White.copy(alpha = 0.1f), shape = CircleShape, border = BorderStroke(1.dp, Color.White.copy(alpha = 0.2f))) {
+                        IconButton(onClick = { 
+                            if (isLandscape) activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_PORTRAIT 
+                            else activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE 
+                        }) {
+                            Icon(Icons.Default.ScreenRotation, null, tint = Color.White)
+                        }
+                    }
+                    
+                    // 2. 选集（仅在横屏时显示在左侧，竖屏不显示）
+                    if (isLandscape) {
                         Surface(color = Color.White.copy(alpha = 0.1f), shape = CircleShape, border = BorderStroke(1.dp, Color.White.copy(alpha = 0.2f))) {
-                            IconButton(onClick = { activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_PORTRAIT }) {
-                                Icon(Icons.Default.ScreenRotation, null, tint = Color.White)
+                            IconButton(onClick = { showEpisodeDrawer = true }) {
+                                Icon(Icons.Default.FormatListBulleted, null, tint = Color.White)
                             }
                         }
                     }
-                    Column(modifier = Modifier.align(Alignment.CenterEnd).padding(end = 16.dp), verticalArrangement = Arrangement.spacedBy(30.dp)) {
+                }
+
+                Column(modifier = Modifier.align(Alignment.CenterEnd).padding(end = 16.dp), verticalArrangement = Arrangement.spacedBy(30.dp)) {
+                    // 音频（仅横屏）
+                    if (isLandscape) {
                         Surface(color = Color.White.copy(alpha = 0.1f), shape = CircleShape, border = BorderStroke(1.dp, Color.White.copy(alpha = 0.2f))) {
                             IconButton(onClick = { Toast.makeText(context, "暂无音频轨道", Toast.LENGTH_SHORT).show() }) { Icon(Icons.Default.Headset, null, tint = Color.White) }
                         }
-                        Surface(color = Color.White.copy(alpha = 0.1f), shape = CircleShape, border = BorderStroke(1.dp, Color.White.copy(alpha = 0.2f))) {
-                            IconButton(onClick = { isLocked = true; showControls = false; showUnlockIcon = true }) { Icon(Icons.Default.Lock, null, tint = Color.White) }
-                        }
+                    }
+                    
+                    // 锁屏（始终显示）
+                    Surface(color = Color.White.copy(alpha = 0.1f), shape = CircleShape, border = BorderStroke(1.dp, Color.White.copy(alpha = 0.2f))) {
+                        IconButton(onClick = { isLocked = true; showControls = false; showUnlockIcon = true }) { Icon(Icons.Default.Lock, null, tint = Color.White) }
+                    }
+                    
+                    // 字幕（仅横屏）
+                    if (isLandscape) {
                         Surface(color = Color.White.copy(alpha = 0.1f), shape = CircleShape, border = BorderStroke(1.dp, Color.White.copy(alpha = 0.2f))) {
                             IconButton(onClick = { Toast.makeText(context, "暂无字幕", Toast.LENGTH_SHORT).show() }) { Icon(Icons.Default.Subtitles, null, tint = Color.White) }
                         }
@@ -724,7 +745,12 @@ fun InternalVideoPlayer(
                                 }) { Icon(Icons.Default.SkipNext, null, tint = Color.White) }
                             }
 
-                            AppText(text = "选集", color = Color.White, modifier = Modifier.clickable { showEpisodeDrawer = true }.padding(8.dp))
+                            // 去掉正下方的选集功能（仅在横屏保留，或用占位符保持对齐）
+                            if (isLandscape) {
+                                AppText(text = "选集", color = Color.White, modifier = Modifier.clickable { showEpisodeDrawer = true }.padding(8.dp))
+                            } else {
+                                Spacer(modifier = Modifier.width(40.dp))
+                            }
                         }
                     }
                 }
@@ -881,7 +907,6 @@ fun SeriesPosterCard(series: MediaSeries, onClick: () -> Unit, onLongClick: () -
 fun MediaDetailScreen(
     series: MediaSeries, onBack: () -> Unit, onPlay: (MediaSeries, QuarkFile) -> Unit, onLongClickPoster: (MediaSeries) -> Unit
 ) {
-    // 找到最新进度的一集
     val viewModel: VideoScraperViewModel = koinViewModel()
     val latestWatchedFile = series.videos.maxByOrNull { viewModel.getVideoProgress(it.fid) }
     val hasProgress = latestWatchedFile != null && viewModel.getVideoProgress(latestWatchedFile.fid) > 0
@@ -917,7 +942,6 @@ fun MediaDetailScreen(
                     AppText(text = "${series.year ?: ""}", style = MaterialTheme.typography.bodyMedium)
                     AppText(text = " | ${series.category}", style = MaterialTheme.typography.bodyMedium, color = Color.Gray)
                 }
-                // 续播核心逻辑
                 Button(
                     onClick = { 
                         if (hasProgress && latestWatchedFile != null) onPlay(series, latestWatchedFile)
