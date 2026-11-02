@@ -1,6 +1,5 @@
 package io.legado.app.ui.main.video
 
-import io.ktor.http.ContentType
 import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpStatusCode
 import io.ktor.server.application.*
@@ -13,7 +12,8 @@ import okhttp3.Request
 import java.util.concurrent.TimeUnit
 
 object QuarkProxyServer {
-    private var server: ApplicationEngine? = null
+    // 【修复】将 ApplicationEngine? 改为通用泛型类型以适配新版 Ktor
+    private var server: EmbeddedServer<*, *>? = null
     private var currentUrl: String = ""
     private var currentCookie: String = ""
 
