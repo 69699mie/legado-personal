@@ -1,7 +1,6 @@
 package io.legado.app.ui.main.video
 
 import android.content.Context
-import io.ktor.http.ContentType
 import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpStatusCode
 import io.ktor.server.application.*
@@ -9,8 +8,6 @@ import io.ktor.server.cio.*
 import io.ktor.server.engine.*
 import io.ktor.server.response.*
 import io.ktor.server.routing.*
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.withContext
 import java.io.File
 import java.io.RandomAccessFile
 
@@ -22,7 +19,6 @@ object QuarkProxyServer {
     private var threadCount = 4
     private var downloader: MultiThreadDownloader? = null
 
-    // 提供给外部的刷新链接回调
     var onRefreshUrlNeeded: (suspend (fid: String, cookie: String) -> String?)? = null
 
     fun start(context: Context) {
@@ -39,7 +35,7 @@ object QuarkProxyServer {
 
                     val rangeHeader = call.request.headers[HttpHeaders.Range]
                     
-                    // 如果下载器未初始化，先初始化
+                    // 【修复】如果 downloader 为空，先创建实例，但 prepare 放到外面统一调用（受锁保护）
                     if (downloader == null) {
                         downloader = MultiThreadDownloader(
                             context = context,
@@ -51,12 +47,13 @@ object QuarkProxyServer {
                                 onRefreshUrlNeeded?.invoke(currentFid, currentCookie)
                             }
                         )
-                        val success = downloader!!.prepare()
-                        if (!success) {
-                            // 【新增】将具体的错误信息返回给 ExoPlayer
-                            call.respond(HttpStatusCode.InternalServerError, downloader!!.lastError.ifBlank { "Prepare failed" })
-                            return@get
-                        }
+                    }
+                    
+                    // 利用 MultiThreadDownloader 内部的 Mutex 锁，确保并发请求时只 Prepare 一次
+                    val success = downloader!!.prepare()
+                    if (!success) {
+                        call.respond(HttpStatusCode.InternalServerError, downloader!!.lastError.ifBlank { "Prepare failed" })
+                        return@get
                     }
 
                     val totalLength = downloader!!.getTotalLength()
@@ -76,7 +73,6 @@ object QuarkProxyServer {
                         }
                     }
 
-                    // 启动后台多线程下载当前请求的区间
                     downloader!!.startDownload(start, end)
 
                     call.response.status(HttpStatusCode.PartialContent)
@@ -92,7 +88,6 @@ object QuarkProxyServer {
                         var remaining = end - start + 1
                         
                         while (remaining > 0) {
-                            // 等待当前偏移量之前的数据下载完毕
                             downloader!!.awaitDataReady(start + (end - start + 1) - remaining)
                             
                             val toRead = minOf(buffer.size.toLong(), remaining).toInt()
@@ -114,7 +109,6 @@ object QuarkProxyServer {
         this.currentCookie = cookie
         this.currentFid = fid
         this.threadCount = threads
-        // 如果切集或换源，先清理旧的下载器
         downloader?.stop()
         downloader = null
     }
