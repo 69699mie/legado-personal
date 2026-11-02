@@ -246,6 +246,10 @@ dependencies {
     implementation(libs.ktor.server.websockets)
     // ========================================
 
+    // ===== AndroidVideoCache 边下边播库 =====
+    implementation("com.danikula:videocache:2.7.1")
+    // ========================================
+
     implementation(libs.zxing.lite)
     implementation(libs.colorpicker)
     implementation(libs.colorpicker.compose)
