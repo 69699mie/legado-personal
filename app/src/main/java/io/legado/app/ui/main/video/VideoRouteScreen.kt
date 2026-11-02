@@ -103,20 +103,6 @@ fun VideoRouteScreen(
     var manualScrapeSeries by remember { mutableStateOf<MediaSeries?>(null) }
     var viewAllCategory by remember { mutableStateOf<String?>(null) }
 
-    // 进入/退出播放器时，统一控制屏幕方向
-    DisposableEffect(uiState.playUrl != null) {
-        if (uiState.playUrl != null) {
-            // 进入播放器，允许重力感应，保证可以自动横屏
-            activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_SENSOR
-        } else {
-            // 退出播放器，恢复竖屏
-            activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
-        }
-        onDispose {
-            activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
-        }
-    }
-
     BackHandler(enabled = uiState.playUrl != null || uiState.currentSeries != null || viewAllCategory != null || (!uiState.isLibraryMode && uiState.currentFid != "0")) {
         if (uiState.playUrl != null) {
             activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
@@ -645,51 +631,45 @@ fun InternalVideoPlayer(
         AnimatedVisibility(visible = showControls, enter = fadeIn(), exit = fadeOut(), modifier = Modifier.fillMaxSize()) {
             Box(modifier = Modifier.fillMaxSize()) {
                 
-                // 左右悬浮按钮（只在横屏时显示）
-                if (isLandscape) {
-                    Column(modifier = Modifier.align(Alignment.CenterStart).padding(start = 16.dp), verticalArrangement = Arrangement.spacedBy(30.dp)) {
-                        Surface(color = Color.White.copy(alpha = 0.1f), shape = CircleShape, border = BorderStroke(1.dp, Color.White.copy(alpha = 0.2f))) {
-                            IconButton(onClick = { 
-                                // 点击切换回竖屏
-                                activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_PORTRAIT 
-                            }) {
-                                Icon(Icons.Default.ScreenRotation, null, tint = Color.White)
-                            }
+                // 左右悬浮按钮
+                Column(modifier = Modifier.align(Alignment.CenterStart).padding(start = 16.dp), verticalArrangement = Arrangement.spacedBy(30.dp)) {
+                    // 1. 横竖屏切换（竖屏、横屏都必须有）
+                    Surface(color = Color.White.copy(alpha = 0.1f), shape = CircleShape, border = BorderStroke(1.dp, Color.White.copy(alpha = 0.2f))) {
+                        IconButton(onClick = { 
+                            if (isLandscape) activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_PORTRAIT 
+                            else activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE 
+                        }) {
+                            Icon(Icons.Default.ScreenRotation, null, tint = Color.White)
                         }
+                    }
+                    
+                    // 2. 选集（仅在横屏时显示在左侧，竖屏不显示）
+                    if (isLandscape) {
                         Surface(color = Color.White.copy(alpha = 0.1f), shape = CircleShape, border = BorderStroke(1.dp, Color.White.copy(alpha = 0.2f))) {
                             IconButton(onClick = { showEpisodeDrawer = true }) {
                                 Icon(Icons.Default.FormatListBulleted, null, tint = Color.White)
                             }
                         }
                     }
-                    
-                    Column(modifier = Modifier.align(Alignment.CenterEnd).padding(end = 16.dp), verticalArrangement = Arrangement.spacedBy(30.dp)) {
+                }
+
+                Column(modifier = Modifier.align(Alignment.CenterEnd).padding(end = 16.dp), verticalArrangement = Arrangement.spacedBy(30.dp)) {
+                    // 音频（仅横屏）
+                    if (isLandscape) {
                         Surface(color = Color.White.copy(alpha = 0.1f), shape = CircleShape, border = BorderStroke(1.dp, Color.White.copy(alpha = 0.2f))) {
                             IconButton(onClick = { Toast.makeText(context, "暂无音频轨道", Toast.LENGTH_SHORT).show() }) { Icon(Icons.Default.Headset, null, tint = Color.White) }
                         }
-                        Surface(color = Color.White.copy(alpha = 0.1f), shape = CircleShape, border = BorderStroke(1.dp, Color.White.copy(alpha = 0.2f))) {
-                            IconButton(onClick = { isLocked = true; showControls = false; showUnlockIcon = true }) { Icon(Icons.Default.Lock, null, tint = Color.White) }
-                        }
+                    }
+                    
+                    // 锁屏（始终显示）
+                    Surface(color = Color.White.copy(alpha = 0.1f), shape = CircleShape, border = BorderStroke(1.dp, Color.White.copy(alpha = 0.2f))) {
+                        IconButton(onClick = { isLocked = true; showControls = false; showUnlockIcon = true }) { Icon(Icons.Default.Lock, null, tint = Color.White) }
+                    }
+                    
+                    // 字幕（仅横屏）
+                    if (isLandscape) {
                         Surface(color = Color.White.copy(alpha = 0.1f), shape = CircleShape, border = BorderStroke(1.dp, Color.White.copy(alpha = 0.2f))) {
                             IconButton(onClick = { Toast.makeText(context, "暂无字幕", Toast.LENGTH_SHORT).show() }) { Icon(Icons.Default.Subtitles, null, tint = Color.White) }
-                        }
-                    }
-                } else {
-                    // 竖屏状态下，左侧只保留横屏切换按钮
-                    Column(modifier = Modifier.align(Alignment.CenterStart).padding(start = 16.dp)) {
-                        Surface(color = Color.White.copy(alpha = 0.1f), shape = CircleShape, border = BorderStroke(1.dp, Color.White.copy(alpha = 0.2f))) {
-                            IconButton(onClick = { 
-                                // 点击强制横屏
-                                activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE 
-                            }) {
-                                Icon(Icons.Default.ScreenRotation, null, tint = Color.White)
-                            }
-                        }
-                    }
-                    // 竖屏右侧保留锁屏按钮
-                    Column(modifier = Modifier.align(Alignment.CenterEnd).padding(end = 16.dp)) {
-                        Surface(color = Color.White.copy(alpha = 0.1f), shape = CircleShape, border = BorderStroke(1.dp, Color.White.copy(alpha = 0.2f))) {
-                            IconButton(onClick = { isLocked = true; showControls = false; showUnlockIcon = true }) { Icon(Icons.Default.Lock, null, tint = Color.White) }
                         }
                     }
                 }
@@ -707,10 +687,12 @@ fun InternalVideoPlayer(
                     modifier = Modifier
                         .align(Alignment.BottomCenter)
                         .navigationBarsPadding()
-                        .padding(bottom = 24.dp, start = 48.dp, end = 48.dp)
+                        .padding(bottom = 16.dp) // 减小底部 padding，避免过度上移
+                        .widthIn(max = if (isLandscape) 640.dp else 400.dp) // 限制最大宽度
+                        .fillMaxWidth(0.9f) // 占屏幕宽度的 90% 左右，确保两侧有空间
                         .background(Color(0xB31A1A1A), RoundedCornerShape(20.dp))
                         .border(1.dp, Color.White.copy(alpha = 0.1f), RoundedCornerShape(20.dp))
-                        .padding(horizontal = 24.dp, vertical = 16.dp)
+                        .padding(horizontal = 20.dp, vertical = 12.dp) // 压缩内边距
                 ) {
                     Column(modifier = Modifier.fillMaxWidth()) {
                         // 进度条
@@ -720,13 +702,13 @@ fun InternalVideoPlayer(
                                 value = if (duration > 0) currentPosition.toFloat() / duration else 0f,
                                 onValueChange = { currentPosition = (it * duration).toLong() },
                                 onValueChangeFinished = { exoPlayer.seekTo(currentPosition); if (isPlaying) exoPlayer.play() },
-                                modifier = Modifier.weight(1f).padding(horizontal = 8.dp),
+                                modifier = Modifier.weight(1f).padding(horizontal = 8.dp).height(20.dp),
                                 colors = SliderDefaults.colors(thumbColor = Color.White, activeTrackColor = Color.White, inactiveTrackColor = Color.White.copy(alpha = 0.3f))
                             )
                             AppText(text = formatTime(duration), color = Color.White, fontSize = 12.sp)
                         }
 
-                        Spacer(modifier = Modifier.height(12.dp))
+                        Spacer(modifier = Modifier.height(8.dp))
 
                         // 按钮
                         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
@@ -741,7 +723,8 @@ fun InternalVideoPlayer(
                                 }.padding(8.dp)
                             )
 
-                            Row(horizontalArrangement = Arrangement.spacedBy(if (isLandscape) 24.dp else 32.dp), verticalAlignment = Alignment.CenterVertically) {
+                            // 中间控制按钮区，使用 weight 自动分配空间，避免被挤压
+                            Row(modifier = Modifier.weight(1f), horizontalArrangement = Arrangement.Center, verticalAlignment = Alignment.CenterVertically) {
                                 IconButton(onClick = {
                                     val idx = series.videos.indexOfFirst { it.fid == currentFile.fid }
                                     if (idx > 0) viewModel.playVideo(context, series, series.videos[idx - 1])
@@ -753,7 +736,7 @@ fun InternalVideoPlayer(
                                     }
                                 }
                                 IconButton(onClick = { if (isPlaying) exoPlayer.pause() else exoPlayer.play() }) {
-                                    Icon(if (isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow, null, tint = Color.White, modifier = Modifier.size(36.dp))
+                                    Icon(if (isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow, null, tint = Color.White, modifier = Modifier.size(32.dp))
                                 }
                                 if (isLandscape) {
                                     IconButton(onClick = { exoPlayer.seekTo((exoPlayer.currentPosition + 10000).coerceAtMost(if (duration > 0) duration else Long.MAX_VALUE)); seekMessage = "快进 10 秒" }) {
@@ -767,7 +750,7 @@ fun InternalVideoPlayer(
                                 }) { Icon(Icons.Default.SkipNext, null, tint = Color.White) }
                             }
 
-                            // 去掉正下方的选集功能（仅在横屏保留，或用占位符保持对齐）
+                            // 选集按钮
                             if (isLandscape) {
                                 AppText(text = "选集", color = Color.White, modifier = Modifier.clickable { showEpisodeDrawer = true }.padding(8.dp))
                             } else {
@@ -778,13 +761,13 @@ fun InternalVideoPlayer(
                 }
 
                 if (showSkipIntro) {
-                    Button(onClick = { exoPlayer.seekTo(introSeconds * 1000L); showSkipIntro = false }, modifier = Modifier.align(Alignment.BottomEnd).padding(bottom = 120.dp, end = 16.dp)) { AppText("跳过片头") }
+                    Button(onClick = { exoPlayer.seekTo(introSeconds * 1000L); showSkipIntro = false }, modifier = Modifier.align(Alignment.BottomEnd).padding(bottom = 100.dp, end = 16.dp)) { AppText("跳过片头") }
                 }
                 if (showSkipOutro) {
                     Button(onClick = { 
                         val idx = series.videos.indexOfFirst { it.fid == currentFile.fid }
                         if (idx != -1 && idx < series.videos.size - 1) viewModel.playVideo(context, series, series.videos[idx + 1])
-                    }, modifier = Modifier.align(Alignment.BottomEnd).padding(bottom = 120.dp, end = 16.dp)) { AppText("下一集") }
+                    }, modifier = Modifier.align(Alignment.BottomEnd).padding(bottom = 100.dp, end = 16.dp)) { AppText("下一集") }
                 }
             }
         }
