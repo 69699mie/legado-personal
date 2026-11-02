@@ -248,6 +248,8 @@ fun VideoRouteScreen(
         var inputCookie by remember { mutableStateOf(uiState.cookie) }
         var inputTmdbKey by remember { mutableStateOf(uiState.tmdbApiKey) }
         var inputTmdbUrl by remember { mutableStateOf(uiState.tmdbBaseUrl) }
+        var inputThreads by remember { mutableStateOf(viewModel.getProxyThreads().toString()) }
+        
         Dialog(onDismissRequest = { showSettingsDialog = false }) {
             Column(modifier = Modifier.background(Color.White).padding(16.dp).fillMaxWidth()) {
                 Row(modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
@@ -259,7 +261,15 @@ fun VideoRouteScreen(
                 OutlinedTextField(value = inputTmdbKey, onValueChange = { inputTmdbKey = it }, modifier = Modifier.padding(vertical = 8.dp), visualTransformation = PasswordVisualTransformation(), maxLines = 1)
                 AppText(text = "TMDB API 代理地址")
                 OutlinedTextField(value = inputTmdbUrl, onValueChange = { inputTmdbUrl = it }, modifier = Modifier.padding(vertical = 8.dp), maxLines = 1)
-                OutlinedButton(onClick = { viewModel.saveSettings(inputCookie, inputTmdbKey, inputTmdbUrl); showSettingsDialog = false }, modifier = Modifier.align(Alignment.End)) { AppText("保存并刷新") }
+                
+                AppText(text = "代理并发数 (建议 3-6)")
+                OutlinedTextField(value = inputThreads, onValueChange = { inputThreads = it }, modifier = Modifier.padding(vertical = 8.dp), maxLines = 1)
+                
+                OutlinedButton(onClick = { 
+                    viewModel.saveSettings(inputCookie, inputTmdbKey, inputTmdbUrl)
+                    inputThreads.toIntOrNull()?.let { viewModel.setProxyThreads(it) }
+                    showSettingsDialog = false 
+                }, modifier = Modifier.align(Alignment.End)) { AppText("保存并刷新") }
             }
         }
     }
@@ -458,14 +468,13 @@ fun InternalVideoPlayer(
         }
     }
 
-    val dataSourceFactory = remember {
-        DefaultHttpDataSource.Factory()
+    val exoPlayer = remember {
+        // 代理层已经处理了所有 Header 鉴权，ExoPlayer 只需简单拉取本地代理流即可
+        val dataSourceFactory = DefaultHttpDataSource.Factory()
             .setAllowCrossProtocolRedirects(true)
             .setConnectTimeoutMs(30000)
             .setReadTimeoutMs(30000)
-    }
 
-    val exoPlayer = remember {
         val mediaItem = MediaItem.Builder().setUri(url).setMediaMetadata(MediaMetadata.Builder().setTitle(title).build()).build()
         val isHls = try { Uri.parse(url).path?.contains(".m3u8") == true } catch (e: Exception) { url.contains(".m3u8") }
         val mediaSource = if (isHls) HlsMediaSource.Factory(dataSourceFactory).setAllowChunklessPreparation(true).createMediaSource(mediaItem) else ProgressiveMediaSource.Factory(dataSourceFactory).createMediaSource(mediaItem)
@@ -489,6 +498,7 @@ fun InternalVideoPlayer(
 
     LaunchedEffect(url) {
         hasRestoredProgress = false
+        val dataSourceFactory = DefaultHttpDataSource.Factory().setAllowCrossProtocolRedirects(true)
         val mediaItem = MediaItem.Builder().setUri(url).setMediaMetadata(MediaMetadata.Builder().setTitle(title).build()).build()
         val isHls = try { Uri.parse(url).path?.contains(".m3u8") == true } catch (e: Exception) { url.contains(".m3u8") }
         val mediaSource = if (isHls) HlsMediaSource.Factory(dataSourceFactory).setAllowChunklessPreparation(true).createMediaSource(mediaItem) else ProgressiveMediaSource.Factory(dataSourceFactory).createMediaSource(mediaItem)
