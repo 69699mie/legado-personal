@@ -472,7 +472,7 @@ class VideoScraperViewModel(
         viewModelScope.launch {
             val url = withContext(Dispatchers.IO) {
                 try {
-                    // 1. 尝试获取原画下载链接
+                    // 获取原画下载链接
                     val apiUrl = "https://drive-pc.quark.cn/1/clouddrive/file/download?pr=ucpro&fr=pc"
                     val jsonBody = JSONObject().apply { put("fids", JSONArray().put(file.fid)) }
                     val body = jsonBody.toString().toRequestBody("application/json".toMediaType())
@@ -493,43 +493,7 @@ class VideoScraperViewModel(
                                 if (data != null && data.length() > 0) {
                                     val downloadUrl = data.getJSONObject(0).optString("download_url")
                                     if (!downloadUrl.isNullOrBlank()) {
-                                        // 拿到原画链接，直接返回
                                         return@withContext downloadUrl
-                                    }
-                                }
-                            }
-                        }
-                    }
-
-                    // 2. 如果原画获取失败，或者为空，无缝降级到 v2/play 获取最高画质转码流
-                    val fallbackUrl = "https://drive.quark.cn/1/clouddrive/file/v2/play?pr=ucpro&fr=pc"
-                    val fallbackJsonBody = JSONObject().apply {
-                        put("fid", file.fid)
-                        put("resolutions", "4k,2k,super,high,normal,low") // 强制要求最高画质
-                        put("supports", "fmp4,m3u8")
-                    }
-                    val fallbackBody = fallbackJsonBody.toString().toRequestBody("application/json".toMediaType())
-                    val fallbackRequest = Request.Builder()
-                        .url(fallbackUrl).post(fallbackBody).header("Cookie", cookie)
-                        .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) quark-cloud-drive/2.5.20 Chrome/100.0.4896.160 Electron/18.3.5.4-b478491100 Safari/537.36 Channel/pckk_other_ch")
-                        .header("Referer", "https://pan.quark.cn/") 
-                        .header("Accept", "application/json, text/plain, */*")
-                        .build()
-
-                    client.newCall(fallbackRequest).execute().use { response ->
-                        val resBody = response.body?.string()
-                        if (!resBody.isNullOrBlank()) {
-                            val json = JSONObject(resBody)
-                            if (json.optInt("code", -1) == 0) {
-                                val videoList = json.optJSONObject("data")?.optJSONArray("video_list")
-                                if (videoList != null && videoList.length() > 0) {
-                                    // 取第一个，通常就是 4k/2k
-                                    for (i in 0 until videoList.length()) {
-                                        val video = videoList.getJSONObject(i)
-                                        if (video.optBoolean("accessable", false)) {
-                                            val videoUrl = video.optJSONObject("video_info")?.optString("url")
-                                            if (!videoUrl.isNullOrBlank()) return@withContext videoUrl
-                                        }
                                     }
                                 }
                             }
@@ -542,7 +506,7 @@ class VideoScraperViewModel(
             if (url != null) {
                 _uiState.update { it.copy(playUrl = url) }
             } else {
-                Toast.makeText(context, "获取播放流失败，请检查登录状态", Toast.LENGTH_LONG).show()
+                Toast.makeText(context, "获取原画直链失败，可能是鉴权过期，请尝试重新登录", Toast.LENGTH_LONG).show()
             }
         }
     }
