@@ -27,7 +27,7 @@ class VideoSettingsRepository(context: Context) {
         get() = prefs.getString("intro_outro_data", "{}") ?: "{}"
         set(value) { prefs.edit().putString("intro_outro_data", value).apply() }
 
-    // 播放进度记录（JSON: {"fid":"position_ms"}）
+    // 播放进度记录
     var videoProgressData: String
         get() = prefs.getString("video_progress_data", "{}") ?: "{}"
         set(value) { prefs.edit().putString("video_progress_data", value).apply() }
