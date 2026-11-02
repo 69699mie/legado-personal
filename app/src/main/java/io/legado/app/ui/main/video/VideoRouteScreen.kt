@@ -6,7 +6,9 @@ import android.content.Context
 import android.content.pm.ActivityInfo
 import android.content.res.Configuration
 import android.media.AudioManager
+import android.net.TrafficStats
 import android.net.Uri
+import android.os.Process
 import android.view.ViewGroup
 import android.view.WindowManager
 import android.webkit.CookieManager
@@ -88,6 +90,7 @@ import coil3.compose.AsyncImage
 import io.legado.app.ui.widget.components.text.AppText
 import kotlinx.coroutines.delay
 import org.koin.androidx.compose.koinViewModel
+import java.util.Locale
 import kotlin.math.roundToInt
 
 @OptIn(ExperimentalFoundationApi::class, ExperimentalMaterial3Api::class)
@@ -367,7 +370,7 @@ fun InternalVideoPlayer(
     val configuration = LocalConfiguration.current
     val isLandscape = configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
 
-    // 【核心修复 1】：直接控制 Dialog 的 Window 来实现真正的全屏隐藏状态栏
+    // 直接控制 Dialog 的 Window 来实现真正的全屏隐藏状态栏
     LaunchedEffect(isLandscape) {
         if (view.isInEditMode) return@LaunchedEffect
         val window = (view.parent as? DialogWindowProvider)?.window ?: activity?.window
@@ -405,6 +408,7 @@ fun InternalVideoPlayer(
     var currentPosition by remember { mutableLongStateOf(0L) }
     var duration by remember { mutableLongStateOf(0L) }
     var resolution by remember { mutableStateOf("") }
+    var networkSpeed by remember { mutableStateOf("0 KB/s") }
     var showControls by remember { mutableStateOf(true) }
     var isLocked by remember { mutableStateOf(false) }
     var showUnlockIcon by remember { mutableStateOf(false) }
@@ -434,6 +438,23 @@ fun InternalVideoPlayer(
     val audioManager = remember { context.getSystemService(Context.AUDIO_SERVICE) as AudioManager }
 
     var hasRestoredProgress by remember { mutableStateOf(false) }
+
+    // 实时网速监听
+    LaunchedEffect(Unit) {
+        var lastRxBytes = TrafficStats.getUidRxBytes(Process.myUid())
+        while (true) {
+            delay(1000)
+            val currentRxBytes = TrafficStats.getUidRxBytes(Process.myUid())
+            val delta = currentRxBytes - lastRxBytes
+            lastRxBytes = currentRxBytes
+            
+            networkSpeed = if (delta > 1024 * 1024) {
+                String.format(Locale.getDefault(), "%.1f MB/s", delta / (1024f * 1024f))
+            } else {
+                String.format(Locale.getDefault(), "%d KB/s", delta / 1024)
+            }
+        }
+    }
 
     val exoPlayer = remember {
         val cleanCookie = cookie.replace("\n", "").replace("\r", "").trim()
@@ -603,12 +624,12 @@ fun InternalVideoPlayer(
             modifier = Modifier.fillMaxSize()
         )
 
-        // 【核心修复 2】：快退快进提示文字位置上移
+        // 快退快进提示文字位置上移
         if (seekMessage != null) {
             Box(
                 modifier = Modifier
                     .align(Alignment.TopCenter)
-                    .padding(top = if (isLandscape) 80.dp else 120.dp) // 横屏和竖屏下移的位置
+                    .padding(top = if (isLandscape) 80.dp else 120.dp)
                     .background(Color.Black.copy(alpha = 0.6f), RoundedCornerShape(8.dp))
                     .padding(horizontal = 16.dp, vertical = 8.dp)
             ) {
@@ -703,7 +724,15 @@ fun InternalVideoPlayer(
                 ) {
                     IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, null, tint = Color.White) }
                     AppText(text = title, color = Color.White, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f).padding(start = 8.dp))
-                    if (resolution.isNotBlank()) AppText(text = resolution, color = Color.White, fontSize = 12.sp, modifier = Modifier.padding(end = 16.dp))
+                    
+                    // 【仅在横屏显示】网速和分辨率
+                    if (isLandscape) {
+                        AppText(text = networkSpeed, color = Color.White, fontSize = 12.sp, modifier = Modifier.padding(end = 12.dp))
+                        if (resolution.isNotBlank()) {
+                            AppText(text = resolution, color = Color.White, fontSize = 12.sp, modifier = Modifier.padding(end = 16.dp))
+                        }
+                    }
+                    
                     IconButton(onClick = { showSettingsPanel = true }) { Icon(Icons.Default.Settings, contentDescription = "设置", tint = Color.White) }
                 }
 
