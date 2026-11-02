@@ -355,8 +355,21 @@ fun InternalVideoPlayer(
     val configuration = LocalConfiguration.current
     val isLandscape = configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
 
-    // 沉浸式全屏 & 退出时恢复竖屏
-    DisposableEffect(isLandscape) {
+    // 【修复】：生命周期清理只在进入/退出时执行一次，避免横竖屏切换时被误杀
+    DisposableEffect(Unit) {
+        activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_SENSOR
+        onDispose {
+            // 退出时强制恢复竖屏
+            activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
+            activity?.window?.let { window ->
+                WindowCompat.setDecorFitsSystemWindows(window, true)
+                WindowInsetsControllerCompat(window, window.decorView).show(WindowInsetsCompat.Type.systemBars())
+            }
+        }
+    }
+
+    // 【修复】：根据横竖屏状态控制沉浸式（状态栏显隐）
+    LaunchedEffect(isLandscape) {
         activity?.window?.let { window ->
             val controller = WindowInsetsControllerCompat(window, window.decorView)
             if (isLandscape) {
@@ -366,13 +379,6 @@ fun InternalVideoPlayer(
             } else {
                 WindowCompat.setDecorFitsSystemWindows(window, true)
                 controller.show(WindowInsetsCompat.Type.systemBars())
-            }
-        }
-        onDispose {
-            activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
-            activity?.window?.let { window ->
-                WindowCompat.setDecorFitsSystemWindows(window, true)
-                WindowInsetsControllerCompat(window, window.decorView).show(WindowInsetsCompat.Type.systemBars())
             }
         }
     }
