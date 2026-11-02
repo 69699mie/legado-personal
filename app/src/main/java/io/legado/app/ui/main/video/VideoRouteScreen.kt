@@ -529,9 +529,13 @@ fun InternalVideoPlayer(
                 if (videoSize.width > 0 && videoSize.height > 0) resolution = "${videoSize.width}×${videoSize.height}"
             }
             override fun onPlayerError(error: PlaybackException) {
+                // 【修改】捕获服务器返回的具体错误信息，不再只报 HTTP 500
                 val msg = when (val cause = error.cause) {
-                    is HttpDataSource.InvalidResponseCodeException -> "播放失败: HTTP ${cause.responseCode}"
-                    else -> "播放失败: ${error.errorCodeName}"
+                    is HttpDataSource.InvalidResponseCodeException -> {
+                        val body = cause.responseBody?.let { String(it) } ?: cause.message
+                        "播放失败: HTTP ${cause.responseCode}\n$body"
+                    }
+                    else -> "播放失败: ${error.errorCodeName}\n${cause?.message}"
                 }
                 Toast.makeText(context, msg, Toast.LENGTH_LONG).show()
             }
