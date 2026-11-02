@@ -458,18 +458,11 @@ fun InternalVideoPlayer(
         }
     }
 
-    val dataSourceFactory = remember(cookie) {
+    val dataSourceFactory = remember {
         DefaultHttpDataSource.Factory()
-            .setDefaultRequestProperties(
-                mapOf(
-                    "Referer" to "https://pan.quark.cn/",
-                    "Cookie" to cookie.replace("\n", "").replace("\r", "").trim(),
-                    "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) quark-cloud-drive/2.5.20 Chrome/100.0.4896.160 Electron/18.3.5.4-b478491100 Safari/537.36 Channel/pckk_other_ch"
-                )
-            )
             .setAllowCrossProtocolRedirects(true)
-            .setConnectTimeoutMs(15000)
-            .setReadTimeoutMs(15000)
+            .setConnectTimeoutMs(30000)
+            .setReadTimeoutMs(30000)
     }
 
     val exoPlayer = remember {
@@ -1049,7 +1042,6 @@ fun MediaDetailScreen(
     
     val seasons = remember(series) { series.videos.map { it.parsedInfo?.season ?: 1 }.distinct().sorted() }
     
-    // 找到全局最近播放的季数，作为默认选中项
     val latestWatchedFile = series.videos.maxByOrNull { viewModel.getVideoProgress(it.fid) }
     val latestPlayedSeason = latestWatchedFile?.parsedInfo?.season ?: 1
     
@@ -1059,7 +1051,6 @@ fun MediaDetailScreen(
         series.videos.filter { (it.parsedInfo?.season ?: 1) == selectedSeason }
     }
 
-    // 【修复】大按钮的文本与点击逻辑，完全绑定到当前选中的季
     val latestWatchedInCurrentSeason = currentSeasonVideos.maxByOrNull { viewModel.getVideoProgress(it.fid) }
     val hasProgressInCurrentSeason = latestWatchedInCurrentSeason != null && viewModel.getVideoProgress(latestWatchedInCurrentSeason.fid) > 0
     
