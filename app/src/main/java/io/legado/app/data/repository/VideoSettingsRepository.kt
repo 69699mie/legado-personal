@@ -22,13 +22,16 @@ class VideoSettingsRepository(context: Context) {
         get() = prefs.getString("library_fids", "") ?: ""
         set(value) { prefs.edit().putString("library_fids", value).apply() }
 
-    // 片头片尾
     var introOutroData: String
         get() = prefs.getString("intro_outro_data", "{}") ?: "{}"
         set(value) { prefs.edit().putString("intro_outro_data", value).apply() }
 
-    // 播放进度记录
     var videoProgressData: String
         get() = prefs.getString("video_progress_data", "{}") ?: "{}"
         set(value) { prefs.edit().putString("video_progress_data", value).apply() }
+
+    // 新增：本地代理多线程下载并发数
+    var proxyThreads: Int
+        get() = prefs.getInt("proxy_threads", 4)
+        set(value) { prefs.edit().putInt("proxy_threads", value).apply() }
 }
