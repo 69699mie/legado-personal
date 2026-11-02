@@ -96,22 +96,42 @@ fun VideoRouteScreen(
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val context = LocalContext.current
+    val activity = context.findActivity()
     var showSettingsDialog by remember { mutableStateOf(false) }
     var showWebLoginDialog by remember { mutableStateOf(false) }
     var showManualScrapeDialog by remember { mutableStateOf(false) }
     var manualScrapeSeries by remember { mutableStateOf<MediaSeries?>(null) }
     var viewAllCategory by remember { mutableStateOf<String?>(null) }
 
+    // 进入/退出播放器时，统一控制屏幕方向
+    DisposableEffect(uiState.playUrl != null) {
+        if (uiState.playUrl != null) {
+            // 进入播放器，允许重力感应，保证可以自动横屏
+            activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_SENSOR
+        } else {
+            // 退出播放器，恢复竖屏
+            activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
+        }
+        onDispose {
+            activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
+        }
+    }
+
     BackHandler(enabled = uiState.playUrl != null || uiState.currentSeries != null || viewAllCategory != null || (!uiState.isLibraryMode && uiState.currentFid != "0")) {
-        if (uiState.playUrl != null) viewModel.stopPlaying()
-        else if (uiState.currentSeries != null) viewModel.selectSeries(null)
+        if (uiState.playUrl != null) {
+            activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
+            viewModel.stopPlaying()
+        } else if (uiState.currentSeries != null) viewModel.selectSeries(null)
         else if (viewAllCategory != null) viewAllCategory = null
         else viewModel.goBack()
     }
 
     if (uiState.playUrl != null && uiState.currentSeries != null && uiState.currentPlayFile != null) {
         Dialog(
-            onDismissRequest = { viewModel.stopPlaying() },
+            onDismissRequest = { 
+                activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
+                viewModel.stopPlaying() 
+            },
             properties = DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false)
         ) {
             InternalVideoPlayer(
@@ -121,7 +141,10 @@ fun VideoRouteScreen(
                 series = uiState.currentSeries!!,
                 currentFile = uiState.currentPlayFile!!,
                 viewModel = viewModel,
-                onBack = { viewModel.stopPlaying() }
+                onBack = { 
+                    activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
+                    viewModel.stopPlaying() 
+                }
             )
         }
     } else if (uiState.currentSeries != null) {
@@ -336,7 +359,7 @@ fun WebLoginView(onLoginSuccess: (String) -> Unit, onCancel: () -> Unit) {
 }
 
 // ==========================================
-// 核心播放器组件 (UI 重构 + 逻辑修复)
+// 核心播放器组件
 // ==========================================
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -355,20 +378,7 @@ fun InternalVideoPlayer(
     val configuration = LocalConfiguration.current
     val isLandscape = configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
 
-    // 【修复】：生命周期清理只在进入/退出时执行一次，避免横竖屏切换时被误杀
-    DisposableEffect(Unit) {
-        activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_SENSOR
-        onDispose {
-            // 退出时强制恢复竖屏
-            activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
-            activity?.window?.let { window ->
-                WindowCompat.setDecorFitsSystemWindows(window, true)
-                WindowInsetsControllerCompat(window, window.decorView).show(WindowInsetsCompat.Type.systemBars())
-            }
-        }
-    }
-
-    // 【修复】：根据横竖屏状态控制沉浸式（状态栏显隐）
+    // 监听横竖屏状态来隐藏/显示状态栏，绝对不去重置屏幕方向
     LaunchedEffect(isLandscape) {
         activity?.window?.let { window ->
             val controller = WindowInsetsControllerCompat(window, window.decorView)
@@ -635,50 +645,56 @@ fun InternalVideoPlayer(
         AnimatedVisibility(visible = showControls, enter = fadeIn(), exit = fadeOut(), modifier = Modifier.fillMaxSize()) {
             Box(modifier = Modifier.fillMaxSize()) {
                 
-                // 左右悬浮按钮（始终显示横屏切换，其他功能按需显示）
-                Column(modifier = Modifier.align(Alignment.CenterStart).padding(start = 16.dp), verticalArrangement = Arrangement.spacedBy(30.dp)) {
-                    // 1. 横竖屏切换（竖屏、横屏都必须有）
-                    Surface(color = Color.White.copy(alpha = 0.1f), shape = CircleShape, border = BorderStroke(1.dp, Color.White.copy(alpha = 0.2f))) {
-                        IconButton(onClick = { 
-                            if (isLandscape) activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_PORTRAIT 
-                            else activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE 
-                        }) {
-                            Icon(Icons.Default.ScreenRotation, null, tint = Color.White)
+                // 左右悬浮按钮（只在横屏时显示）
+                if (isLandscape) {
+                    Column(modifier = Modifier.align(Alignment.CenterStart).padding(start = 16.dp), verticalArrangement = Arrangement.spacedBy(30.dp)) {
+                        Surface(color = Color.White.copy(alpha = 0.1f), shape = CircleShape, border = BorderStroke(1.dp, Color.White.copy(alpha = 0.2f))) {
+                            IconButton(onClick = { 
+                                // 点击切换回竖屏
+                                activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_PORTRAIT 
+                            }) {
+                                Icon(Icons.Default.ScreenRotation, null, tint = Color.White)
+                            }
                         }
-                    }
-                    
-                    // 2. 选集（仅在横屏时显示在左侧，竖屏不显示）
-                    if (isLandscape) {
                         Surface(color = Color.White.copy(alpha = 0.1f), shape = CircleShape, border = BorderStroke(1.dp, Color.White.copy(alpha = 0.2f))) {
                             IconButton(onClick = { showEpisodeDrawer = true }) {
                                 Icon(Icons.Default.FormatListBulleted, null, tint = Color.White)
                             }
                         }
                     }
-                }
-
-                Column(modifier = Modifier.align(Alignment.CenterEnd).padding(end = 16.dp), verticalArrangement = Arrangement.spacedBy(30.dp)) {
-                    // 音频（仅横屏）
-                    if (isLandscape) {
+                    
+                    Column(modifier = Modifier.align(Alignment.CenterEnd).padding(end = 16.dp), verticalArrangement = Arrangement.spacedBy(30.dp)) {
                         Surface(color = Color.White.copy(alpha = 0.1f), shape = CircleShape, border = BorderStroke(1.dp, Color.White.copy(alpha = 0.2f))) {
                             IconButton(onClick = { Toast.makeText(context, "暂无音频轨道", Toast.LENGTH_SHORT).show() }) { Icon(Icons.Default.Headset, null, tint = Color.White) }
                         }
-                    }
-                    
-                    // 锁屏（始终显示）
-                    Surface(color = Color.White.copy(alpha = 0.1f), shape = CircleShape, border = BorderStroke(1.dp, Color.White.copy(alpha = 0.2f))) {
-                        IconButton(onClick = { isLocked = true; showControls = false; showUnlockIcon = true }) { Icon(Icons.Default.Lock, null, tint = Color.White) }
-                    }
-                    
-                    // 字幕（仅横屏）
-                    if (isLandscape) {
+                        Surface(color = Color.White.copy(alpha = 0.1f), shape = CircleShape, border = BorderStroke(1.dp, Color.White.copy(alpha = 0.2f))) {
+                            IconButton(onClick = { isLocked = true; showControls = false; showUnlockIcon = true }) { Icon(Icons.Default.Lock, null, tint = Color.White) }
+                        }
                         Surface(color = Color.White.copy(alpha = 0.1f), shape = CircleShape, border = BorderStroke(1.dp, Color.White.copy(alpha = 0.2f))) {
                             IconButton(onClick = { Toast.makeText(context, "暂无字幕", Toast.LENGTH_SHORT).show() }) { Icon(Icons.Default.Subtitles, null, tint = Color.White) }
                         }
                     }
+                } else {
+                    // 竖屏状态下，左侧只保留横屏切换按钮
+                    Column(modifier = Modifier.align(Alignment.CenterStart).padding(start = 16.dp)) {
+                        Surface(color = Color.White.copy(alpha = 0.1f), shape = CircleShape, border = BorderStroke(1.dp, Color.White.copy(alpha = 0.2f))) {
+                            IconButton(onClick = { 
+                                // 点击强制横屏
+                                activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE 
+                            }) {
+                                Icon(Icons.Default.ScreenRotation, null, tint = Color.White)
+                            }
+                        }
+                    }
+                    // 竖屏右侧保留锁屏按钮
+                    Column(modifier = Modifier.align(Alignment.CenterEnd).padding(end = 16.dp)) {
+                        Surface(color = Color.White.copy(alpha = 0.1f), shape = CircleShape, border = BorderStroke(1.dp, Color.White.copy(alpha = 0.2f))) {
+                            IconButton(onClick = { isLocked = true; showControls = false; showUnlockIcon = true }) { Icon(Icons.Default.Lock, null, tint = Color.White) }
+                        }
+                    }
                 }
 
-                // 顶部区域 (没有重复设置)
+                // 顶部区域
                 Row(modifier = Modifier.fillMaxWidth().background(Brush.verticalGradient(listOf(Color(0xAA000000), Color.Transparent))).statusBarsPadding().padding(horizontal = 16.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
                     IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, null, tint = Color.White) }
                     AppText(text = title, color = Color.White, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f).padding(start = 8.dp))
