@@ -27,7 +27,6 @@ class MultiThreadDownloader(
     private var isRunning = false
     private val downloadJobs = mutableListOf<Job>()
     
-    // 去掉 private 关键字，允许 QuarkProxyServer 读取该文件
     lateinit var cacheFile: File
     private var raf: RandomAccessFile? = null
 
@@ -43,7 +42,7 @@ class MultiThreadDownloader(
             .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) quark-cloud-drive/2.5.20 Chrome/100.0.4896.160 Electron/18.3.5.4-b478491100 Safari/537.36 Channel/pckk_other_ch")
             .header("Referer", "https://pan.quark.cn/")
             .header("Origin", "https://pan.quark.cn")
-            .header("Range", "bytes=0-0") // 【关键修复】请求第一个字节，获取总大小
+            .header("Range", "bytes=0-0") // 【核心修复】请求第一个字节，获取总大小
             .build()
         try {
             client.newCall(req).execute().use { res ->
