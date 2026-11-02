@@ -72,10 +72,10 @@ class VideoScraperViewModel(
     private val pathHistory = mutableListOf<String>()
     private var hasLoadedLibrary = false
     private val libraryNames = mutableMapOf<String, String>()
+    
+    private var isProxyInitialized = false
 
     init {
-        QuarkProxyServer.start() // 启动本地代理服务
-        
         val savedLibs = videoSettingsRepository.libraryFids.split(",").filter { it.isNotBlank() }
         val fids = mutableSetOf<String>()
         savedLibs.forEach { item ->
@@ -507,49 +507,69 @@ class VideoScraperViewModel(
         Toast.makeText(context, "正在获取无损原画直链...", Toast.LENGTH_SHORT).show()
 
         viewModelScope.launch {
-            val url = withContext(Dispatchers.IO) {
-                try {
-                    // 请求原画下载直链
-                    val apiUrl = "https://drive-pc.quark.cn/1/clouddrive/file/download?pr=ucpro&fr=pc"
-                    val jsonBody = JSONObject().apply { put("fids", JSONArray().put(file.fid)) }
-                    val body = jsonBody.toString().toRequestBody("application/json".toMediaType())
-                    
-                    val request = Request.Builder()
-                        .url(apiUrl).post(body).header("Cookie", cookie)
-                        .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) quark-cloud-drive/2.5.20 Chrome/100.0.4896.160 Electron/18.3.5.4-b478491100 Safari/537.36 Channel/pckk_other_ch")
-                        .header("Referer", "https://pan.quark.cn/") 
-                        .header("Accept", "application/json, text/plain, */*")
-                        .build()
-
-                    client.newCall(request).execute().use { response ->
-                        val resBody = response.body?.string()
-                        if (!resBody.isNullOrBlank()) {
-                            val json = JSONObject(resBody)
-                            if (json.optInt("code", -1) == 0) {
-                                val data = json.optJSONArray("data")
-                                if (data != null && data.length() > 0) {
-                                    val downloadUrl = data.getJSONObject(0).optString("download_url")
-                                    if (!downloadUrl.isNullOrBlank()) {
-                                        return@withContext downloadUrl
-                                    }
-                                }
-                            }
-                        }
+            // 初始化代理服务器 (只执行一次)
+            if (!isProxyInitialized) {
+                QuarkProxyServer.start(context.applicationContext)
+                QuarkProxyServer.onRefreshUrlNeeded = { fid, ck ->
+                    withContext(Dispatchers.IO) {
+                        fetchDirectDownloadUrl(fid, ck)
                     }
-                } catch (e: Exception) { e.printStackTrace() }
-                null
+                }
+                isProxyInitialized = true
+            }
+
+            val url = withContext(Dispatchers.IO) {
+                fetchDirectDownloadUrl(file.fid, cookie)
             }
 
             if (url != null) {
-                // 将原画直链传给本地代理
-                QuarkProxyServer.setPlayInfo(url, cookie)
-                // 播放器直接请求本地代理接口即可
+                // 将原画直链传给本地代理，并带上用户设置的并发数
+                QuarkProxyServer.setPlayInfo(url, cookie, file.fid, videoSettingsRepository.proxyThreads)
+                // 播放器请求本地代理接口即可
                 _uiState.update { it.copy(playUrl = "http://127.0.0.1:8090/play") }
             } else {
                 Toast.makeText(context, "获取原画直链失败，请检查登录状态", Toast.LENGTH_LONG).show()
             }
         }
     }
+
+    private fun fetchDirectDownloadUrl(fid: String, cookie: String): String? {
+        return try {
+            val apiUrl = "https://drive-pc.quark.cn/1/clouddrive/file/download?pr=ucpro&fr=pc"
+            val jsonBody = JSONObject().apply { put("fids", JSONArray().put(fid)) }
+            val body = jsonBody.toString().toRequestBody("application/json".toMediaType())
+            
+            val request = Request.Builder()
+                .url(apiUrl).post(body).header("Cookie", cookie)
+                .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) quark-cloud-drive/2.5.20 Chrome/100.0.4896.160 Electron/18.3.5.4-b478491100 Safari/537.36 Channel/pckk_other_ch")
+                .header("Referer", "https://pan.quark.cn/") 
+                .header("Accept", "application/json, text/plain, */*")
+                .build()
+
+            client.newCall(request).execute().use { response ->
+                val resBody = response.body?.string()
+                if (!resBody.isNullOrBlank()) {
+                    val json = JSONObject(resBody)
+                    if (json.optInt("code", -1) == 0) {
+                        val data = json.optJSONArray("data")
+                        if (data != null && data.length() > 0) {
+                            return data.getJSONObject(0).optString("download_url")
+                        }
+                    }
+                }
+            }
+            null
+        } catch (e: Exception) {
+            e.printStackTrace()
+            null
+        }
+    }
+
+    fun setProxyThreads(threads: Int) {
+        videoSettingsRepository.proxyThreads = threads
+    }
+
+    fun getProxyThreads(): Int = videoSettingsRepository.proxyThreads
 
     fun getVideoProgress(fid: String): Long {
         try {
@@ -590,6 +610,7 @@ class VideoScraperViewModel(
 
     fun stopPlaying() {
         _uiState.update { it.copy(playUrl = null, playTitle = null, currentPlayFile = null) }
+        QuarkProxyServer.stop()
     }
 
     fun fetchQuarkFiles(fid: String = "0", isBack: Boolean = false) {
