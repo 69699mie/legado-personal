@@ -364,7 +364,7 @@ fun InternalVideoPlayer(
     val configuration = LocalConfiguration.current
     val isLandscape = configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
 
-    // 监听横竖屏状态来隐藏/显示状态栏，绝对不去重置屏幕方向
+    // 监听横竖屏状态来隐藏/显示状态栏
     LaunchedEffect(isLandscape) {
         activity?.window?.let { window ->
             val controller = WindowInsetsControllerCompat(window, window.decorView)
@@ -633,7 +633,7 @@ fun InternalVideoPlayer(
                 
                 // 左右悬浮按钮
                 Column(modifier = Modifier.align(Alignment.CenterStart).padding(start = 16.dp), verticalArrangement = Arrangement.spacedBy(30.dp)) {
-                    // 1. 横竖屏切换（竖屏、横屏都必须有）
+                    // 1. 横竖屏切换
                     Surface(color = Color.White.copy(alpha = 0.1f), shape = CircleShape, border = BorderStroke(1.dp, Color.White.copy(alpha = 0.2f))) {
                         IconButton(onClick = { 
                             if (isLandscape) activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_PORTRAIT 
@@ -674,8 +674,15 @@ fun InternalVideoPlayer(
                     }
                 }
 
-                // 顶部区域
-                Row(modifier = Modifier.fillMaxWidth().background(Brush.verticalGradient(listOf(Color(0xAA000000), Color.Transparent))).statusBarsPadding().padding(horizontal = 16.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                // 【核心修复】顶部区域：仅在竖屏时加 statusBarsPadding，横屏时不加，彻底贴顶
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .background(Brush.verticalGradient(listOf(Color(0xAA000000), Color.Transparent)))
+                        .then(if (!isLandscape) Modifier.statusBarsPadding() else Modifier)
+                        .padding(horizontal = 16.dp, vertical = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
                     IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, null, tint = Color.White) }
                     AppText(text = title, color = Color.White, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f).padding(start = 8.dp))
                     if (resolution.isNotBlank()) AppText(text = resolution, color = Color.White, fontSize = 12.sp, modifier = Modifier.padding(end = 16.dp))
@@ -687,12 +694,12 @@ fun InternalVideoPlayer(
                     modifier = Modifier
                         .align(Alignment.BottomCenter)
                         .navigationBarsPadding()
-                        .padding(bottom = 16.dp) // 减小底部 padding，避免过度上移
-                        .widthIn(max = if (isLandscape) 640.dp else 400.dp) // 限制最大宽度
-                        .fillMaxWidth(0.9f) // 占屏幕宽度的 90% 左右，确保两侧有空间
+                        .padding(bottom = 16.dp)
+                        .widthIn(max = if (isLandscape) 640.dp else 400.dp)
+                        .fillMaxWidth(0.9f)
                         .background(Color(0xB31A1A1A), RoundedCornerShape(20.dp))
                         .border(1.dp, Color.White.copy(alpha = 0.1f), RoundedCornerShape(20.dp))
-                        .padding(horizontal = 20.dp, vertical = 12.dp) // 压缩内边距
+                        .padding(horizontal = 20.dp, vertical = 12.dp)
                 ) {
                     Column(modifier = Modifier.fillMaxWidth()) {
                         // 进度条
