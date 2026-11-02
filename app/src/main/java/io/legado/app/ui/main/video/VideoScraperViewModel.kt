@@ -221,12 +221,8 @@ class VideoScraperViewModel(
                 seriesMap[key] = exist.copy(videos = combinedVideos)
             } else {
                 seriesMap[key] = MediaSeries(
-                    id = key,
-                    title = baseTitle,
-                    originalParsedTitle = baseTitle,
-                    year = parsed.year,
-                    category = finalCategory, 
-                    videos = listOf(v)
+                    id = key, title = baseTitle, originalParsedTitle = baseTitle,
+                    year = parsed.year, category = finalCategory, videos = listOf(v)
                 )
             }
         }
@@ -234,10 +230,7 @@ class VideoScraperViewModel(
     }
 
     private suspend fun fetchVideosRecursively(
-        cookie: String,
-        parentFid: String,
-        currentPath: List<String>,
-        resultList: MutableList<QuarkFile>
+        cookie: String, parentFid: String, currentPath: List<String>, resultList: MutableList<QuarkFile>
     ) {
         withContext(Dispatchers.IO) {
             val url = "https://drive-pc.quark.cn/1/clouddrive/file/sort?pr=ucpro&fr=pc&uc_param_str=&pdir_fid=$parentFid&_page=1&_size=100&_sort=file_type:asc,updated_at:desc"
@@ -259,11 +252,9 @@ class VideoScraperViewModel(
                                     if (isFolder) {
                                         fetchVideosRecursively(cookie, fileFid, currentPath + fileName, resultList)
                                     } else {
-                                        val parentFolder = currentPath.lastOrNull()
-                                        val parsed = VideoFileNameParser.parse(fileName, parentFolder)
+                                        val parsed = VideoFileNameParser.parse(fileName, currentPath.lastOrNull())
                                         if (parsed.isVideo) {
-                                            val qf = QuarkFile(fileFid, fileName, false, "未分类", currentPath, parsed, size)
-                                            resultList.add(qf)
+                                            resultList.add(QuarkFile(fileFid, fileName, false, "未分类", currentPath, parsed, size))
                                         }
                                     }
                                 }
@@ -284,7 +275,6 @@ class VideoScraperViewModel(
                     if (finalTitle.matches(Regex("^[a-zA-Z0-9\\s\\p{Punct}]+$")) && series.originalParsedTitle.any { it.code > 127 }) {
                         finalTitle = series.originalParsedTitle
                     }
-
                     var finalCategory = series.category
                     if (finalCategory == "未分类") {
                         finalCategory = when {
@@ -294,7 +284,6 @@ class VideoScraperViewModel(
                             else -> "未分类"
                         }
                     }
-
                     var epTitles: Map<Int, String> = emptyMap()
                     var epStills: Map<Int, String> = emptyMap()
                     val season = series.videos.firstOrNull()?.parsedInfo?.season ?: 1
@@ -331,7 +320,6 @@ class VideoScraperViewModel(
             val isProxy = baseUrl.contains("quarkalist") || baseUrl.contains("proxy")
             val apiPath = if (isProxy) "/api/3/search/multi" else "/3/search/multi"
             val url = "$baseUrl$apiPath?api_key=$apiKey&query=$query&language=$language"
-            
             val request = Request.Builder().url(url).build()
             client.newCall(request).execute().use { response ->
                 val body = response.body?.string()
@@ -351,23 +339,19 @@ class VideoScraperViewModel(
                             if (score > topScore && score > 0) { topScore = score; bestItem = item }
                         }
                         if (bestItem == null) bestItem = results.getJSONObject(0)
-
                         val posterPath = bestItem.optString("poster_path")
                         val officialName = bestItem.optString("title").ifBlank { bestItem.optString("name") }
                         val voteAverage = bestItem.optDouble("vote_average", 0.0)
                         val ratingStr = if (voteAverage > 0) String.format("%.1f", voteAverage) else null
                         val mediaType = bestItem.optString("media_type", "tv")
-
                         val genreIdsList = mutableListOf<Int>()
                         val genreIdsArray = bestItem.optJSONArray("genre_ids")
                         if (genreIdsArray != null) {
                             for (j in 0 until genreIdsArray.length()) genreIdsList.add(genreIdsArray.getInt(j))
                         }
-
                         val posterUrl = if (posterPath.isNotBlank() && posterPath != "null") {
                             if (isProxy) "$baseUrl/img/t/p/w500$posterPath" else "https://image.tmdb.org/t/p/w500$posterPath"
                         } else null
-
                         return TmdbSearchResult(
                             id = bestItem.optInt("id"),
                             title = officialName,
@@ -389,7 +373,6 @@ class VideoScraperViewModel(
             val isProxy = baseUrl.contains("quarkalist") || baseUrl.contains("proxy")
             val apiPath = if (isProxy) "/api/3/tv/$tvId/season/$season" else "/3/tv/$tvId/season/$season"
             val url = "$baseUrl$apiPath?api_key=$apiKey&language=zh-CN"
-            
             val request = Request.Builder().url(url).build()
             client.newCall(request).execute().use { response ->
                 val body = response.body?.string()
@@ -427,7 +410,6 @@ class VideoScraperViewModel(
                 val isProxy = baseUrl.contains("quarkalist") || baseUrl.contains("proxy")
                 val apiPath = if (isProxy) "/api/3/search/multi" else "/3/search/multi"
                 val url = "$baseUrl$apiPath?api_key=$apiKey&query=$q&language=zh-CN"
-                
                 val request = Request.Builder().url(url).build()
                 client.newCall(request).execute().use { response ->
                     val body = response.body?.string()
@@ -440,11 +422,9 @@ class VideoScraperViewModel(
                                 val title = item.optString("title").ifBlank { item.optString("name") }
                                 val posterPath = item.optString("poster_path")
                                 val voteAverage = item.optDouble("vote_average", 0.0)
-                                
                                 val posterUrl = if (posterPath.isNotBlank() && posterPath != "null") {
                                     if (isProxy) "$baseUrl/img/t/p/w300$posterPath" else "https://image.tmdb.org/t/p/w300$posterPath"
                                 } else null
-
                                 list.add(
                                     TmdbSearchResult(
                                         id = item.optInt("id"), title = title,
@@ -492,17 +472,13 @@ class VideoScraperViewModel(
         viewModelScope.launch {
             val url = withContext(Dispatchers.IO) {
                 try {
-                    // 使用 file/download 接口获取原文件直链
+                    // 1. 尝试获取原画下载链接
                     val apiUrl = "https://drive-pc.quark.cn/1/clouddrive/file/download?pr=ucpro&fr=pc"
-                    val jsonBody = JSONObject().apply {
-                        put("fids", JSONArray().put(file.fid))
-                    }
+                    val jsonBody = JSONObject().apply { put("fids", JSONArray().put(file.fid)) }
                     val body = jsonBody.toString().toRequestBody("application/json".toMediaType())
                     
                     val request = Request.Builder()
-                        .url(apiUrl)
-                        .post(body)
-                        .header("Cookie", cookie)
+                        .url(apiUrl).post(body).header("Cookie", cookie)
                         .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) quark-cloud-drive/2.5.20 Chrome/100.0.4896.160 Electron/18.3.5.4-b478491100 Safari/537.36 Channel/pckk_other_ch")
                         .header("Referer", "https://pan.quark.cn/") 
                         .header("Accept", "application/json, text/plain, */*")
@@ -517,13 +493,44 @@ class VideoScraperViewModel(
                                 if (data != null && data.length() > 0) {
                                     val downloadUrl = data.getJSONObject(0).optString("download_url")
                                     if (!downloadUrl.isNullOrBlank()) {
+                                        // 拿到原画链接，直接返回
                                         return@withContext downloadUrl
                                     }
                                 }
-                            } else {
-                                val msg = json.optString("message")
-                                withContext(Dispatchers.Main) {
-                                    Toast.makeText(context, "原画获取失败: $msg", Toast.LENGTH_SHORT).show()
+                            }
+                        }
+                    }
+
+                    // 2. 如果原画获取失败，或者为空，无缝降级到 v2/play 获取最高画质转码流
+                    val fallbackUrl = "https://drive.quark.cn/1/clouddrive/file/v2/play?pr=ucpro&fr=pc"
+                    val fallbackJsonBody = JSONObject().apply {
+                        put("fid", file.fid)
+                        put("resolutions", "4k,2k,super,high,normal,low") // 强制要求最高画质
+                        put("supports", "fmp4,m3u8")
+                    }
+                    val fallbackBody = fallbackJsonBody.toString().toRequestBody("application/json".toMediaType())
+                    val fallbackRequest = Request.Builder()
+                        .url(fallbackUrl).post(fallbackBody).header("Cookie", cookie)
+                        .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) quark-cloud-drive/2.5.20 Chrome/100.0.4896.160 Electron/18.3.5.4-b478491100 Safari/537.36 Channel/pckk_other_ch")
+                        .header("Referer", "https://pan.quark.cn/") 
+                        .header("Accept", "application/json, text/plain, */*")
+                        .build()
+
+                    client.newCall(fallbackRequest).execute().use { response ->
+                        val resBody = response.body?.string()
+                        if (!resBody.isNullOrBlank()) {
+                            val json = JSONObject(resBody)
+                            if (json.optInt("code", -1) == 0) {
+                                val videoList = json.optJSONObject("data")?.optJSONArray("video_list")
+                                if (videoList != null && videoList.length() > 0) {
+                                    // 取第一个，通常就是 4k/2k
+                                    for (i in 0 until videoList.length()) {
+                                        val video = videoList.getJSONObject(i)
+                                        if (video.optBoolean("accessable", false)) {
+                                            val videoUrl = video.optJSONObject("video_info")?.optString("url")
+                                            if (!videoUrl.isNullOrBlank()) return@withContext videoUrl
+                                        }
+                                    }
                                 }
                             }
                         }
@@ -535,12 +542,11 @@ class VideoScraperViewModel(
             if (url != null) {
                 _uiState.update { it.copy(playUrl = url) }
             } else {
-                Toast.makeText(context, "获取原画直链失败，可能是鉴权过期，请尝试重新登录网盘", Toast.LENGTH_LONG).show()
+                Toast.makeText(context, "获取播放流失败，请检查登录状态", Toast.LENGTH_LONG).show()
             }
         }
     }
 
-    // ======= 进度记录 =======
     fun getVideoProgress(fid: String): Long {
         try {
             val json = JSONObject(videoSettingsRepository.videoProgressData)
@@ -557,7 +563,6 @@ class VideoScraperViewModel(
         } catch (e: Exception) {}
     }
 
-    // ======= 片头片尾 =======
     fun getIntroOutro(seriesTitle: String, season: Int): Pair<Int, Int> {
         try {
             val json = JSONObject(videoSettingsRepository.introOutroData)
