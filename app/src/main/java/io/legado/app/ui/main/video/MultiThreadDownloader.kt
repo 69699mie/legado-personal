@@ -14,9 +14,9 @@ class MultiThreadDownloader(
     private val context: android.content.Context,
     private val cacheDir: File,
     private val initialUrl: String,
-    private val cookie: String,
+    private var cookie: String, // 【修改】改为 var
     private val threadCount: Int,
-    private val onRefreshUrl: suspend () -> String?
+    private val onRefreshUrl: suspend () -> Pair<String, String>? // 【修改】返回 URL 和 新 Cookie
 ) {
     private val client = OkHttpClient.Builder()
         .connectTimeout(15, TimeUnit.SECONDS)
@@ -36,7 +36,6 @@ class MultiThreadDownloader(
     private var isPrepared = false
     private val prepareMutex = Mutex()
 
-    // 使用海阔视界抓包中证实可绕过风控的 UC 浏览器 UA 和 Referer
     private val playUserAgent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/100.0.4896.58 UCBrowser/16.5.8.1309 Mobile Safari/537.36"
     private val playReferer = "https://drive.quark.cn/"
 
@@ -50,7 +49,6 @@ class MultiThreadDownloader(
                 .header("Cookie", cookie)
                 .header("User-Agent", playUserAgent)
                 .header("Referer", playReferer)
-                // 已移除 Origin，与海阔视界抓包完全对齐
                 .build()
             try {
                 client.newCall(req).execute().use { res ->
@@ -113,7 +111,6 @@ class MultiThreadDownloader(
             .header("Cookie", cookie)
             .header("User-Agent", playUserAgent)
             .header("Referer", playReferer)
-            // 已移除 Origin，与海阔视界抓包完全对齐
             .header("Range", "bytes=$start-$end")
             .build()
 
@@ -128,9 +125,10 @@ class MultiThreadDownloader(
                         downloadedBytes.addAndGet(data.size.toLong())
                     }
                 } else if (res.code == 412 || res.code == 403) {
-                    val newUrl = onRefreshUrl()
-                    if (newUrl != null) {
-                        currentUrl = newUrl
+                    val result = onRefreshUrl()
+                    if (result != null) {
+                        currentUrl = result.first
+                        cookie = result.second // 更新最新的 Cookie
                         downloadChunk(start, end, retry + 1)
                     }
                 }
