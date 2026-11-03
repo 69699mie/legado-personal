@@ -38,33 +38,51 @@ class MultiThreadDownloader(
 
     fun getTotalLength(): Long = totalLength
 
-    // 【核心突破】同步下载前2MB数据（死等），确保文件头绝对落盘
+    // 同步探测大小 + 文件头校验
     fun prepareAndDownloadHead(): Boolean {
         return try {
-            // 1. 探测文件总大小
+            // 1. 探测文件总大小并读取前16字节做格式校验
             val headReq = Request.Builder()
                 .url(currentUrl)
                 .header("Cookie", cookie)
                 .header("User-Agent", playUserAgent)
                 .header("Referer", playReferer)
-                .header("Range", "bytes=0-0")
+                .header("Range", "bytes=0-15") // 只取前16字节
                 .build()
 
             client.newCall(headReq).execute().use { res ->
                 if (res.code != 200 && res.code != 206) {
-                    lastError = "HTTP ${res.code}: ${res.body?.string()}"
+                    lastError = "准备失败 HTTP ${res.code}: ${res.body?.string()}"
                     return false
                 }
+                
                 var length = res.header("Content-Length")?.toLongOrNull() ?: -1L
                 val contentRange = res.header("Content-Range")
                 if (contentRange != null && contentRange.contains("/")) {
                     length = contentRange.substringAfter("/").toLongOrNull() ?: -1L
                 }
                 if (length <= 0) {
-                    lastError = "获取文件大小失败"
+                    lastError = "获取文件大小失败: 缺少 Content-Range"
                     return false
                 }
                 totalLength = length
+
+                // 【核心护城河】校验文件头
+                val headBytes = res.body?.bytes()
+                if (headBytes != null && headBytes.isNotEmpty()) {
+                    val hexString = headBytes.joinToString("") { String.format("%02X", it) }
+                    val asciiString = String(headBytes, Charsets.US_ASCII)
+                    
+                    // 如果出现 JSON 错误 {"code":...} 或 HTML 错误 <html>，直接拦截
+                    if (asciiString.contains("{") || asciiString.contains("<") || hexString.startsWith("7B") || hexString.startsWith("3C")) {
+                        lastError = "视频链接返回了错误内容(非视频流):\n$asciiString"
+                        return false
+                    }
+                    // 如果既没有 ftyp (MP4) 也不是常见视频包头，给出警告
+                    if (!asciiString.contains("ftyp") && !hexString.startsWith("000000")) {
+                        // 允许通过，但记录一下（有些特殊容器可能不是 ftyp）
+                    }
+                }
 
                 val fileName = currentUrl.hashCode().toString() + ".tmp"
                 cacheFile = File(cacheDir, fileName)
@@ -72,7 +90,7 @@ class MultiThreadDownloader(
                 raf?.setLength(totalLength)
             }
 
-            // 2. 同步拉取头部 2MB（解决 PARSING_CONTAINER_UNSUPPORTED 的核心）
+            // 2. 同步拉取头部 2MB（确保播放器不卡顿）
             val headEnd = minOf(chunkSize - 1, totalLength - 1)
             val syncReq = Request.Builder()
                 .url(currentUrl)
@@ -107,7 +125,6 @@ class MultiThreadDownloader(
         isRunning = true
         
         var currentPos = startPos
-        // 如果起始位置在前 2MB 内，跳过已经下载的部分
         if (currentPos < chunkSize) {
             currentPos = chunkSize
         }
