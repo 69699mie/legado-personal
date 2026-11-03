@@ -126,7 +126,7 @@ class VideoScraperViewModel(
                     val epStillsObj = itemObj.optJSONObject("episodeStills")
                     val epStills = mutableMapOf<Int, String>()
                     epStillsObj?.keys()?.forEach { k -> epStills[k.toInt()] = epStillsObj.getString(k) }
-                    
+
                     scrapedCache[key] = ScrapeCacheItem(
                         title = itemObj.optString("title"),
                         category = itemObj.optString("category"),
@@ -233,14 +233,14 @@ class VideoScraperViewModel(
                     }
                 }
                 val groupedSeries = aggregateToSeries(allVideos)
-                
+
                 val needScrapeList = mutableListOf<MediaSeries>()
                 val finalSeriesList = groupedSeries.map { series ->
                     val cached = scrapedCache[series.id]
                     if (cached != null) {
                         val cachedMaxEp = cached.episodeTitles.keys.maxOrNull() ?: 0
                         val currentMaxEp = series.videos.maxOfOrNull { it.parsedInfo?.episode ?: 0 } ?: 0
-                        
+
                         if (currentMaxEp > cachedMaxEp) {
                             needScrapeList.add(series)
                             series
@@ -260,7 +260,7 @@ class VideoScraperViewModel(
                         series
                     }
                 }
-                
+
                 _uiState.update { it.copy(seriesList = finalSeriesList) }
 
                 if (apiKey.isNotBlank() && needScrapeList.isNotEmpty()) {
@@ -326,7 +326,6 @@ class VideoScraperViewModel(
 
             if (seriesMap.containsKey(key)) {
                 val exist = seriesMap[key]!!
-                // 【修复】按 season, episode, name 依次进行稳定排序
                 val combinedVideos = (exist.videos + updatedV).sortedWith(
                     compareBy<QuarkFile> { it.parsedInfo?.season ?: 1 }
                         .thenBy { it.parsedInfo?.episode ?: 0 }
@@ -420,12 +419,12 @@ class VideoScraperViewModel(
                         epTitles = pair.first
                         epStills = pair.second
                     }
-                    
+
                     val newSeries = series.copy(
                         title = finalTitle, category = finalCategory, posterUrl = match.posterUrl,
                         overview = match.overview, rating = match.rating, episodeTitles = epTitles, episodeStills = epStills
                     )
-                    
+
                     scrapedCache[newSeries.id] = ScrapeCacheItem(
                         title = newSeries.title,
                         category = newSeries.category,
@@ -440,9 +439,9 @@ class VideoScraperViewModel(
                     series
                 }
             }
-            
+
             saveScrapedCache()
-            
+
             withContext(Dispatchers.Main) {
                 val currentList = _uiState.value.seriesList.map { old ->
                     scrapedList.find { it.id == old.id } ?: old
@@ -603,7 +602,7 @@ class VideoScraperViewModel(
             val updatedCurrent = currentList.find { s -> s.id == seriesId }
             it.copy(seriesList = currentList, currentSeries = updatedCurrent ?: it.currentSeries)
         }
-        
+
         val updatedSeries = currentList.find { it.id == seriesId }
         if (updatedSeries != null) {
             scrapedCache[seriesId] = ScrapeCacheItem(
@@ -627,7 +626,7 @@ class VideoScraperViewModel(
             if (!tmdbEpTitle.isNullOrBlank()) "${series.title} 第${epNum}集 $tmdbEpTitle"
             else "${series.title} 第${epNum}集"
         } else { file.name }
-        
+
         _uiState.update { it.copy(playUrl = null, playTitle = titleText, currentSeries = series, currentPlayFile = file) }
         Toast.makeText(context, "正在获取无损原画直链...", Toast.LENGTH_SHORT).show()
 
@@ -672,9 +671,9 @@ class VideoScraperViewModel(
             val request = Request.Builder()
                 .url(apiUrl).post(body)
                 .header("Cookie", cookie)
+                // 【核心修复】这里直接使用海阔视界请求直链时的 PC 端 UA
                 .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) quark-cloud-drive/2.5.20 Chrome/100.0.4896.160 Electron/18.3.5.4-b478491100 Safari/537.36 Channel/pckk_other_ch")
-                .header("Referer", "https://pan.quark.cn/")
-                .header("Origin", "https://pan.quark.cn")
+                .header("Referer", "https://drive.quark.cn/")
                 .header("Accept", "application/json, text/plain, */*")
                 .build()
 
