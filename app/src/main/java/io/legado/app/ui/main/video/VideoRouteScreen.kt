@@ -253,9 +253,8 @@ fun VideoRouteScreen(
         var inputCookie by remember { mutableStateOf(uiState.cookie) }
         var inputTmdbKey by remember { mutableStateOf(uiState.tmdbApiKey) }
         var inputTmdbUrl by remember { mutableStateOf(uiState.tmdbBaseUrl) }
-        var inputThreads by remember { mutableStateOf(viewModel.getProxyThreads().toString()) }
         
-        // 【新增】控制密码是否可见的状态
+        // 控制密码是否可见的状态
         var isCookieVisible by remember { mutableStateOf(false) }
         var isTmdbKeyVisible by remember { mutableStateOf(false) }
 
@@ -266,7 +265,6 @@ fun VideoRouteScreen(
                     Button(onClick = { showWebLoginDialog = true }, contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp)) { AppText("网页扫码登录") }
                 }
                 
-                // 【修改】Cookie 输入框
                 OutlinedTextField(
                     value = inputCookie,
                     onValueChange = { inputCookie = it },
@@ -286,7 +284,6 @@ fun VideoRouteScreen(
                 
                 AppText(text = "TMDB API Key (v3 auth)")
                 
-                // 【修改】TMDB API Key 输入框
                 OutlinedTextField(
                     value = inputTmdbKey,
                     onValueChange = { inputTmdbKey = it },
@@ -306,12 +303,8 @@ fun VideoRouteScreen(
                 AppText(text = "TMDB API 代理地址")
                 OutlinedTextField(value = inputTmdbUrl, onValueChange = { inputTmdbUrl = it }, modifier = Modifier.padding(vertical = 8.dp), maxLines = 1)
 
-                AppText(text = "代理并发数 (建议 3-6)")
-                OutlinedTextField(value = inputThreads, onValueChange = { inputThreads = it }, modifier = Modifier.padding(vertical = 8.dp), maxLines = 1)
-
                 OutlinedButton(onClick = {
                     viewModel.saveSettings(inputCookie, inputTmdbKey, inputTmdbUrl)
-                    inputThreads.toIntOrNull()?.let { viewModel.setProxyThreads(it) }
                     showSettingsDialog = false
                 }, modifier = Modifier.align(Alignment.End)) { AppText("保存并刷新") }
             }
@@ -436,10 +429,6 @@ fun WebLoginView(onLoginSuccess: (String) -> Unit, onCancel: () -> Unit) {
         })
     }
 }
-
-// ==========================================
-// 以下为播放器相关代码，保持不变
-// ==========================================
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
