@@ -635,7 +635,9 @@ class VideoScraperViewModel(
                 QuarkProxyServer.start(context.applicationContext)
                 QuarkProxyServer.onRefreshUrlNeeded = { fid, ck ->
                     withContext(Dispatchers.IO) {
-                        fetchDirectDownloadUrl(fid, ck)
+                        val latestCookie = _uiState.value.cookie
+                        val url = fetchDirectDownloadUrl(fid, latestCookie)
+                        if (url != null) Pair(url, _uiState.value.cookie) else null
                     }
                 }
                 isProxyInitialized = true
@@ -646,7 +648,8 @@ class VideoScraperViewModel(
             }
 
             if (url != null) {
-                QuarkProxyServer.setPlayInfo(url, cookie, file.fid, videoSettingsRepository.proxyThreads)
+                val latestCookie = _uiState.value.cookie
+                QuarkProxyServer.setPlayInfo(url, latestCookie, file.fid, videoSettingsRepository.proxyThreads)
                 _uiState.update { it.copy(playUrl = "http://127.0.0.1:8090/play") }
             } else {
                 val detail = lastQuarkError ?: "未知错误"
@@ -661,6 +664,42 @@ class VideoScraperViewModel(
         }
     }
 
+    private fun updateCookieFromResponse(headers: okhttp3.Headers) {
+        val setCookies = headers.values("Set-Cookie")
+        if (setCookies.isEmpty()) return
+
+        var currentCookie = _uiState.value.cookie.ifBlank { videoSettingsRepository.quarkCookie }
+        if (currentCookie.isBlank()) return
+
+        val cookieMap = mutableMapOf<String, String>()
+        currentCookie.split(";").forEach {
+            val parts = it.trim().split("=", limit = 2)
+            if (parts.size == 2) cookieMap[parts[0]] = parts[1]
+        }
+
+        var changed = false
+        setCookies.forEach { setCookie ->
+            val firstPart = setCookie.split(";").firstOrNull() ?: return@forEach
+            val parts = firstPart.trim().split("=", limit = 2)
+            if (parts.size == 2) {
+                val key = parts[0].trim()
+                val value = parts[1].trim()
+                if (key == "__puus" || key == "__pus" || key == "__uid") {
+                    if (cookieMap[key] != value) {
+                        cookieMap[key] = value
+                        changed = true
+                    }
+                }
+            }
+        }
+
+        if (changed) {
+            val newCookie = cookieMap.entries.joinToString(";") { "${it.key}=${it.value}" }
+            videoSettingsRepository.quarkCookie = newCookie
+            _uiState.update { it.copy(cookie = newCookie) }
+        }
+    }
+
     private fun fetchDirectDownloadUrl(fid: String, cookie: String): String? {
         lastQuarkError = null
         return try {
@@ -671,13 +710,16 @@ class VideoScraperViewModel(
             val request = Request.Builder()
                 .url(apiUrl).post(body)
                 .header("Cookie", cookie)
-                // 【核心修复】这里直接使用海阔视界请求直链时的 PC 端 UA
                 .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) quark-cloud-drive/2.5.20 Chrome/100.0.4896.160 Electron/18.3.5.4-b478491100 Safari/537.36 Channel/pckk_other_ch")
-                .header("Referer", "https://drive.quark.cn/")
+                .header("Referer", "https://pan.quark.cn/")
+                .header("Origin", "https://pan.quark.cn")
                 .header("Accept", "application/json, text/plain, */*")
                 .build()
 
             client.newCall(request).execute().use { response ->
+                // 核心：拦截 Set-Cookie 更新
+                updateCookieFromResponse(response.headers)
+
                 val httpCode = response.code
                 val resBody = response.body?.string()
 
