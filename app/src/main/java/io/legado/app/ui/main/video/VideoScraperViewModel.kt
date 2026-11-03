@@ -651,7 +651,7 @@ class VideoScraperViewModel(
 
             if (url != null) {
                 val latestCookie = _uiState.value.cookie
-                QuarkProxyServer.setPlayInfo(url, latestCookie, file.fid, videoSettingsRepository.proxyThreads)
+                QuarkProxyServer.setPlayInfo(url, latestCookie, file.fid)
                 _uiState.update { it.copy(playUrl = "http://127.0.0.1:8090/play") }
             } else {
                 val detail = lastQuarkError ?: "未知错误"
@@ -759,12 +759,6 @@ class VideoScraperViewModel(
             null
         }
     }
-
-    fun setProxyThreads(threads: Int) {
-        videoSettingsRepository.proxyThreads = threads
-    }
-
-    fun getProxyThreads(): Int = videoSettingsRepository.proxyThreads
 
     fun getVideoProgress(fid: String): Long {
         try {
