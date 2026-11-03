@@ -12,6 +12,7 @@ import android.os.Process
 import android.view.ViewGroup
 import android.view.WindowManager
 import android.webkit.CookieManager
+import android.webkit.WebChromeClient
 import android.webkit.WebSettings
 import android.webkit.WebView
 import android.webkit.WebViewClient
@@ -254,7 +255,6 @@ fun VideoRouteScreen(
         var inputTmdbKey by remember { mutableStateOf(uiState.tmdbApiKey) }
         var inputTmdbUrl by remember { mutableStateOf(uiState.tmdbBaseUrl) }
         
-        // 控制密码是否可见的状态
         var isCookieVisible by remember { mutableStateOf(false) }
         var isTmdbKeyVisible by remember { mutableStateOf(false) }
 
@@ -409,6 +409,9 @@ fun WebLoginView(onLoginSuccess: (String) -> Unit, onCancel: () -> Unit) {
                     databaseEnabled = true
                     useWideViewPort = true
                     loadWithOverviewMode = true
+                    setSupportZoom(true)
+                    builtInZoomControls = true
+                    displayZoomControls = false
                     if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.LOLLIPOP) {
                         mixedContentMode = WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
                     }
@@ -416,14 +419,15 @@ fun WebLoginView(onLoginSuccess: (String) -> Unit, onCancel: () -> Unit) {
                 }
                 CookieManager.getInstance().setAcceptCookie(true)
                 CookieManager.getInstance().setAcceptThirdPartyCookies(this, true)
+                webChromeClient = WebChromeClient() // 增加渲染兼容
                 webViewClient = object : WebViewClient() {}
+                loadUrl("https://pan.quark.cn/")
             }
         }, update = { webView ->
+            // 【核心修复】移除了这里的 loadUrl，防止无限刷新白屏
             if (reloadTrigger > 0) {
                 webView.clearHistory()
                 webView.clearCache(true)
-                webView.loadUrl("https://pan.quark.cn/")
-            } else {
                 webView.loadUrl("https://pan.quark.cn/")
             }
         })
@@ -535,7 +539,15 @@ fun InternalVideoPlayer(
     }
 
     val exoPlayer = remember {
+        // 【核心修复】抛弃本地代理，直接给 ExoPlayer 注入海阔视界同款 Headers，实现完美原画直连
+        val headers = mapOf(
+            "Cookie" to cookie,
+            "User-Agent" to "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/100.0.4896.58 UCBrowser/16.5.8.1309 Mobile Safari/537.36",
+            "Referer" to "https://drive.quark.cn/"
+        )
+
         val dataSourceFactory = DefaultHttpDataSource.Factory()
+            .setDefaultRequestProperties(headers)
             .setAllowCrossProtocolRedirects(true)
             .setConnectTimeoutMs(30000)
             .setReadTimeoutMs(30000)
@@ -563,7 +575,14 @@ fun InternalVideoPlayer(
 
     LaunchedEffect(url) {
         hasRestoredProgress = false
-        val dataSourceFactory = DefaultHttpDataSource.Factory().setAllowCrossProtocolRedirects(true)
+        val headers = mapOf(
+            "Cookie" to cookie,
+            "User-Agent" to "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/100.0.4896.58 UCBrowser/16.5.8.1309 Mobile Safari/537.36",
+            "Referer" to "https://drive.quark.cn/"
+        )
+        val dataSourceFactory = DefaultHttpDataSource.Factory()
+            .setDefaultRequestProperties(headers)
+            .setAllowCrossProtocolRedirects(true)
         val mediaItem = MediaItem.Builder().setUri(url).setMediaMetadata(MediaMetadata.Builder().setTitle(title).build()).build()
         val isHls = try { Uri.parse(url).path?.contains(".m3u8") == true } catch (e: Exception) { url.contains(".m3u8") }
         val mediaSource = if (isHls) HlsMediaSource.Factory(dataSourceFactory).setAllowChunklessPreparation(true).createMediaSource(mediaItem) else ProgressiveMediaSource.Factory(dataSourceFactory).createMediaSource(mediaItem)
