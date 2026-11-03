@@ -49,7 +49,7 @@ class MultiThreadDownloader(
                 .header("Cookie", cookie)
                 .header("User-Agent", playUserAgent)
                 .header("Referer", playReferer)
-                .header("Range", "bytes=0-1023")
+                .header("Range", "bytes=0-511") // 只请求前 512 字节做校验
                 .build()
             try {
                 client.newCall(req).execute().use { res ->
@@ -65,9 +65,9 @@ class MultiThreadDownloader(
                         if (length > 0) {
                             totalLength = length
                             
-                            // 防 HTML/XML 错误页拦截
+                            // 检查前 512 字节
                             val stream = res.body?.byteStream()
-                            val buffer = ByteArray(1024)
+                            val buffer = ByteArray(512)
                             val read = stream?.read(buffer) ?: 0
                             val headString = if (read > 0) String(buffer, 0, read) else ""
                             
@@ -152,14 +152,14 @@ class MultiThreadDownloader(
         }
     }
 
-    // 阻塞等待，但加入超时熔断保护
+    // 阻塞等待数据就绪（供代理服务器调用）
     suspend fun awaitDataReady(pos: Long) = withContext(Dispatchers.IO) {
         var waitCount = 0
         while (downloadedBytes.get() < pos && isRunning) {
             delay(100)
             waitCount++
-            if (waitCount > 150) { // 等待超过 15 秒，强行打断，让 ExoPlayer 报错而不是卡死
-                break
+            if (waitCount > 200) { // 等待 20 秒超时
+                throw Exception("MultiThreadDownloader timeout waiting for data")
             }
         }
     }
