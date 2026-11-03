@@ -49,17 +49,11 @@ class MultiThreadDownloader(
                 .header("Cookie", cookie)
                 .header("User-Agent", playUserAgent)
                 .header("Referer", playReferer)
+                .header("Range", "bytes=0-1023") // 先请求前 1KB 看内容
                 .build()
             try {
                 client.newCall(req).execute().use { res ->
                     if (res.code == 200 || res.code == 206) {
-                        // 【核心修复】拦截被风控网页，防止 ExoPlayer 解析 HTML 报错
-                        val contentType = res.header("Content-Type") ?: ""
-                        if (contentType.contains("text/html")) {
-                            lastError = "拦截到 HTML 网页而非视频流\nHTTP ${res.code}\nContent-Type: $contentType"
-                            return@withContext false
-                        }
-
                         var length = res.header("Content-Length")?.toLongOrNull() ?: -1L
                         if (length <= 0) {
                             val contentRange = res.header("Content-Range")
@@ -70,6 +64,18 @@ class MultiThreadDownloader(
 
                         if (length > 0) {
                             totalLength = length
+                            
+                            // 【核心修复】检查响应体的头部数据，防止伪装成 200 的 XML/HTML 报错
+                            val stream = res.body?.byteStream()
+                            val buffer = ByteArray(1024)
+                            val read = stream?.read(buffer) ?: 0
+                            val headString = if (read > 0) String(buffer, 0, read) else ""
+                            
+                            if (headString.contains("<Error>") || headString.contains("<!DOCTYPE") || headString.contains("<html")) {
+                                lastError = "夸克返回了错误页面:\n$headString"
+                                return@withContext false
+                            }
+
                             val fileName = currentUrl.hashCode().toString() + ".tmp"
                             cacheFile = File(cacheDir, fileName)
                             raf = RandomAccessFile(cacheFile, "rw")
