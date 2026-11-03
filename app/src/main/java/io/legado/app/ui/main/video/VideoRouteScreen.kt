@@ -534,7 +534,6 @@ fun InternalVideoPlayer(
                 if (videoSize.width > 0 && videoSize.height > 0) resolution = "${videoSize.width}×${videoSize.height}"
             }
             override fun onPlayerError(error: PlaybackException) {
-                // 【核心修复】捕获服务器返回的完整错误信息，改为弹窗显示
                 val msg = when (val cause = error.cause) {
                     is HttpDataSource.InvalidResponseCodeException -> {
                         val body = cause.responseBody?.let { String(it) } ?: cause.message
@@ -588,7 +587,6 @@ fun InternalVideoPlayer(
         else onBack()
     }
 
-    // 【新增】显示完整错误信息的弹窗
     if (errorDialogMsg != null) {
         AlertDialog(
             onDismissRequest = { errorDialogMsg = null },
@@ -1079,7 +1077,8 @@ fun SeriesPosterCard(series: MediaSeries, onClick: () -> Unit, onLongClick: () -
 fun MediaDetailScreen(
     series: MediaSeries, onBack: () -> Unit, onPlay: (MediaSeries, QuarkFile) -> Unit, onLongClickPoster: (MediaSeries) -> Unit
 ) {
-    val viewModel: VideoScraperViewModel = koViewModel()
+    // 修复拼写错误：koViewModel -> koinViewModel
+    val viewModel: VideoScraperViewModel = koinViewModel()
 
     val seasons = remember(series) { series.videos.map { it.parsedInfo?.season ?: 1 }.distinct().sorted() }
 
