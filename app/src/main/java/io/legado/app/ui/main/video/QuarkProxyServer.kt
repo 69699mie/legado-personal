@@ -8,7 +8,6 @@ import io.ktor.server.cio.*
 import io.ktor.server.engine.*
 import io.ktor.server.response.*
 import io.ktor.server.routing.*
-import kotlinx.coroutines.runBlocking
 import java.io.File
 import java.io.RandomAccessFile
 
@@ -17,7 +16,7 @@ object QuarkProxyServer {
     private var currentUrl: String = ""
     private var currentCookie: String = ""
     private var currentFid: String = ""
-    private var threadCount = 10 // 10线程满速下载
+    private var threadCount = 10
     private var downloader: MultiThreadDownloader? = null
 
     var onRefreshUrlNeeded: (suspend (fid: String, cookie: String) -> Pair<String, String>?)? = null
@@ -51,12 +50,12 @@ object QuarkProxyServer {
                                 result
                             }
                         )
-                    }
-                    
-                    val success = downloader!!.prepare()
-                    if (!success) {
-                        call.respond(HttpStatusCode.InternalServerError, downloader!!.lastError.ifBlank { "Prepare failed" })
-                        return@get
+                        // 【核心护城河】在这里同步死等头部 2MB 数据落盘
+                        val isPrepared = downloader!!.prepareAndDownloadHead()
+                        if (!isPrepared) {
+                            call.respond(HttpStatusCode.InternalServerError, downloader!!.lastError)
+                            return@get
+                        }
                     }
 
                     val totalLength = downloader!!.getTotalLength()
@@ -76,19 +75,8 @@ object QuarkProxyServer {
                         }
                     }
 
-                    // 启动 10 线程多线程下载
+                    // 头部已经下好，立刻启动 10 线程去拉剩下的数据
                     downloader!!.startDownload(start, end)
-
-                    // 【终极护城河】死等前 2MB 数据完全写入硬盘，才回 206 响应！
-                    // 这样 ExoPlayer 拿到手的就是纯正的视频文件头，绝对不会报解析错误！
-                    val waitPos = start + minOf(2 * 1024 * 1024L, end - start + 1)
-                    try {
-                        runBlocking {
-                            downloader!!.awaitDataReady(waitPos)
-                        }
-                    } catch (e: Exception) {
-                        // 等待超时忽略，继续往下走尝试
-                    }
 
                     call.response.status(HttpStatusCode.PartialContent)
                     call.response.header(HttpHeaders.AcceptRanges, "bytes")
@@ -102,7 +90,7 @@ object QuarkProxyServer {
                         var remaining = end - start + 1
                         
                         while (remaining > 0) {
-                            // 喂数据时继续等待后续分片，保证边下边播
+                            // 边下边播，等后台把数据填进来
                             downloader!!.awaitDataReady(start + (end - start + 1) - remaining)
                             
                             val toRead = minOf(buffer.size.toLong(), remaining).toInt()
