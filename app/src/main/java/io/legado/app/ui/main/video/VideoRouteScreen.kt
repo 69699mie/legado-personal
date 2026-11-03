@@ -12,6 +12,7 @@ import android.os.Process
 import android.view.ViewGroup
 import android.view.WindowManager
 import android.webkit.CookieManager
+import android.webkit.WebSettings
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import android.widget.FrameLayout
@@ -283,8 +284,8 @@ fun VideoRouteScreen(
                 WebLoginView(
                     onLoginSuccess = { cookie ->
                         viewModel.loginWithCapturedCookie(cookie)
-                        Toast.makeText(context, "登录成功，数据已同步", Toast.LENGTH_SHORT).show()
-                        // 不自动关闭弹窗
+                        Toast.makeText(context, "登录成功，已同步数据", Toast.LENGTH_SHORT).show()
+                        // 【核心修改】不再自动关闭弹窗，让用户能继续看到网盘界面（图一效果）
                     },
                     onCancel = { showWebLoginDialog = false }
                 )
@@ -368,8 +369,18 @@ fun WebLoginView(onLoginSuccess: (String) -> Unit, onCancel: () -> Unit) {
         AndroidView(modifier = Modifier.weight(1f).fillMaxWidth(), factory = { ctx ->
             WebView(ctx).apply {
                 webViewRef = this
-                settings.javaScriptEnabled = true; settings.domStorageEnabled = true; settings.databaseEnabled = true
-                settings.userAgentString = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+                // 【核心修复】完善 WebView 设置，确保能渲染出图一的 PC 端网页
+                settings.apply {
+                    javaScriptEnabled = true
+                    domStorageEnabled = true
+                    databaseEnabled = true
+                    useWideViewPort = true
+                    loadWithOverviewMode = true
+                    if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.LOLLIPOP) {
+                        mixedContentMode = WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
+                    }
+                    userAgentString = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+                }
                 CookieManager.getInstance().setAcceptCookie(true)
                 CookieManager.getInstance().setAcceptThirdPartyCookies(this, true)
                 webViewClient = object : WebViewClient() {}
@@ -385,6 +396,10 @@ fun WebLoginView(onLoginSuccess: (String) -> Unit, onCancel: () -> Unit) {
         })
     }
 }
+
+// ==========================================
+// 以下为播放器相关代码，保持不变
+// ==========================================
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
