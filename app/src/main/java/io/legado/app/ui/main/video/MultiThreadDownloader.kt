@@ -20,7 +20,7 @@ class MultiThreadDownloader(
 ) {
     private val client = OkHttpClient.Builder()
         .connectTimeout(15, TimeUnit.SECONDS)
-        .readTimeout(15, TimeUnit.SECONDS)
+        .readTimeout(60, TimeUnit.SECONDS) // 延长读取超时，防止网速慢卡死
         .build()
 
     private var currentUrl = initialUrl
@@ -49,33 +49,19 @@ class MultiThreadDownloader(
                 .header("Cookie", cookie)
                 .header("User-Agent", playUserAgent)
                 .header("Referer", playReferer)
-                .header("Range", "bytes=0-511") // 只请求前 512 字节做校验
+                .header("Range", "bytes=0-0") // 只请求 1 个字节，极速探测文件大小
                 .build()
             try {
                 client.newCall(req).execute().use { res ->
                     if (res.code == 200 || res.code == 206) {
                         var length = res.header("Content-Length")?.toLongOrNull() ?: -1L
-                        if (length <= 0) {
-                            val contentRange = res.header("Content-Range")
-                            if (contentRange != null && contentRange.contains("/")) {
-                                length = contentRange.substringAfter("/").toLongOrNull() ?: -1L
-                            }
+                        val contentRange = res.header("Content-Range")
+                        if (contentRange != null && contentRange.contains("/")) {
+                            length = contentRange.substringAfter("/").toLongOrNull() ?: -1L
                         }
 
                         if (length > 0) {
                             totalLength = length
-                            
-                            // 检查前 512 字节
-                            val stream = res.body?.byteStream()
-                            val buffer = ByteArray(512)
-                            val read = stream?.read(buffer) ?: 0
-                            val headString = if (read > 0) String(buffer, 0, read) else ""
-                            
-                            if (headString.contains("<Error>") || headString.contains("<!DOCTYPE") || headString.contains("<html")) {
-                                lastError = "夸克返回了错误页面:\n$headString"
-                                return@withContext false
-                            }
-
                             val fileName = currentUrl.hashCode().toString() + ".tmp"
                             cacheFile = File(cacheDir, fileName)
                             raf = RandomAccessFile(cacheFile, "rw")
@@ -152,15 +138,10 @@ class MultiThreadDownloader(
         }
     }
 
-    // 阻塞等待数据就绪（供代理服务器调用）
+    // 阻塞等待，供代理服务器调用
     suspend fun awaitDataReady(pos: Long) = withContext(Dispatchers.IO) {
-        var waitCount = 0
         while (downloadedBytes.get() < pos && isRunning) {
             delay(100)
-            waitCount++
-            if (waitCount > 200) { // 等待 20 秒超时
-                throw Exception("MultiThreadDownloader timeout waiting for data")
-            }
         }
     }
 
