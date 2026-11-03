@@ -8,22 +8,22 @@ import io.ktor.server.cio.*
 import io.ktor.server.engine.*
 import io.ktor.server.response.*
 import io.ktor.server.routing.*
-import java.io.File
-import java.io.RandomAccessFile
+import okhttp3.OkHttpClient
+import okhttp3.Request
+import java.util.concurrent.TimeUnit
 
 object QuarkProxyServer {
     private var server: EmbeddedServer<*, *>? = null
     private var currentUrl: String = ""
     private var currentCookie: String = ""
-    private var currentFid: String = ""
-    private var threadCount = 10
-    private var downloader: MultiThreadDownloader? = null
 
-    var onRefreshUrlNeeded: (suspend (fid: String, cookie: String) -> Pair<String, String>?)? = null
+    private val client = OkHttpClient.Builder()
+        .connectTimeout(15, TimeUnit.SECONDS)
+        .readTimeout(60, TimeUnit.SECONDS) // 拉长超时，防止断连
+        .build()
 
     fun start(context: Context) {
         if (server != null) return
-        val cacheDir = File(context.cacheDir, "QuarkProxyCache").apply { mkdirs() }
 
         server = embeddedServer(CIO, port = 8090) {
             routing {
@@ -34,90 +34,55 @@ object QuarkProxyServer {
                     }
 
                     val rangeHeader = call.request.headers[HttpHeaders.Range]
-                    
-                    if (downloader == null) {
-                        downloader = MultiThreadDownloader(
-                            context = context,
-                            cacheDir = cacheDir,
-                            initialUrl = currentUrl,
-                            cookie = currentCookie,
-                            threadCount = threadCount,
-                            onRefreshUrl = {
-                                val result = onRefreshUrlNeeded?.invoke(currentFid, currentCookie)
-                                if (result != null) {
-                                    currentCookie = result.second
-                                }
-                                result
-                            }
-                        )
-                        // 强制校验并下载头部
-                        val isPrepared = downloader!!.prepareAndDownloadHead()
-                        if (!isPrepared) {
-                            // 如果校验失败，直接把真实错误文本返回给播放器，不伪装成视频
-                            val errorText = downloader!!.lastError.take(500) // 截断防止过长
-                            call.respond(HttpStatusCode.InternalServerError, errorText)
-                            return@get
-                        }
-                    }
-
-                    val totalLength = downloader!!.getTotalLength()
-                    if (totalLength <= 0) {
-                        call.respond(HttpStatusCode.InternalServerError, "Unknown length")
-                        return@get
-                    }
-
-                    var start = 0L
-                    var end = totalLength - 1
+                    val reqBuilder = Request.Builder()
+                        .url(currentUrl)
+                        .header("Cookie", currentCookie)
+                        .header("User-Agent", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/100.0.4896.58 UCBrowser/16.5.8.1309 Mobile Safari/537.36")
+                        .header("Referer", "https://drive.quark.cn/")
 
                     if (rangeHeader != null) {
-                        val range = rangeHeader.replace("bytes=", "").split("-")
-                        start = range.getOrNull(0)?.toLongOrNull() ?: 0L
-                        if (range.size > 1 && range[1].isNotEmpty()) {
-                            end = range[1].toLongOrNull() ?: end
-                        }
+                        reqBuilder.header("Range", rangeHeader)
                     }
 
-                    downloader!!.startDownload(start, end)
+                    try {
+                        val response = client.newCall(reqBuilder.build()).execute()
+                        val body = response.body
 
-                    call.response.status(HttpStatusCode.PartialContent)
-                    call.response.header(HttpHeaders.AcceptRanges, "bytes")
-                    call.response.header(HttpHeaders.ContentLength, (end - start + 1).toString())
-                    call.response.header(HttpHeaders.ContentRange, "bytes $start-$end/$totalLength")
-
-                    call.respondOutputStream {
-                        val raf = RandomAccessFile(downloader!!.cacheFile, "r")
-                        raf.seek(start)
-                        val buffer = ByteArray(64 * 1024)
-                        var remaining = end - start + 1
-                        
-                        while (remaining > 0) {
-                            downloader!!.awaitDataReady(start + (end - start + 1) - remaining)
+                        if (response.code == 200 || response.code == 206) {
+                            call.response.status(HttpStatusCode.fromValue(response.code))
+                            response.header("Content-Range")?.let { call.response.header(HttpHeaders.ContentRange, it) }
+                            response.header("Content-Length")?.let { call.response.header(HttpHeaders.ContentLength, it) }
+                            response.header("Accept-Ranges")?.let { call.response.header(HttpHeaders.AcceptRanges, it) }
                             
-                            val toRead = minOf(buffer.size.toLong(), remaining).toInt()
-                            val read = raf.read(buffer, 0, toRead)
-                            if (read == -1) break
-                            
-                            this.write(buffer, 0, read)
-                            remaining -= read
+                            // 透传流
+                            if (body != null) {
+                                call.respondOutputStream {
+                                    val inputStream = body.byteStream()
+                                    val buffer = ByteArray(64 * 1024)
+                                    var read = inputStream.read(buffer)
+                                    while (read != -1) {
+                                        this.write(buffer, 0, read)
+                                        read = inputStream.read(buffer)
+                                    }
+                                }
+                            }
+                        } else {
+                            call.respond(HttpStatusCode.InternalServerError, "HTTP ${response.code}\n${body?.string()}")
                         }
-                        raf.close()
+                    } catch (e: Exception) {
+                        call.respond(HttpStatusCode.InternalServerError, "Exception: ${e.message}")
                     }
                 }
             }
         }.start(wait = false)
     }
 
-    fun setPlayInfo(url: String, cookie: String, fid: String, threads: Int = 10) {
+    fun setPlayInfo(url: String, cookie: String) {
         this.currentUrl = url
         this.currentCookie = cookie
-        this.currentFid = fid
-        this.threadCount = threads
-        downloader?.stop()
-        downloader = null
     }
 
     fun stop() {
-        downloader?.stop()
-        downloader = null
+        // 纯透传，无需清理缓存
     }
 }
