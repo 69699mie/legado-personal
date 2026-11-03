@@ -283,8 +283,8 @@ fun VideoRouteScreen(
                 WebLoginView(
                     onLoginSuccess = { cookie ->
                         viewModel.loginWithCapturedCookie(cookie)
-                        showWebLoginDialog = false
-                        Toast.makeText(context, "登录成功！", Toast.LENGTH_SHORT).show()
+                        Toast.makeText(context, "登录成功，数据已同步", Toast.LENGTH_SHORT).show()
+                        // 不自动关闭弹窗
                     },
                     onCancel = { showWebLoginDialog = false }
                 )
@@ -341,7 +341,6 @@ fun VideoRouteScreen(
 fun WebLoginView(onLoginSuccess: (String) -> Unit, onCancel: () -> Unit) {
     val context = LocalContext.current
     var webViewRef by remember { mutableStateOf<WebView?>(null) }
-    // 增加一个 reload 触发器，用于强制刷新
     var reloadTrigger by remember { mutableIntStateOf(0) }
 
     DisposableEffect(Unit) { onDispose { webViewRef?.destroy(); webViewRef = null } }
@@ -351,7 +350,6 @@ fun WebLoginView(onLoginSuccess: (String) -> Unit, onCancel: () -> Unit) {
             AppText("夸克扫码/账号登录", fontWeight = FontWeight.Bold)
             Row {
                 TextButton(onClick = {
-                    // 核心修复：强制清空 WebView 里面的 Cookie，并刷新页面
                     CookieManager.getInstance().removeAllCookies(null)
                     CookieManager.getInstance().flush()
                     reloadTrigger++
@@ -374,9 +372,7 @@ fun WebLoginView(onLoginSuccess: (String) -> Unit, onCancel: () -> Unit) {
                 settings.userAgentString = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
                 CookieManager.getInstance().setAcceptCookie(true)
                 CookieManager.getInstance().setAcceptThirdPartyCookies(this, true)
-                webViewClient = object : WebViewClient() {
-                    // 【核心修复】去掉了 onPageFinished 里的自动检测，改为纯手动点击“完成登录”
-                }
+                webViewClient = object : WebViewClient() {}
             }
         }, update = { webView ->
             if (reloadTrigger > 0) {
