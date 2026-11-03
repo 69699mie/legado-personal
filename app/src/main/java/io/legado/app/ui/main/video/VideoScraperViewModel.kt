@@ -651,7 +651,8 @@ class VideoScraperViewModel(
 
             if (url != null) {
                 val latestCookie = _uiState.value.cookie
-                QuarkProxyServer.setPlayInfo(url, latestCookie, file.fid, 10) // 默认 10 线程并发
+                // 【核心】启动代理服务器，传入 10 线程并发下载
+                QuarkProxyServer.setPlayInfo(url, latestCookie, file.fid, 10)
                 _uiState.update { it.copy(playUrl = "http://127.0.0.1:8090/play") }
             } else {
                 val detail = lastQuarkError ?: "未知错误"
