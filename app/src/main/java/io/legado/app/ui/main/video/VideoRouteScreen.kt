@@ -68,6 +68,7 @@ import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -253,6 +254,10 @@ fun VideoRouteScreen(
         var inputTmdbKey by remember { mutableStateOf(uiState.tmdbApiKey) }
         var inputTmdbUrl by remember { mutableStateOf(uiState.tmdbBaseUrl) }
         var inputThreads by remember { mutableStateOf(viewModel.getProxyThreads().toString()) }
+        
+        // 【新增】控制密码是否可见的状态
+        var isCookieVisible by remember { mutableStateOf(false) }
+        var isTmdbKeyVisible by remember { mutableStateOf(false) }
 
         Dialog(onDismissRequest = { showSettingsDialog = false }) {
             Column(modifier = Modifier.background(Color.White).padding(16.dp).fillMaxWidth()) {
@@ -260,9 +265,44 @@ fun VideoRouteScreen(
                     AppText(text = "夸克登录状态", fontWeight = FontWeight.Bold)
                     Button(onClick = { showWebLoginDialog = true }, contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp)) { AppText("网页扫码登录") }
                 }
-                OutlinedTextField(value = inputCookie, onValueChange = { inputCookie = it }, modifier = Modifier.padding(vertical = 8.dp), visualTransformation = PasswordVisualTransformation(), maxLines = 2, label = { AppText("手动填写 Cookie（可选）") })
+                
+                // 【修改】Cookie 输入框
+                OutlinedTextField(
+                    value = inputCookie,
+                    onValueChange = { inputCookie = it },
+                    modifier = Modifier.padding(vertical = 8.dp).fillMaxWidth(),
+                    visualTransformation = if (isCookieVisible) VisualTransformation.None else PasswordVisualTransformation(),
+                    maxLines = 2,
+                    label = { AppText("手动填写 Cookie（可选）") },
+                    trailingIcon = {
+                        IconButton(onClick = { isCookieVisible = !isCookieVisible }) {
+                            Icon(
+                                imageVector = if (isCookieVisible) Icons.Default.Visibility else Icons.Default.VisibilityOff,
+                                contentDescription = "切换可见性"
+                            )
+                        }
+                    }
+                )
+                
                 AppText(text = "TMDB API Key (v3 auth)")
-                OutlinedTextField(value = inputTmdbKey, onValueChange = { inputTmdbKey = it }, modifier = Modifier.padding(vertical = 8.dp), visualTransformation = PasswordVisualTransformation(), maxLines = 1)
+                
+                // 【修改】TMDB API Key 输入框
+                OutlinedTextField(
+                    value = inputTmdbKey,
+                    onValueChange = { inputTmdbKey = it },
+                    modifier = Modifier.padding(vertical = 8.dp).fillMaxWidth(),
+                    visualTransformation = if (isTmdbKeyVisible) VisualTransformation.None else PasswordVisualTransformation(),
+                    maxLines = 1,
+                    trailingIcon = {
+                        IconButton(onClick = { isTmdbKeyVisible = !isTmdbKeyVisible }) {
+                            Icon(
+                                imageVector = if (isTmdbKeyVisible) Icons.Default.Visibility else Icons.Default.VisibilityOff,
+                                contentDescription = "切换可见性"
+                            )
+                        }
+                    }
+                )
+
                 AppText(text = "TMDB API 代理地址")
                 OutlinedTextField(value = inputTmdbUrl, onValueChange = { inputTmdbUrl = it }, modifier = Modifier.padding(vertical = 8.dp), maxLines = 1)
 
@@ -284,8 +324,9 @@ fun VideoRouteScreen(
                 WebLoginView(
                     onLoginSuccess = { cookie ->
                         viewModel.loginWithCapturedCookie(cookie)
-                        Toast.makeText(context, "登录成功，已同步数据", Toast.LENGTH_SHORT).show()
-                        // 【核心修改】不再自动关闭弹窗，让用户能继续看到网盘界面（图一效果）
+                        showWebLoginDialog = false
+                        showSettingsDialog = false
+                        Toast.makeText(context, "登录成功，已同步最新数据", Toast.LENGTH_SHORT).show()
                     },
                     onCancel = { showWebLoginDialog = false }
                 )
@@ -369,7 +410,6 @@ fun WebLoginView(onLoginSuccess: (String) -> Unit, onCancel: () -> Unit) {
         AndroidView(modifier = Modifier.weight(1f).fillMaxWidth(), factory = { ctx ->
             WebView(ctx).apply {
                 webViewRef = this
-                // 【核心修复】完善 WebView 设置，确保能渲染出图一的 PC 端网页
                 settings.apply {
                     javaScriptEnabled = true
                     domStorageEnabled = true
