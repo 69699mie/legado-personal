@@ -364,6 +364,8 @@ class VideoScraperViewModel(
             val request = Request.Builder().url(url).header("Cookie", cookie).header("User-Agent", "Mozilla/5.0").build()
             try {
                 client.newCall(request).execute().use { response ->
+                    updateCookieFromResponse(response.headers) // 每次拉取列表都更新 Cookie
+                    
                     val body = response.body?.string()
                     if (!body.isNullOrBlank()) {
                         val json = JSONObject(body)
@@ -717,7 +719,6 @@ class VideoScraperViewModel(
                 .build()
 
             client.newCall(request).execute().use { response ->
-                // 核心：拦截 Set-Cookie 更新
                 updateCookieFromResponse(response.headers)
 
                 val httpCode = response.code
@@ -821,9 +822,11 @@ class VideoScraperViewModel(
                 val result = withContext(Dispatchers.IO) {
                     val url = "https://drive-pc.quark.cn/1/clouddrive/file/sort?pr=ucpro&fr=pc&uc_param_str=&pdir_fid=$fid&_page=1&_size=100&_sort=file_type:asc,updated_at:desc"
                     val request = Request.Builder().url(url).header("Cookie", cookie).header("User-Agent", "Mozilla/5.0").build()
-                    client.newCall(request).execute().use { Pair(it.isSuccessful, it.body?.string()) }
+                    client.newCall(request).execute().use { Triple(it.isSuccessful, it.body?.string(), it.headers) }
                 }
-                val (isSuccessful, body) = result
+                val (isSuccessful, body, headers) = result
+                updateCookieFromResponse(headers)
+                
                 if (isSuccessful && !body.isNullOrBlank()) {
                     val json = JSONObject(body)
                     if (json.optInt("code", -1) == 0) {
