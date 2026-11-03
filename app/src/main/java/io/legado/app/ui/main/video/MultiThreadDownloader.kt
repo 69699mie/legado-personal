@@ -36,7 +36,7 @@ class MultiThreadDownloader(
     private var isPrepared = false
     private val prepareMutex = Mutex()
 
-    // 【核心修复】使用海阔视界抓包中证实可绕过风控的 UC 浏览器 UA 和 Referer
+    // 使用海阔视界抓包中证实可绕过风控的 UC 浏览器 UA 和 Referer
     private val playUserAgent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/100.0.4896.58 UCBrowser/16.5.8.1309 Mobile Safari/537.36"
     private val playReferer = "https://drive.quark.cn/"
 
@@ -50,7 +50,7 @@ class MultiThreadDownloader(
                 .header("Cookie", cookie)
                 .header("User-Agent", playUserAgent)
                 .header("Referer", playReferer)
-                .header("Origin", "https://pan.quark.cn")
+                // 已移除 Origin，与海阔视界抓包完全对齐
                 .build()
             try {
                 client.newCall(req).execute().use { res ->
@@ -113,7 +113,7 @@ class MultiThreadDownloader(
             .header("Cookie", cookie)
             .header("User-Agent", playUserAgent)
             .header("Referer", playReferer)
-            .header("Origin", "https://pan.quark.cn")
+            // 已移除 Origin，与海阔视界抓包完全对齐
             .header("Range", "bytes=$start-$end")
             .build()
 
