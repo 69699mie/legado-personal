@@ -1,13 +1,10 @@
 package io.legado.app.ui.main.video
 
 import kotlinx.coroutines.*
-import kotlinx.coroutines.sync.Mutex
-import kotlinx.coroutines.sync.withLock
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import java.io.File
 import java.io.RandomAccessFile
-import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicLong
 
@@ -34,64 +31,87 @@ class MultiThreadDownloader(
     private var raf: RandomAccessFile? = null
 
     var lastError: String = ""
-    private var isPrepared = false
-    private val prepareMutex = Mutex()
-
-    // 记录每个分片是否下载完毕
-    private val completedChunks = ConcurrentHashMap<Long, Boolean>()
 
     private val playUserAgent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/100.0.4896.58 UCBrowser/16.5.8.1309 Mobile Safari/537.36"
     private val playReferer = "https://drive.quark.cn/"
-    private val chunkSize = 2 * 1024 * 1024L // 2MB 每片
+    private val chunkSize = 2 * 1024 * 1024L
 
     fun getTotalLength(): Long = totalLength
 
-    suspend fun prepare(): Boolean = prepareMutex.withLock {
-        if (isPrepared) return@withLock true
-        return@withLock withContext(Dispatchers.IO) {
-            val req = Request.Builder()
+    // 【核心突破】同步下载前2MB数据（死等），确保文件头绝对落盘
+    fun prepareAndDownloadHead(): Boolean {
+        return try {
+            // 1. 探测文件总大小
+            val headReq = Request.Builder()
                 .url(currentUrl)
                 .header("Cookie", cookie)
                 .header("User-Agent", playUserAgent)
                 .header("Referer", playReferer)
                 .header("Range", "bytes=0-0")
                 .build()
-            try {
-                client.newCall(req).execute().use { res ->
-                    if (res.code == 200 || res.code == 206) {
-                        var length = res.header("Content-Length")?.toLongOrNull() ?: -1L
-                        val contentRange = res.header("Content-Range")
-                        if (contentRange != null && contentRange.contains("/")) {
-                            length = contentRange.substringAfter("/").toLongOrNull() ?: -1L
-                        }
 
-                        if (length > 0) {
-                            totalLength = length
-                            val fileName = currentUrl.hashCode().toString() + ".tmp"
-                            cacheFile = File(cacheDir, fileName)
-                            raf = RandomAccessFile(cacheFile, "rw")
-                            raf?.setLength(totalLength)
-                            isPrepared = true
-                            return@withContext true
-                        } else {
-                            lastError = "获取文件大小失败: HTTP ${res.code}"
-                        }
-                    } else {
-                        lastError = "HTTP ${res.code}: ${res.body?.string()}"
-                    }
+            client.newCall(headReq).execute().use { res ->
+                if (res.code != 200 && res.code != 206) {
+                    lastError = "HTTP ${res.code}: ${res.body?.string()}"
+                    return false
                 }
-            } catch (e: Exception) {
-                lastError = "Exception: ${e.message}"
+                var length = res.header("Content-Length")?.toLongOrNull() ?: -1L
+                val contentRange = res.header("Content-Range")
+                if (contentRange != null && contentRange.contains("/")) {
+                    length = contentRange.substringAfter("/").toLongOrNull() ?: -1L
+                }
+                if (length <= 0) {
+                    lastError = "获取文件大小失败"
+                    return false
+                }
+                totalLength = length
+
+                val fileName = currentUrl.hashCode().toString() + ".tmp"
+                cacheFile = File(cacheDir, fileName)
+                raf = RandomAccessFile(cacheFile, "rw")
+                raf?.setLength(totalLength)
             }
-            return@withContext false
+
+            // 2. 同步拉取头部 2MB（解决 PARSING_CONTAINER_UNSUPPORTED 的核心）
+            val headEnd = minOf(chunkSize - 1, totalLength - 1)
+            val syncReq = Request.Builder()
+                .url(currentUrl)
+                .header("Cookie", cookie)
+                .header("User-Agent", playUserAgent)
+                .header("Referer", playReferer)
+                .header("Range", "bytes=0-$headEnd")
+                .build()
+
+            client.newCall(syncReq).execute().use { res ->
+                if (res.code == 206 || res.code == 200) {
+                    val data = res.body?.bytes() ?: ByteArray(0)
+                    synchronized(this) {
+                        raf?.seek(0)
+                        raf?.write(data)
+                    }
+                    downloadedBytes.addAndGet(data.size.toLong())
+                    return true
+                } else {
+                    lastError = "下载头部失败 HTTP ${res.code}"
+                    return false
+                }
+            }
+        } catch (e: Exception) {
+            lastError = "Exception: ${e.message}"
+            false
         }
     }
 
     fun startDownload(startPos: Long, endPos: Long) {
         if (isRunning) return
         isRunning = true
-
+        
         var currentPos = startPos
+        // 如果起始位置在前 2MB 内，跳过已经下载的部分
+        if (currentPos < chunkSize) {
+            currentPos = chunkSize
+        }
+
         for (i in 0 until threadCount) {
             if (currentPos > endPos) break
             val rangeStart = currentPos
@@ -118,14 +138,12 @@ class MultiThreadDownloader(
         try {
             client.newCall(req).execute().use { res ->
                 if (res.code == 206 || res.code == 200) {
-                    val body = res.body ?: return
-                    val data = body.bytes()
+                    val data = res.body?.bytes() ?: return
                     synchronized(this) {
                         raf?.seek(start)
                         raf?.write(data)
                     }
                     downloadedBytes.addAndGet(data.size.toLong())
-                    completedChunks[start] = true
                 } else if (res.code == 412 || res.code == 403) {
                     val result = onRefreshUrl()
                     if (result != null) {
@@ -133,9 +151,6 @@ class MultiThreadDownloader(
                         cookie = result.second
                         downloadChunk(start, end, retry + 1)
                     }
-                } else {
-                    delay(1000)
-                    downloadChunk(start, end, retry + 1)
                 }
             }
         } catch (e: Exception) {
@@ -144,18 +159,9 @@ class MultiThreadDownloader(
         }
     }
 
-    // 等待指定位置及之前的数据准备完毕
-    suspend fun awaitDataReady(targetPos: Long) = withContext(Dispatchers.IO) {
-        var waitCount = 0
-        while (isRunning) {
-            // 检查目标位置所在的分片是否已经下载完毕
-            val targetChunkStart = (targetPos / chunkSize) * chunkSize
-            if (completedChunks.containsKey(targetChunkStart) || downloadedBytes.get() >= targetPos) {
-                break
-            }
+    suspend fun awaitDataReady(pos: Long) = withContext(Dispatchers.IO) {
+        while (downloadedBytes.get() < pos && isRunning) {
             delay(100)
-            waitCount++
-            if (waitCount > 200) break // 20秒超时防死锁
         }
     }
 
