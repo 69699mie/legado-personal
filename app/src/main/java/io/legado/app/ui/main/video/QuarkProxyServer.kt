@@ -19,7 +19,8 @@ object QuarkProxyServer {
     private var threadCount = 4
     private var downloader: MultiThreadDownloader? = null
 
-    var onRefreshUrlNeeded: (suspend (fid: String, cookie: String) -> String?)? = null
+    // 【修改】返回新链接和新 Cookie
+    var onRefreshUrlNeeded: (suspend (fid: String, cookie: String) -> Pair<String, String>?)? = null
 
     fun start(context: Context) {
         if (server != null) return
@@ -35,7 +36,6 @@ object QuarkProxyServer {
 
                     val rangeHeader = call.request.headers[HttpHeaders.Range]
                     
-                    // 【修复】如果 downloader 为空，先创建实例，但 prepare 放到外面统一调用（受锁保护）
                     if (downloader == null) {
                         downloader = MultiThreadDownloader(
                             context = context,
@@ -44,12 +44,15 @@ object QuarkProxyServer {
                             cookie = currentCookie,
                             threadCount = threadCount,
                             onRefreshUrl = {
-                                onRefreshUrlNeeded?.invoke(currentFid, currentCookie)
+                                val result = onRefreshUrlNeeded?.invoke(currentFid, currentCookie)
+                                if (result != null) {
+                                    currentCookie = result.second
+                                }
+                                result
                             }
                         )
                     }
                     
-                    // 利用 MultiThreadDownloader 内部的 Mutex 锁，确保并发请求时只 Prepare 一次
                     val success = downloader!!.prepare()
                     if (!success) {
                         call.respond(HttpStatusCode.InternalServerError, downloader!!.lastError.ifBlank { "Prepare failed" })
