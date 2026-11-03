@@ -14,9 +14,9 @@ class MultiThreadDownloader(
     private val context: android.content.Context,
     private val cacheDir: File,
     private val initialUrl: String,
-    private var cookie: String, // 【修改】改为 var
+    private var cookie: String,
     private val threadCount: Int,
-    private val onRefreshUrl: suspend () -> Pair<String, String>? // 【修改】返回 URL 和 新 Cookie
+    private val onRefreshUrl: suspend () -> Pair<String, String>?
 ) {
     private val client = OkHttpClient.Builder()
         .connectTimeout(15, TimeUnit.SECONDS)
@@ -53,6 +53,13 @@ class MultiThreadDownloader(
             try {
                 client.newCall(req).execute().use { res ->
                     if (res.code == 200 || res.code == 206) {
+                        // 【核心修复】拦截被风控网页，防止 ExoPlayer 解析 HTML 报错
+                        val contentType = res.header("Content-Type") ?: ""
+                        if (contentType.contains("text/html")) {
+                            lastError = "拦截到 HTML 网页而非视频流\nHTTP ${res.code}\nContent-Type: $contentType"
+                            return@withContext false
+                        }
+
                         var length = res.header("Content-Length")?.toLongOrNull() ?: -1L
                         if (length <= 0) {
                             val contentRange = res.header("Content-Range")
@@ -128,7 +135,7 @@ class MultiThreadDownloader(
                     val result = onRefreshUrl()
                     if (result != null) {
                         currentUrl = result.first
-                        cookie = result.second // 更新最新的 Cookie
+                        cookie = result.second
                         downloadChunk(start, end, retry + 1)
                     }
                 }
