@@ -7,6 +7,7 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 import java.io.File
 import java.io.RandomAccessFile
+import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicLong
 
@@ -20,7 +21,7 @@ class MultiThreadDownloader(
 ) {
     private val client = OkHttpClient.Builder()
         .connectTimeout(15, TimeUnit.SECONDS)
-        .readTimeout(60, TimeUnit.SECONDS) // 延长读取超时，防止网速慢卡死
+        .readTimeout(60, TimeUnit.SECONDS)
         .build()
 
     private var currentUrl = initialUrl
@@ -36,8 +37,12 @@ class MultiThreadDownloader(
     private var isPrepared = false
     private val prepareMutex = Mutex()
 
+    // 记录每个分片是否下载完毕
+    private val completedChunks = ConcurrentHashMap<Long, Boolean>()
+
     private val playUserAgent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/100.0.4896.58 UCBrowser/16.5.8.1309 Mobile Safari/537.36"
     private val playReferer = "https://drive.quark.cn/"
+    private val chunkSize = 2 * 1024 * 1024L // 2MB 每片
 
     fun getTotalLength(): Long = totalLength
 
@@ -49,7 +54,7 @@ class MultiThreadDownloader(
                 .header("Cookie", cookie)
                 .header("User-Agent", playUserAgent)
                 .header("Referer", playReferer)
-                .header("Range", "bytes=0-0") // 只请求 1 个字节，极速探测文件大小
+                .header("Range", "bytes=0-0")
                 .build()
             try {
                 client.newCall(req).execute().use { res ->
@@ -69,16 +74,14 @@ class MultiThreadDownloader(
                             isPrepared = true
                             return@withContext true
                         } else {
-                            lastError = "获取文件大小失败: 缺少 Content-Length\nHTTP ${res.code}\nHeaders: ${res.headers}"
+                            lastError = "获取文件大小失败: HTTP ${res.code}"
                         }
                     } else {
-                        val errBody = res.body?.string() ?: "Empty body"
-                        lastError = "HTTP ${res.code}: $errBody"
+                        lastError = "HTTP ${res.code}: ${res.body?.string()}"
                     }
                 }
             } catch (e: Exception) {
                 lastError = "Exception: ${e.message}"
-                e.printStackTrace()
             }
             return@withContext false
         }
@@ -87,9 +90,8 @@ class MultiThreadDownloader(
     fun startDownload(startPos: Long, endPos: Long) {
         if (isRunning) return
         isRunning = true
-        val chunkSize = 2 * 1024 * 1024L
-        var currentPos = startPos
 
+        var currentPos = startPos
         for (i in 0 until threadCount) {
             if (currentPos > endPos) break
             val rangeStart = currentPos
@@ -121,8 +123,9 @@ class MultiThreadDownloader(
                     synchronized(this) {
                         raf?.seek(start)
                         raf?.write(data)
-                        downloadedBytes.addAndGet(data.size.toLong())
                     }
+                    downloadedBytes.addAndGet(data.size.toLong())
+                    completedChunks[start] = true
                 } else if (res.code == 412 || res.code == 403) {
                     val result = onRefreshUrl()
                     if (result != null) {
@@ -130,6 +133,9 @@ class MultiThreadDownloader(
                         cookie = result.second
                         downloadChunk(start, end, retry + 1)
                     }
+                } else {
+                    delay(1000)
+                    downloadChunk(start, end, retry + 1)
                 }
             }
         } catch (e: Exception) {
@@ -138,10 +144,18 @@ class MultiThreadDownloader(
         }
     }
 
-    // 阻塞等待，供代理服务器调用
-    suspend fun awaitDataReady(pos: Long) = withContext(Dispatchers.IO) {
-        while (downloadedBytes.get() < pos && isRunning) {
+    // 等待指定位置及之前的数据准备完毕
+    suspend fun awaitDataReady(targetPos: Long) = withContext(Dispatchers.IO) {
+        var waitCount = 0
+        while (isRunning) {
+            // 检查目标位置所在的分片是否已经下载完毕
+            val targetChunkStart = (targetPos / chunkSize) * chunkSize
+            if (completedChunks.containsKey(targetChunkStart) || downloadedBytes.get() >= targetPos) {
+                break
+            }
             delay(100)
+            waitCount++
+            if (waitCount > 200) break // 20秒超时防死锁
         }
     }
 
