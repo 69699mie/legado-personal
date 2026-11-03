@@ -50,10 +50,12 @@ object QuarkProxyServer {
                                 result
                             }
                         )
-                        // 【核心护城河】在这里同步死等头部 2MB 数据落盘
+                        // 强制校验并下载头部
                         val isPrepared = downloader!!.prepareAndDownloadHead()
                         if (!isPrepared) {
-                            call.respond(HttpStatusCode.InternalServerError, downloader!!.lastError)
+                            // 如果校验失败，直接把真实错误文本返回给播放器，不伪装成视频
+                            val errorText = downloader!!.lastError.take(500) // 截断防止过长
+                            call.respond(HttpStatusCode.InternalServerError, errorText)
                             return@get
                         }
                     }
@@ -75,7 +77,6 @@ object QuarkProxyServer {
                         }
                     }
 
-                    // 头部已经下好，立刻启动 10 线程去拉剩下的数据
                     downloader!!.startDownload(start, end)
 
                     call.response.status(HttpStatusCode.PartialContent)
@@ -90,7 +91,6 @@ object QuarkProxyServer {
                         var remaining = end - start + 1
                         
                         while (remaining > 0) {
-                            // 边下边播，等后台把数据填进来
                             downloader!!.awaitDataReady(start + (end - start + 1) - remaining)
                             
                             val toRead = minOf(buffer.size.toLong(), remaining).toInt()
