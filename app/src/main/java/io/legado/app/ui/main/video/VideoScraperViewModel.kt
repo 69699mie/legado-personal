@@ -84,7 +84,6 @@ class VideoScraperViewModel(
     private var hasLoadedLibrary = false
     private val libraryNames = mutableMapOf<String, String>()
     
-    private var isProxyInitialized = false
     private var lastQuarkError: String? = null
     private val scrapedCache = mutableMapOf<String, ScrapeCacheItem>()
 
@@ -364,7 +363,7 @@ class VideoScraperViewModel(
             val request = Request.Builder().url(url).header("Cookie", cookie).header("User-Agent", "Mozilla/5.0").build()
             try {
                 client.newCall(request).execute().use { response ->
-                    updateCookieFromResponse(response.headers) // 每次拉取列表都更新 Cookie
+                    updateCookieFromResponse(response.headers)
                     
                     val body = response.body?.string()
                     if (!body.isNullOrBlank()) {
@@ -633,26 +632,13 @@ class VideoScraperViewModel(
         Toast.makeText(context, "正在获取无损原画直链...", Toast.LENGTH_SHORT).show()
 
         viewModelScope.launch {
-            if (!isProxyInitialized) {
-                QuarkProxyServer.start(context.applicationContext)
-                QuarkProxyServer.onRefreshUrlNeeded = { fid, ck ->
-                    withContext(Dispatchers.IO) {
-                        val latestCookie = _uiState.value.cookie
-                        val url = fetchDirectDownloadUrl(fid, latestCookie)
-                        if (url != null) Pair(url, _uiState.value.cookie) else null
-                    }
-                }
-                isProxyInitialized = true
-            }
-
             val url = withContext(Dispatchers.IO) {
                 fetchDirectDownloadUrl(file.fid, cookie)
             }
 
             if (url != null) {
-                val latestCookie = _uiState.value.cookie
-                QuarkProxyServer.setPlayInfo(url, latestCookie, file.fid)
-                _uiState.update { it.copy(playUrl = "http://127.0.0.1:8090/play") }
+                // 直接将真实直链传给播放器，不再使用本地代理
+                _uiState.update { it.copy(playUrl = url) }
             } else {
                 val detail = lastQuarkError ?: "未知错误"
                 withContext(Dispatchers.Main) {
@@ -714,7 +700,6 @@ class VideoScraperViewModel(
                 .header("Cookie", cookie)
                 .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) quark-cloud-drive/2.5.20 Chrome/100.0.4896.160 Electron/18.3.5.4-b478491100 Safari/537.36 Channel/pckk_other_ch")
                 .header("Referer", "https://pan.quark.cn/")
-                .header("Origin", "https://pan.quark.cn")
                 .header("Accept", "application/json, text/plain, */*")
                 .build()
 
@@ -799,7 +784,6 @@ class VideoScraperViewModel(
 
     fun stopPlaying() {
         _uiState.update { it.copy(playUrl = null, playTitle = null, currentPlayFile = null) }
-        QuarkProxyServer.stop()
     }
 
     fun fetchQuarkFiles(fid: String = "0", isBack: Boolean = false) {
