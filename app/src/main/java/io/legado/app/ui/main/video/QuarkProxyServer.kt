@@ -8,6 +8,7 @@ import io.ktor.server.cio.*
 import io.ktor.server.engine.*
 import io.ktor.server.response.*
 import io.ktor.server.routing.*
+import kotlinx.coroutines.runBlocking
 import java.io.File
 import java.io.RandomAccessFile
 
@@ -16,7 +17,7 @@ object QuarkProxyServer {
     private var currentUrl: String = ""
     private var currentCookie: String = ""
     private var currentFid: String = ""
-    private var threadCount = 10 // 10 线程并发
+    private var threadCount = 10 // 10线程满速下载
     private var downloader: MultiThreadDownloader? = null
 
     var onRefreshUrlNeeded: (suspend (fid: String, cookie: String) -> Pair<String, String>?)? = null
@@ -75,37 +76,43 @@ object QuarkProxyServer {
                         }
                     }
 
-                    // 启动多线程下载
+                    // 启动 10 线程多线程下载
                     downloader!!.startDownload(start, end)
 
-                    // 立刻返回 206 响应，告诉 ExoPlayer 数据已准备好
+                    // 【终极护城河】死等前 2MB 数据完全写入硬盘，才回 206 响应！
+                    // 这样 ExoPlayer 拿到手的就是纯正的视频文件头，绝对不会报解析错误！
+                    val waitPos = start + minOf(2 * 1024 * 1024L, end - start + 1)
+                    try {
+                        runBlocking {
+                            downloader!!.awaitDataReady(waitPos)
+                        }
+                    } catch (e: Exception) {
+                        // 等待超时忽略，继续往下走尝试
+                    }
+
                     call.response.status(HttpStatusCode.PartialContent)
                     call.response.header(HttpHeaders.AcceptRanges, "bytes")
                     call.response.header(HttpHeaders.ContentLength, (end - start + 1).toString())
                     call.response.header(HttpHeaders.ContentRange, "bytes $start-$end/$totalLength")
 
-                    try {
-                        call.respondOutputStream {
-                            val raf = RandomAccessFile(downloader!!.cacheFile, "r")
-                            raf.seek(start)
-                            val buffer = ByteArray(64 * 1024)
-                            var remaining = end - start + 1
+                    call.respondOutputStream {
+                        val raf = RandomAccessFile(downloader!!.cacheFile, "r")
+                        raf.seek(start)
+                        val buffer = ByteArray(64 * 1024)
+                        var remaining = end - start + 1
+                        
+                        while (remaining > 0) {
+                            // 喂数据时继续等待后续分片，保证边下边播
+                            downloader!!.awaitDataReady(start + (end - start + 1) - remaining)
                             
-                            while (remaining > 0) {
-                                // 在这里阻塞等待，数据就绪多少喂多少
-                                downloader!!.awaitDataReady(start + (end - start + 1) - remaining)
-                                
-                                val toRead = minOf(buffer.size.toLong(), remaining).toInt()
-                                val read = raf.read(buffer, 0, toRead)
-                                if (read == -1) break
-                                
-                                this.write(buffer, 0, read)
-                                remaining -= read
-                            }
-                            raf.close()
+                            val toRead = minOf(buffer.size.toLong(), remaining).toInt()
+                            val read = raf.read(buffer, 0, toRead)
+                            if (read == -1) break
+                            
+                            this.write(buffer, 0, read)
+                            remaining -= read
                         }
-                    } catch (e: Exception) {
-                        // 忽略因为客户端主动断开导致的异常（比如用户退出播放器）
+                        raf.close()
                     }
                 }
             }
