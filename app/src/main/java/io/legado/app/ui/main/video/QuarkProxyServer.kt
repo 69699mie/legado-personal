@@ -8,6 +8,7 @@ import io.ktor.server.cio.*
 import io.ktor.server.engine.*
 import io.ktor.server.response.*
 import io.ktor.server.routing.*
+import kotlinx.coroutines.runBlocking
 import java.io.File
 import java.io.RandomAccessFile
 
@@ -16,7 +17,7 @@ object QuarkProxyServer {
     private var currentUrl: String = ""
     private var currentCookie: String = ""
     private var currentFid: String = ""
-    private var threadCount = 10 // 默认 10 线程高速下载
+    private var threadCount = 10 // 10 线程
     private var downloader: MultiThreadDownloader? = null
 
     var onRefreshUrlNeeded: (suspend (fid: String, cookie: String) -> Pair<String, String>?)? = null
@@ -77,11 +78,23 @@ object QuarkProxyServer {
 
                     downloader!!.startDownload(start, end)
 
+                    // 【核心修复】在返回 206 状态码前，先死等下载器把前 1MB 数据写好！
+                    // 这样 ExoPlayer 一接到流，马上就能读到真实的文件头，绝对不会报解析错误
+                    val waitPos = minOf(1024 * 1024L, end - start + 1)
+                    try {
+                        runBlocking {
+                            downloader!!.awaitDataReady(waitPos)
+                        }
+                    } catch (e: Exception) {
+                        call.respond(HttpStatusCode.InternalServerError, "Timeout waiting for data")
+                        return@get
+                    }
+
                     call.response.status(HttpStatusCode.PartialContent)
                     call.response.header(HttpHeaders.AcceptRanges, "bytes")
                     call.response.header(HttpHeaders.ContentLength, (end - start + 1).toString())
                     call.response.header(HttpHeaders.ContentRange, "bytes $start-$end/$totalLength")
-                    call.response.header(HttpHeaders.ContentType, "video/mp4")
+                    // 【核心修复】去掉写死的 ContentType，让 ExoPlayer 自己识别
 
                     call.respondOutputStream {
                         val raf = RandomAccessFile(downloader!!.cacheFile, "r")
