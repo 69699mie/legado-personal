@@ -538,10 +538,11 @@ fun InternalVideoPlayer(
     }
 
     val exoPlayer = remember {
+        // 延长超时时间，防止本地代理初期加载慢导致断连
         val dataSourceFactory = DefaultHttpDataSource.Factory()
             .setAllowCrossProtocolRedirects(true)
-            .setConnectTimeoutMs(30000)
-            .setReadTimeoutMs(30000)
+            .setConnectTimeoutMs(60000)
+            .setReadTimeoutMs(60000)
 
         val mediaItem = MediaItem.Builder().setUri(url).setMediaMetadata(MediaMetadata.Builder().setTitle(title).build()).build()
         
@@ -567,7 +568,10 @@ fun InternalVideoPlayer(
 
     LaunchedEffect(url) {
         hasRestoredProgress = false
-        val dataSourceFactory = DefaultHttpDataSource.Factory().setAllowCrossProtocolRedirects(true)
+        val dataSourceFactory = DefaultHttpDataSource.Factory()
+            .setAllowCrossProtocolRedirects(true)
+            .setConnectTimeoutMs(60000)
+            .setReadTimeoutMs(60000)
         val mediaItem = MediaItem.Builder().setUri(url).setMediaMetadata(MediaMetadata.Builder().setTitle(title).build()).build()
         val mediaSource = ProgressiveMediaSource.Factory(dataSourceFactory).createMediaSource(mediaItem)
         exoPlayer.setMediaSource(mediaSource); exoPlayer.prepare(); exoPlayer.playWhenReady = true
