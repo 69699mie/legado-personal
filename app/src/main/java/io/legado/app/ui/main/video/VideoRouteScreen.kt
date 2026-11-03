@@ -280,7 +280,14 @@ fun VideoRouteScreen(
     if (showWebLoginDialog) {
         Dialog(onDismissRequest = { showWebLoginDialog = false }, properties = DialogProperties(usePlatformDefaultWidth = false)) {
             Box(modifier = Modifier.fillMaxSize().background(Color.White).statusBarsPadding()) {
-                WebLoginView(onLoginSuccess = { cookie -> viewModel.loginWithCapturedCookie(cookie); showWebLoginDialog = false; Toast.makeText(context, "登录成功！", Toast.LENGTH_SHORT).show() }, onCancel = { showWebLoginDialog = false })
+                WebLoginView(
+                    onLoginSuccess = { cookie ->
+                        viewModel.loginWithCapturedCookie(cookie)
+                        showWebLoginDialog = false
+                        Toast.makeText(context, "登录成功！", Toast.LENGTH_SHORT).show()
+                    },
+                    onCancel = { showWebLoginDialog = false }
+                )
             }
         }
     }
@@ -334,16 +341,31 @@ fun VideoRouteScreen(
 fun WebLoginView(onLoginSuccess: (String) -> Unit, onCancel: () -> Unit) {
     val context = LocalContext.current
     var webViewRef by remember { mutableStateOf<WebView?>(null) }
+    // 增加一个 reload 触发器，用于强制刷新
+    var reloadTrigger by remember { mutableIntStateOf(0) }
+
     DisposableEffect(Unit) { onDispose { webViewRef?.destroy(); webViewRef = null } }
     Column(modifier = Modifier.fillMaxSize()) {
         Row(modifier = Modifier.fillMaxWidth().background(Color(0xFFF5F5F5)).padding(8.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
             TextButton(onClick = onCancel) { AppText("取消", color = Color.Gray) }
             AppText("夸克扫码/账号登录", fontWeight = FontWeight.Bold)
-            TextButton(onClick = {
-                val cookie = CookieManager.getInstance().getCookie("https://pan.quark.cn/")
-                if (!cookie.isNullOrBlank() && cookie.contains("__uid=") && cookie.contains("__puus=")) onLoginSuccess(cookie)
-                else Toast.makeText(context, "尚未检测到有效登录，请完成扫码或授权", Toast.LENGTH_SHORT).show()
-            }) { AppText("完成登录", color = MaterialTheme.colorScheme.primary) }
+            Row {
+                TextButton(onClick = {
+                    // 核心修复：强制清空 WebView 里面的 Cookie，并刷新页面
+                    CookieManager.getInstance().removeAllCookies(null)
+                    CookieManager.getInstance().flush()
+                    reloadTrigger++
+                }) { AppText("清空缓存", color = Color.Red) }
+                
+                TextButton(onClick = {
+                    val cookie = CookieManager.getInstance().getCookie("https://pan.quark.cn/")
+                    if (!cookie.isNullOrBlank() && cookie.contains("__uid=")) {
+                        onLoginSuccess(cookie)
+                    } else {
+                        Toast.makeText(context, "尚未检测到有效登录，请完成扫码或授权", Toast.LENGTH_SHORT).show()
+                    }
+                }) { AppText("完成登录", color = MaterialTheme.colorScheme.primary) }
+            }
         }
         AndroidView(modifier = Modifier.weight(1f).fillMaxWidth(), factory = { ctx ->
             WebView(ctx).apply {
@@ -353,21 +375,20 @@ fun WebLoginView(onLoginSuccess: (String) -> Unit, onCancel: () -> Unit) {
                 CookieManager.getInstance().setAcceptCookie(true)
                 CookieManager.getInstance().setAcceptThirdPartyCookies(this, true)
                 webViewClient = object : WebViewClient() {
-                    override fun onPageFinished(view: WebView?, url: String?) {
-                        super.onPageFinished(view, url)
-                        val cookie = CookieManager.getInstance().getCookie("https://pan.quark.cn/")
-                        if (!cookie.isNullOrBlank() && cookie.contains("__uid=") && cookie.contains("__puus=")) onLoginSuccess(cookie)
-                    }
+                    // 【核心修复】去掉了 onPageFinished 里的自动检测，改为纯手动点击“完成登录”
                 }
-                loadUrl("https://pan.quark.cn/")
+            }
+        }, update = { webView ->
+            if (reloadTrigger > 0) {
+                webView.clearHistory()
+                webView.clearCache(true)
+                webView.loadUrl("https://pan.quark.cn/")
+            } else {
+                webView.loadUrl("https://pan.quark.cn/")
             }
         })
     }
 }
-
-// ==========================================
-// 核心播放器组件
-// ==========================================
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
@@ -386,7 +407,6 @@ fun InternalVideoPlayer(
     val configuration = LocalConfiguration.current
     val isLandscape = configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
 
-    // 用于显示完整错误信息的弹窗
     var errorDialogMsg by remember { mutableStateOf<String?>(null) }
 
     LaunchedEffect(isLandscape) {
@@ -1077,7 +1097,6 @@ fun SeriesPosterCard(series: MediaSeries, onClick: () -> Unit, onLongClick: () -
 fun MediaDetailScreen(
     series: MediaSeries, onBack: () -> Unit, onPlay: (MediaSeries, QuarkFile) -> Unit, onLongClickPoster: (MediaSeries) -> Unit
 ) {
-    // 修复拼写错误：koViewModel -> koinViewModel
     val viewModel: VideoScraperViewModel = koinViewModel()
 
     val seasons = remember(series) { series.videos.map { it.parsedInfo?.season ?: 1 }.distinct().sorted() }
