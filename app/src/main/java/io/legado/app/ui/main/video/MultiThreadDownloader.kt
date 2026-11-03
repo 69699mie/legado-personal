@@ -49,7 +49,7 @@ class MultiThreadDownloader(
                 .header("Cookie", cookie)
                 .header("User-Agent", playUserAgent)
                 .header("Referer", playReferer)
-                .header("Range", "bytes=0-1023") // 先请求前 1KB 看内容
+                .header("Range", "bytes=0-1023")
                 .build()
             try {
                 client.newCall(req).execute().use { res ->
@@ -65,7 +65,7 @@ class MultiThreadDownloader(
                         if (length > 0) {
                             totalLength = length
                             
-                            // 【核心修复】检查响应体的头部数据，防止伪装成 200 的 XML/HTML 报错
+                            // 防 HTML/XML 错误页拦截
                             val stream = res.body?.byteStream()
                             val buffer = ByteArray(1024)
                             val read = stream?.read(buffer) ?: 0
@@ -118,7 +118,7 @@ class MultiThreadDownloader(
     }
 
     private suspend fun downloadChunk(start: Long, end: Long, retry: Int = 0) {
-        if (retry > 3) return
+        if (retry > 5) return
         val req = Request.Builder()
             .url(currentUrl)
             .header("Cookie", cookie)
@@ -152,9 +152,15 @@ class MultiThreadDownloader(
         }
     }
 
+    // 阻塞等待，但加入超时熔断保护
     suspend fun awaitDataReady(pos: Long) = withContext(Dispatchers.IO) {
+        var waitCount = 0
         while (downloadedBytes.get() < pos && isRunning) {
             delay(100)
+            waitCount++
+            if (waitCount > 150) { // 等待超过 15 秒，强行打断，让 ExoPlayer 报错而不是卡死
+                break
+            }
         }
     }
 
