@@ -67,7 +67,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shadow
@@ -222,7 +221,25 @@ fun VideoScraperScreen(
     }
 
     if (isActive && uiState.playUrl == null && uiState.currentPlayFile != null) {
+        // 【新增】使用横屏海报作为加载背景，绝对不用竖屏兼容
+        val season = uiState.currentPlayFile?.parsedInfo?.season ?: 1
+        val ep = uiState.currentPlayFile?.parsedInfo?.episode
+        val stillUrl = if (ep != null) {
+            uiState.currentSeries?.seasonEpisodeStills?.get("${season}_${ep}") 
+                ?: uiState.currentSeries?.episodeStills?.get(ep)
+        } else null
+
         Box(modifier = Modifier.fillMaxSize().background(Color.Black), contentAlignment = Alignment.Center) {
+            if (stillUrl != null) {
+                AsyncImage(
+                    model = stillUrl,
+                    contentDescription = "Loading Background",
+                    modifier = Modifier.fillMaxSize(),
+                    contentScale = ContentScale.Crop
+                )
+                // 遮罩层
+                Box(modifier = Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.5f)))
+            }
             Column(horizontalAlignment = Alignment.CenterHorizontally) {
                 CircularProgressIndicator(color = Color.White)
                 Spacer(modifier = Modifier.height(16.dp))
@@ -597,7 +614,6 @@ fun WebLoginView(onLoginSuccess: (String) -> Unit, onCancel: () -> Unit) {
                     setSupportZoom(true)
                     builtInZoomControls = true
                     displayZoomControls = false
-                    // 强制使用 PC 端 UA，因为移动端会拦截跳转 App
                     userAgentString = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
                     if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.LOLLIPOP) {
                         mixedContentMode = WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
@@ -613,7 +629,6 @@ fun WebLoginView(onLoginSuccess: (String) -> Unit, onCancel: () -> Unit) {
                 webViewClient = object : WebViewClient() {
                     override fun shouldOverrideUrlLoading(view: WebView?, request: WebResourceRequest?): Boolean {
                         val url = request?.url.toString()
-                        // 拦截非 http/https 协议（防止唤起夸克App）
                         if (!url.startsWith("http://") && !url.startsWith("https://")) {
                             Toast.makeText(context, "已拦截外部跳转，请在当前页面完成登录", Toast.LENGTH_SHORT).show()
                             return true 
@@ -628,7 +643,7 @@ fun WebLoginView(onLoginSuccess: (String) -> Unit, onCancel: () -> Unit) {
                 webView.clearHistory()
                 webView.clearCache(true)
                 webView.loadUrl("https://pan.quark.cn/")
-                reloadTrigger = 0 // 重置
+                reloadTrigger = 0 
             }
         })
     }
@@ -1225,14 +1240,12 @@ fun InternalVideoPlayer(
                                     },
                                 contentAlignment = Alignment.Center
                             ) {
-                                // 使用 Canvas 完美绘制进度条，防止截断和丢失
                                 Canvas(modifier = Modifier.fillMaxWidth().height(12.dp)) {
                                     val progressY = size.height / 2f
                                     val trackHeight = 3.dp.toPx()
                                     val thumbRadius = 6.dp.toPx()
-                                    val maxWidth = size.width - thumbRadius * 2 // 为圆点留出空间
+                                    val maxWidth = size.width - thumbRadius * 2
                                     
-                                    // 1. 全轨道 (极暗)
                                     drawLine(
                                         color = Color.White.copy(alpha = 0.2f),
                                         start = Offset(thumbRadius, progressY),
@@ -1240,7 +1253,6 @@ fun InternalVideoPlayer(
                                         strokeWidth = trackHeight,
                                         cap = androidx.compose.ui.graphics.StrokeCap.Round
                                     )
-                                    // 2. 缓存进度 (浅灰)
                                     if (bufferedFraction > 0) {
                                         drawLine(
                                             color = Color.White.copy(alpha = 0.5f),
@@ -1250,7 +1262,6 @@ fun InternalVideoPlayer(
                                             cap = androidx.compose.ui.graphics.StrokeCap.Round
                                         )
                                     }
-                                    // 3. 播放进度 (纯白)
                                     if (currentFraction > 0) {
                                         drawLine(
                                             color = Color.White,
@@ -1260,7 +1271,6 @@ fun InternalVideoPlayer(
                                             cap = androidx.compose.ui.graphics.StrokeCap.Round
                                         )
                                     }
-                                    // 4. 圆点 (完美贴附，不裁剪)
                                     val circleX = thumbRadius + maxWidth * currentFraction.coerceIn(0f, 1f)
                                     drawCircle(
                                         color = Color.White,
