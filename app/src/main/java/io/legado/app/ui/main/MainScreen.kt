@@ -94,7 +94,8 @@ import io.legado.app.ui.main.home.HomeViewModel
 import io.legado.app.ui.main.my.MyRouteScreen
 import io.legado.app.ui.main.my.PrefClickEvent
 import io.legado.app.ui.main.rss.RssRouteScreen
-import io.legado.app.ui.main.video.VideoRouteScreen
+import io.legado.app.ui.main.video.VideoLibraryScreen
+import io.legado.app.ui.main.video.VideoScraperScreen
 import io.legado.app.ui.main.video.VideoScraperViewModel
 import io.legado.app.ui.theme.LegadoTheme
 import io.legado.app.ui.theme.ThemeResolver
@@ -232,7 +233,6 @@ fun MainScreen(
     }
     val pagerState = rememberPagerState(initialPage = initialPage) { destinations.size }
     
-    // 刷新首页数据
     LaunchedEffect(pagerState.currentPage) {
         if (pagerState.currentPage == 0) {
             homeViewModel.refreshData()
@@ -604,14 +604,11 @@ fun MainScreen(
                                 animatedVisibilityScope = animatedVisibilityScope,
                             )
 
-                                // 传入 isActive 状态，防止双重弹窗
-                                MainDestination.Explore -> VideoRouteScreen(
-                                    initialLibraryMode = false,
-                                    isActive = page == pagerState.currentPage
-                                )
+                                // 彻底拆分：资源库仅用于浏览和勾选，不加载播放器
+                                MainDestination.Explore -> VideoLibraryScreen()
 
-                                MainDestination.Video -> VideoRouteScreen(
-                                    initialLibraryMode = true,
+                                // 彻底拆分：影视库负责刮削与播放，传入 isActive 防双开
+                                MainDestination.Video -> VideoScraperScreen(
                                     isActive = page == pagerState.currentPage
                                 )
 
