@@ -92,7 +92,6 @@ import androidx.media3.datasource.HttpDataSource
 import androidx.media3.exoplayer.DefaultLoadControl
 import androidx.media3.exoplayer.DefaultRenderersFactory
 import androidx.media3.exoplayer.ExoPlayer
-import androidx.media3.exoplayer.hls.HlsMediaSource
 import androidx.media3.exoplayer.source.ProgressiveMediaSource
 import androidx.media3.ui.PlayerView
 import coil3.compose.AsyncImage
@@ -118,6 +117,7 @@ fun VideoRouteScreen(
     var showManualScrapeDialog by remember { mutableStateOf(false) }
     var manualScrapeSeries by remember { mutableStateOf<MediaSeries?>(null) }
     var viewAllCategory by remember { mutableStateOf<String?>(null) }
+    var showThreadSelection by remember { mutableStateOf(false) }
 
     BackHandler(enabled = uiState.playUrl != null || uiState.currentSeries != null || viewAllCategory != null || (!uiState.isLibraryMode && uiState.currentFid != "0")) {
         if (uiState.playUrl != null) {
@@ -143,6 +143,7 @@ fun VideoRouteScreen(
                 series = uiState.currentSeries!!,
                 currentFile = uiState.currentPlayFile!!,
                 viewModel = viewModel,
+                downloadThreads = uiState.downloadThreads,
                 onBack = {
                     activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
                     viewModel.stopPlaying()
@@ -304,6 +305,20 @@ fun VideoRouteScreen(
 
                 AppText(text = "TMDB API 代理地址")
                 OutlinedTextField(value = inputTmdbUrl, onValueChange = { inputTmdbUrl = it }, modifier = Modifier.padding(vertical = 8.dp), maxLines = 1)
+                
+                HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
+                
+                Row(
+                    modifier = Modifier.fillMaxWidth().clickable { showThreadSelection = true }.padding(vertical = 8.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    AppText("极速播放线程数")
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        AppText("${uiState.downloadThreads} ", color = Color.Gray)
+                        Icon(Icons.Default.KeyboardArrowRight, null, tint = Color.Gray)
+                    }
+                }
 
                 OutlinedButton(onClick = {
                     viewModel.saveSettings(inputCookie, inputTmdbKey, inputTmdbUrl)
@@ -311,6 +326,35 @@ fun VideoRouteScreen(
                 }, modifier = Modifier.align(Alignment.End)) { AppText("保存并刷新") }
             }
         }
+    }
+
+    if (showThreadSelection) {
+        AlertDialog(
+            onDismissRequest = { showThreadSelection = false },
+            title = { AppText("极速播放线程数", fontWeight = FontWeight.Bold) },
+            text = {
+                Column {
+                    val options = listOf(3, 6, 10, 16, 24, 32)
+                    options.forEach { count ->
+                        Row(
+                            modifier = Modifier.fillMaxWidth().clickable {
+                                viewModel.saveDownloadThreads(count)
+                                showThreadSelection = false
+                            }.padding(vertical = 12.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            AppText("$count", modifier = Modifier.weight(1f))
+                            if (uiState.downloadThreads == count) {
+                                Icon(Icons.Default.Check, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+                            }
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { showThreadSelection = false }) { AppText("取消") }
+            }
+        )
     }
 
     if (showWebLoginDialog) {
@@ -444,6 +488,7 @@ fun InternalVideoPlayer(
     series: MediaSeries,
     currentFile: QuarkFile,
     viewModel: VideoScraperViewModel,
+    downloadThreads: Int,
     onBack: () -> Unit
 ) {
     val context = LocalContext.current
@@ -487,7 +532,7 @@ fun InternalVideoPlayer(
     }
 
     var isPlaying by remember { mutableStateOf(true) }
-    var isBuffering by remember { mutableStateOf(false) }
+    var isBuffering by remember { mutableStateOf(true) }
     var currentPosition by remember { mutableLongStateOf(0L) }
     var duration by remember { mutableLongStateOf(0L) }
     var resolution by remember { mutableStateOf("") }
@@ -549,7 +594,7 @@ fun InternalVideoPlayer(
             .readTimeout(60, TimeUnit.SECONDS)
             .build()
 
-        val dataSourceFactory = ParallelDownloadDataSource.Factory(okHttpClient, headers)
+        val dataSourceFactory = ParallelDownloadDataSource.Factory(okHttpClient, headers, downloadThreads)
 
         val renderersFactory = DefaultRenderersFactory(context)
             .setEnableAudioFloatOutput(true)
@@ -588,7 +633,7 @@ fun InternalVideoPlayer(
             .readTimeout(60, TimeUnit.SECONDS)
             .build()
 
-        val dataSourceFactory = ParallelDownloadDataSource.Factory(okHttpClient, headers)
+        val dataSourceFactory = ParallelDownloadDataSource.Factory(okHttpClient, headers, downloadThreads)
 
         val mediaItem = MediaItem.Builder()
             .setUri(url)
@@ -603,7 +648,7 @@ fun InternalVideoPlayer(
         val listener = object : Player.Listener {
             override fun onIsPlayingChanged(playing: Boolean) { isPlaying = playing }
             override fun onPlaybackStateChanged(state: Int) {
-                isBuffering = state == Player.STATE_BUFFERING
+                isBuffering = state == Player.STATE_BUFFERING || state == Player.STATE_IDLE
                 if (state == Player.STATE_READY) {
                     duration = exoPlayer.duration.coerceAtLeast(0L)
                     if (!hasRestoredProgress) {
@@ -623,7 +668,6 @@ fun InternalVideoPlayer(
                 if (videoSize.width > 0 && videoSize.height > 0) resolution = "${videoSize.width}×${videoSize.height}"
             }
             override fun onPlayerError(error: PlaybackException) {
-                // 【核心修改】深度解析错误堆栈，提取最底层真实原因
                 val sb = StringBuilder()
                 sb.append("错误码: ${error.errorCodeName}\n")
                 
@@ -695,7 +739,7 @@ fun InternalVideoPlayer(
                         Text(
                             text = errorDialogMsg ?: "",
                             modifier = Modifier
-                                .heightIn(max = 400.dp) // 放宽高度限制
+                                .heightIn(max = 400.dp)
                                 .verticalScroll(rememberScrollState()),
                             fontSize = 12.sp,
                             color = Color.DarkGray
@@ -794,11 +838,16 @@ fun InternalVideoPlayer(
             modifier = Modifier.fillMaxSize()
         )
 
-        if (isBuffering) {
+        if (isBuffering || duration == 0L) {
             Box(
-                modifier = Modifier.align(Alignment.Center).padding(16.dp)
+                modifier = Modifier.align(Alignment.Center).padding(16.dp),
+                contentAlignment = Alignment.Center
             ) {
-                CircularProgressIndicator(color = Color.White, modifier = Modifier.size(36.dp))
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    CircularProgressIndicator(color = Color.White, modifier = Modifier.size(36.dp))
+                    Spacer(modifier = Modifier.height(12.dp))
+                    AppText("正在加载中...", color = Color.White, fontSize = 14.sp)
+                }
             }
         }
 
@@ -1189,7 +1238,7 @@ fun SeriesPosterCard(series: MediaSeries, onClick: () -> Unit, onLongClick: () -
 fun MediaDetailScreen(
     series: MediaSeries, onBack: () -> Unit, onPlay: (MediaSeries, QuarkFile) -> Unit, onLongClickPoster: (MediaSeries) -> Unit
 ) {
-    val viewModel: VideoScraperViewModel = koinViewModel()
+    val viewModel: VideoScraperViewModel = koViewModel()
 
     val seasons = remember(series) { series.videos.map { it.parsedInfo?.season ?: 1 }.distinct().sorted() }
 
