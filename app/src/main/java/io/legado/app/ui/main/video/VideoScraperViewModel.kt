@@ -84,7 +84,6 @@ class VideoScraperViewModel(
     private var hasLoadedLibrary = false
     private val libraryNames = mutableMapOf<String, String>()
     
-    private var isProxyInitialized = false
     private var lastQuarkError: String? = null
     private val scrapedCache = mutableMapOf<String, ScrapeCacheItem>()
 
@@ -633,27 +632,13 @@ class VideoScraperViewModel(
         Toast.makeText(context, "正在获取无损原画直链...", Toast.LENGTH_SHORT).show()
 
         viewModelScope.launch {
-            if (!isProxyInitialized) {
-                QuarkProxyServer.start(context.applicationContext)
-                QuarkProxyServer.onRefreshUrlNeeded = { fid, ck ->
-                    withContext(Dispatchers.IO) {
-                        val latestCookie = _uiState.value.cookie
-                        val url = fetchDirectDownloadUrl(fid, latestCookie)
-                        if (url != null) Pair(url, _uiState.value.cookie) else null
-                    }
-                }
-                isProxyInitialized = true
-            }
-
             val url = withContext(Dispatchers.IO) {
                 fetchDirectDownloadUrl(file.fid, cookie)
             }
 
             if (url != null) {
-                val latestCookie = _uiState.value.cookie
-                // 【核心】启动代理服务器，传入 10 线程并发下载
-                QuarkProxyServer.setPlayInfo(url, latestCookie, file.fid, 10)
-                _uiState.update { it.copy(playUrl = "http://127.0.0.1:8090/play") }
+                // 【核心修改】直接传递真实直链给播放器，由 ExoPlayer + FFmpeg 接管后续
+                _uiState.update { it.copy(playUrl = url) }
             } else {
                 val detail = lastQuarkError ?: "未知错误"
                 withContext(Dispatchers.Main) {
@@ -799,7 +784,6 @@ class VideoScraperViewModel(
 
     fun stopPlaying() {
         _uiState.update { it.copy(playUrl = null, playTitle = null, currentPlayFile = null) }
-        QuarkProxyServer.stop()
     }
 
     fun fetchQuarkFiles(fid: String = "0", isBack: Boolean = false) {
