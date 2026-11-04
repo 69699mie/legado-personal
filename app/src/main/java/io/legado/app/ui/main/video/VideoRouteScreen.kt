@@ -9,10 +9,8 @@ import android.content.pm.ActivityInfo
 import android.content.res.Configuration
 import android.media.AudioManager
 import android.net.TrafficStats
-import android.net.Uri
 import android.os.Process
 import android.view.OrientationEventListener
-import android.view.Surface
 import android.view.ViewGroup
 import android.view.WindowManager
 import android.webkit.CookieManager
@@ -189,7 +187,7 @@ fun VideoLibraryScreen(
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
 fun VideoScraperScreen(
-    isActive: Boolean = true, // 只有处于当前 Tab 时才允许弹出播放器
+    isActive: Boolean = true,
     modifier: Modifier = Modifier,
     viewModel: VideoScraperViewModel = koinViewModel()
 ) {
@@ -204,7 +202,6 @@ fun VideoScraperScreen(
     var manualScrapeSeries by remember { mutableStateOf<MediaSeries?>(null) }
     var viewAllCategory by remember { mutableStateOf<String?>(null) }
 
-    // 监听首页发来的拉起播放指令
     LaunchedEffect(Unit) {
         val pendingFid = videoSettingsRepository.pendingPlayFid
         if (isActive && !pendingFid.isNullOrBlank()) {
@@ -220,7 +217,6 @@ fun VideoScraperScreen(
         else if (viewAllCategory != null) viewAllCategory = null
     }
 
-    // 【新增】黑屏加载拦截：当有文件准备播放，但直链还没获取到时，直接展示黑屏加载，不展示列表和详情页
     if (isActive && uiState.playUrl == null && uiState.currentPlayFile != null) {
         Box(modifier = Modifier.fillMaxSize().background(Color.Black), contentAlignment = Alignment.Center) {
             Column(horizontalAlignment = Alignment.CenterHorizontally) {
@@ -229,10 +225,9 @@ fun VideoScraperScreen(
                 AnimatedLoadingDots(color = Color.White, fontSize = 16.sp)
             }
         }
-        return // 拦截后续 UI 的渲染，保持黑屏
+        return
     }
 
-    // 只有当前处于激活状态，且 playUrl 不为空时，才渲染播放器 Dialog
     if (isActive && uiState.playUrl != null && uiState.currentSeries != null && uiState.currentPlayFile != null) {
         Dialog(
             onDismissRequest = {
@@ -378,7 +373,6 @@ private fun SettingsDialog(
     Dialog(onDismissRequest = onDismiss) {
         Surface(
             shape = RoundedCornerShape(24.dp),
-            // 【修改】改为半透明磨砂质感，去除泛绿
             color = Color.White.copy(alpha = 0.85f), 
             border = BorderStroke(1.dp, Color.White.copy(alpha = 0.3f)),
             modifier = Modifier.fillMaxWidth().padding(16.dp)
@@ -451,7 +445,6 @@ private fun SettingsDialog(
                     }
                 }
 
-                // 【修改】去掉实心背景，改为纯文字按钮
                 TextButton(
                     onClick = {
                         viewModel.saveSettings(inputCookie, inputTmdbKey, inputTmdbUrl)
@@ -630,21 +623,18 @@ fun InternalVideoPlayer(
 
     var errorDialogMsg by remember { mutableStateOf<String?>(null) }
     
-    // 用于处理用户手动旋转与重力感应冲突
-    var lastManualSwitchTime by remember { mutableLongStateOf(0L) }
+    // 【优化】用普通变量存储时间戳，不触发重组
+    val lastManualSwitchTime = remember { longArrayOf(0L) }
 
-    // 【新增】强制进入横屏
     LaunchedEffect(Unit) {
         activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE
     }
 
-    // 【新增】重力感应监听
     DisposableEffect(Unit) {
         val orientationListener = object : OrientationEventListener(context) {
             override fun onOrientationChanged(orientation: Int) {
                 if (orientation == ORIENTATION_UNKNOWN) return
-                // 如果用户刚刚手动点击过旋转按钮（2秒内），忽略重力感应，防止打架
-                if (System.currentTimeMillis() - lastManualSwitchTime < 2000) return
+                if (System.currentTimeMillis() - lastManualSwitchTime[0] < 2000) return
 
                 val isPortrait = (orientation in 315..360) || (orientation in 0..45) || (orientation in 135..225)
                 val isLandscape = (orientation in 45..135) || (orientation in 225..315)
@@ -679,7 +669,6 @@ fun InternalVideoPlayer(
     val originalBrightness = remember { activity?.window?.attributes?.screenBrightness ?: WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE }
     DisposableEffect(Unit) {
         onDispose {
-            // 【新增】退出时恢复竖屏
             activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
             
             val window = (view.parent as? DialogWindowProvider)?.window ?: activity?.window
@@ -698,6 +687,7 @@ fun InternalVideoPlayer(
     var isPlaying by remember { mutableStateOf(true) }
     var isBuffering by remember { mutableStateOf(true) }
     var currentPosition by remember { mutableLongStateOf(0L) }
+    var bufferedPosition by remember { mutableLongStateOf(0L) }
     var duration by remember { mutableLongStateOf(0L) }
     var resolution by remember { mutableStateOf("") }
     var networkSpeed by remember { mutableStateOf("0 KB/s") }
@@ -788,6 +778,9 @@ fun InternalVideoPlayer(
 
     LaunchedEffect(url) {
         hasRestoredProgress = false
+        exoPlayer.stop()
+        exoPlayer.clearMediaItems()
+
         val headers = mapOf(
             "Cookie" to cookie,
             "Referer" to "https://drive.quark.cn/"
@@ -805,7 +798,9 @@ fun InternalVideoPlayer(
             .build()
 
         val mediaSource = ProgressiveMediaSource.Factory(dataSourceFactory).createMediaSource(mediaItem)
-        exoPlayer.setMediaSource(mediaSource); exoPlayer.prepare(); exoPlayer.playWhenReady = true
+        exoPlayer.setMediaSource(mediaSource)
+        exoPlayer.prepare()
+        exoPlayer.playWhenReady = true
     }
 
     DisposableEffect(exoPlayer) {
@@ -862,6 +857,7 @@ fun InternalVideoPlayer(
     LaunchedEffect(isPlaying) {
         while (isPlaying) {
             currentPosition = exoPlayer.currentPosition
+            bufferedPosition = exoPlayer.bufferedPosition
 
             if (introSeconds > 0 && currentPosition in (introSeconds * 1000L)..(introSeconds * 1000L + 1000L)) showSkipIntro = true
             else if (currentPosition > introSeconds * 1000L) showSkipIntro = false
@@ -1052,8 +1048,7 @@ fun InternalVideoPlayer(
                 Column(modifier = Modifier.align(Alignment.CenterStart).padding(start = 16.dp), verticalArrangement = Arrangement.spacedBy(30.dp)) {
                     Surface(color = Color.White.copy(alpha = 0.1f), shape = CircleShape, border = BorderStroke(1.dp, Color.White.copy(alpha = 0.2f))) {
                         IconButton(onClick = {
-                            // 【新增】记录手动切换时间，防止和重力感应打架
-                            lastManualSwitchTime = System.currentTimeMillis()
+                            lastManualSwitchTime[0] = System.currentTimeMillis()
                             if (isLandscape) activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
                             else activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE
                         }) {
@@ -1132,13 +1127,34 @@ fun InternalVideoPlayer(
                     Column(modifier = Modifier.fillMaxWidth()) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             AppText(text = formatTime(currentPosition), color = Color.White, fontSize = 12.sp)
-                            Slider(
-                                value = if (duration > 0) currentPosition.toFloat() / duration else 0f,
-                                onValueChange = { currentPosition = (it * duration).toLong() },
-                                onValueChangeFinished = { exoPlayer.seekTo(currentPosition); if (isPlaying) exoPlayer.play() },
-                                modifier = Modifier.weight(1f).padding(horizontal = 8.dp).height(16.dp),
-                                colors = SliderDefaults.colors(thumbColor = Color.White, activeTrackColor = Color.White, inactiveTrackColor = Color.White.copy(alpha = 0.3f))
-                            )
+                            
+                            Box(
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .padding(horizontal = 8.dp)
+                                    .height(24.dp),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                val bufferedFraction = if (duration > 0) bufferedPosition.toFloat() / duration else 0f
+                                LinearProgressIndicator(
+                                    progress = { bufferedFraction },
+                                    modifier = Modifier.fillMaxWidth().height(4.dp).clip(RoundedCornerShape(2.dp)),
+                                    color = Color.White.copy(alpha = 0.3f),
+                                    trackColor = Color.White.copy(alpha = 0.1f)
+                                )
+                                Slider(
+                                    value = if (duration > 0) currentPosition.toFloat() / duration else 0f,
+                                    onValueChange = { currentPosition = (it * duration).toLong() },
+                                    onValueChangeFinished = { exoPlayer.seekTo(currentPosition); if (isPlaying) exoPlayer.play() },
+                                    modifier = Modifier.fillMaxWidth(),
+                                    colors = SliderDefaults.colors(
+                                        thumbColor = Color.White, 
+                                        activeTrackColor = Color.White, 
+                                        inactiveTrackColor = Color.Transparent
+                                    )
+                                )
+                            }
+                            
                             AppText(text = formatTime(duration), color = Color.White, fontSize = 12.sp)
                         }
 
@@ -1275,8 +1291,9 @@ fun InternalVideoPlayer(
                         LazyColumn {
                             items(series.videos) { file ->
                                 val e = file.parsedInfo?.episode
-                                val tmdbTitle = if (e != null) series.episodeTitles[e] else null
-                                val label = if (e != null) "第${e}集" + if (!tmdbTitle.isNullOrBlank()) " $tmdbTitle" else "" else file.name
+                                val s = file.parsedInfo?.season ?: 1
+                                val tmdbTitle = if (e != null) series.seasonEpisodeTitles["${s}_${e}"] ?: series.episodeTitles[e] else null
+                                val label = if (e != null) "第${e}集" + if (!tmdbTitle.isNullOrBlank()) " $tmdbTitle" else "" else (file.folderPath.lastOrNull() ?: file.name.substringBeforeLast("."))
                                 val isCurrent = file.fid == currentFile.fid
                                 AppText(
                                     text = label,
@@ -1472,6 +1489,10 @@ fun MediaDetailScreen(
 
     var selectedSeason by remember { mutableStateOf(latestPlayedSeason) }
 
+    val currentSeasonDetail = series.seasonDetails[selectedSeason]
+    val displayPoster = currentSeasonDetail?.posterUrl ?: series.posterUrl
+    val displayOverview = if (!currentSeasonDetail?.overview.isNullOrBlank()) currentSeasonDetail?.overview else series.overview
+
     val currentSeasonVideos = remember(series, selectedSeason) {
         series.videos.filter { (it.parsedInfo?.season ?: 1) == selectedSeason }
             .sortedWith(compareBy<QuarkFile> { it.parsedInfo?.episode ?: 0 }.thenBy { it.name })
@@ -1490,14 +1511,14 @@ fun MediaDetailScreen(
         val ep = targetPlayFile.parsedInfo?.episode
         if (ep != null) "继续播放 第${ep}集" else "继续播放"
     } else {
-        "播放"
+        if (seasons.size > 1) "播放 第${selectedSeason}季" else "播放"
     }
 
     LazyColumn(modifier = Modifier.fillMaxSize().background(Color.White)) {
         item {
             Box(modifier = Modifier.fillMaxWidth().height(350.dp)) {
-                if (series.posterUrl != null) {
-                    AsyncImage(model = series.posterUrl, contentDescription = null, modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
+                if (displayPoster != null) {
+                    AsyncImage(model = displayPoster, contentDescription = null, modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
                     Box(modifier = Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(Color.Transparent, Color.White), startY = 200f, endY = 900f)))
                 } else Box(modifier = Modifier.fillMaxSize().background(Color.LightGray))
                 Row(modifier = Modifier.fillMaxWidth().statusBarsPadding().padding(8.dp), horizontalArrangement = Arrangement.SpaceBetween) {
@@ -1528,7 +1549,7 @@ fun MediaDetailScreen(
                     Icon(Icons.Default.PlayArrow, null, tint = Color.White); AppText(text = " $playBtnText", color = Color.White, style = MaterialTheme.typography.titleMedium)
                 }
                 AppText(text = "剧情简介", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, modifier = Modifier.padding(top = 16.dp))
-                AppText(text = series.overview ?: "暂无简介", style = MaterialTheme.typography.bodyMedium, color = Color.DarkGray, modifier = Modifier.padding(top = 8.dp))
+                AppText(text = displayOverview ?: "暂无简介", style = MaterialTheme.typography.bodyMedium, color = Color.DarkGray, modifier = Modifier.padding(top = 8.dp))
             }
         }
 
@@ -1566,9 +1587,12 @@ fun MediaDetailScreen(
             LazyRow(contentPadding = PaddingValues(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 items(currentSeasonVideos) { file ->
                     val e = file.parsedInfo?.episode
-                    val tmdbTitle = if (e != null) series.episodeTitles[e] else null
-                    val stillUrl = if (e != null) series.episodeStills[e] else null
-                    val label = if (e != null) "第${e}集" + if (!tmdbTitle.isNullOrBlank()) " $tmdbTitle" else "" else file.name
+                    val s = file.parsedInfo?.season ?: 1
+                    val tmdbTitle = if (e != null) series.seasonEpisodeTitles["${s}_${e}"] ?: series.episodeTitles[e] else null
+                    val stillUrl = if (e != null) series.seasonEpisodeStills["${s}_${e}"] ?: series.episodeStills[e] else null
+                    
+                    val label = if (e != null) "第${e}集" + if (!tmdbTitle.isNullOrBlank()) " $tmdbTitle" else "" else (file.folderPath.lastOrNull() ?: file.name.substringBeforeLast("."))
+                    
                     Column(modifier = Modifier.width(160.dp).clickable { onPlay(series, file) }) {
                         Box(modifier = Modifier.fillMaxWidth().aspectRatio(16f / 9f).clip(RoundedCornerShape(8.dp)).background(Color.DarkGray), contentAlignment = Alignment.Center) {
                             if (stillUrl != null) AsyncImage(model = stillUrl, contentDescription = null, modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
