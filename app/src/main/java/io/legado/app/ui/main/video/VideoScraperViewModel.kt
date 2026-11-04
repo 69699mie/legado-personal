@@ -106,7 +106,7 @@ class VideoScraperViewModel(
                 tmdbBaseUrl = videoSettingsRepository.tmdbBaseUrl.ifBlank { "https://tmdbimg.quarkalist.xyz" },
                 selectedLibraryFids = fids,
                 isLibraryMode = true,
-                downloadThreads = videoSettingsRepository.proxyThreads // 初始化线程数
+                downloadThreads = videoSettingsRepository.proxyThreads
             )
         }
         fetchQuarkFiles("0")
@@ -634,8 +634,32 @@ class VideoScraperViewModel(
             else "${series.title} 第${epNum}集"
         } else { file.name }
 
+        // 【新增】记录到本地影视观看历史
+        try {
+            val jsonArray = JSONArray(videoSettingsRepository.recentWatchedVideos)
+            val newList = mutableListOf<JSONObject>()
+            for (i in 0 until jsonArray.length()) {
+                val obj = jsonArray.getJSONObject(i)
+                if (obj.optString("fid") != file.fid) {
+                    newList.add(obj)
+                }
+            }
+            val newObj = JSONObject().apply {
+                put("fid", file.fid)
+                put("title", titleText)
+                put("seriesTitle", series.title)
+                put("coverPath", series.posterUrl ?: "")
+                put("timestamp", System.currentTimeMillis())
+            }
+            newList.add(0, newObj)
+            
+            val resultArray = JSONArray()
+            newList.take(10).forEach { resultArray.put(it) }
+            videoSettingsRepository.recentWatchedVideos = resultArray.toString()
+        } catch (e: Exception) { e.printStackTrace() }
+        // =================================
+
         _uiState.update { it.copy(playUrl = null, playTitle = titleText, currentSeries = series, currentPlayFile = file) }
-        
         Toast.makeText(context, "正在加载中...", Toast.LENGTH_SHORT).show()
 
         viewModelScope.launch {
@@ -653,6 +677,32 @@ class VideoScraperViewModel(
                         .setMessage(detail)
                         .setPositiveButton("确定", null)
                         .show()
+                }
+            }
+        }
+    }
+
+    // 【新增】响应首页传递过来的待播任务
+    fun handlePendingPlayRequest() {
+        val fid = videoSettingsRepository.pendingPlayFid ?: return
+        videoSettingsRepository.pendingPlayFid = null // 消费掉指令，防止重复触发
+        
+        val series = _uiState.value.seriesList.find { it.videos.any { v -> v.fid == fid } }
+        val file = series?.videos?.find { it.fid == fid }
+        if (series != null && file != null) {
+            val epNum = file.parsedInfo?.episode
+            val titleText = if (epNum != null) {
+                val tmdbEpTitle = series.episodeTitles[epNum]
+                if (!tmdbEpTitle.isNullOrBlank()) "${series.title} 第${epNum}集 $tmdbEpTitle"
+                else "${series.title} 第${epNum}集"
+            } else { file.name }
+
+            _uiState.update { it.copy(playUrl = null, playTitle = titleText, currentSeries = series, currentPlayFile = file) }
+            
+            viewModelScope.launch {
+                val url = withContext(Dispatchers.IO) { fetchDirectDownloadUrl(file.fid, _uiState.value.cookie) }
+                if (url != null) {
+                    _uiState.update { it.copy(playUrl = url) }
                 }
             }
         }
