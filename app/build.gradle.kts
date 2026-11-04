@@ -211,6 +211,8 @@ dependencies {
     implementation(libs.media3.datasource.okhttp)
     implementation("androidx.media3:media3-ui:1.2.1")
     implementation("androidx.media3:media3-exoplayer-hls:1.2.1")
+    // 【新增】引入 FFmpeg 软解扩展，彻底解决无后缀、MKV等格式嗅探与解析问题
+    implementation("androidx.media3:media3-exoplayer-ffmpeg:1.2.1")
     // =====================
 
     implementation(libs.splitties.appctx)
