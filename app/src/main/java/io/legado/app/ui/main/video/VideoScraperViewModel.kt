@@ -105,7 +105,8 @@ class VideoScraperViewModel(
                 tmdbApiKey = videoSettingsRepository.tmdbApiKey,
                 tmdbBaseUrl = videoSettingsRepository.tmdbBaseUrl.ifBlank { "https://tmdbimg.quarkalist.xyz" },
                 selectedLibraryFids = fids,
-                isLibraryMode = true
+                isLibraryMode = true,
+                downloadThreads = videoSettingsRepository.proxyThreads // 初始化线程数
             )
         }
         fetchQuarkFiles("0")
@@ -172,6 +173,11 @@ class VideoScraperViewModel(
         fetchQuarkFiles("0")
         hasLoadedLibrary = false
         loadLibraryVideos()
+    }
+
+    fun saveDownloadThreads(count: Int) {
+        videoSettingsRepository.proxyThreads = count
+        _uiState.update { it.copy(downloadThreads = count) }
     }
 
     fun loginWithCapturedCookie(capturedCookie: String) {
@@ -629,7 +635,8 @@ class VideoScraperViewModel(
         } else { file.name }
 
         _uiState.update { it.copy(playUrl = null, playTitle = titleText, currentSeries = series, currentPlayFile = file) }
-        Toast.makeText(context, "正在获取无损原画直链...", Toast.LENGTH_SHORT).show()
+        
+        Toast.makeText(context, "正在加载中...", Toast.LENGTH_SHORT).show()
 
         viewModelScope.launch {
             val url = withContext(Dispatchers.IO) {
@@ -637,7 +644,6 @@ class VideoScraperViewModel(
             }
 
             if (url != null) {
-                // 【核心修改】直接传递真实直链给播放器，由 ExoPlayer + FFmpeg 接管后续
                 _uiState.update { it.copy(playUrl = url) }
             } else {
                 val detail = lastQuarkError ?: "未知错误"
@@ -850,5 +856,6 @@ data class VideoUiState(
     val currentSeries: MediaSeries? = null,
     val playUrl: String? = null,
     val playTitle: String? = null,
-    val currentPlayFile: QuarkFile? = null
+    val currentPlayFile: QuarkFile? = null,
+    val downloadThreads: Int = 6
 )
