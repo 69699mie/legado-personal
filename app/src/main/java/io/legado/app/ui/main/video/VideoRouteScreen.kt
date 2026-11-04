@@ -373,11 +373,16 @@ private fun SettingsDialog(
     Dialog(onDismissRequest = onDismiss) {
         Surface(
             shape = RoundedCornerShape(24.dp),
-            color = Color.White.copy(alpha = 0.85f), 
-            border = BorderStroke(1.dp, Color.White.copy(alpha = 0.3f)),
-            modifier = Modifier.fillMaxWidth().padding(16.dp)
+            color = Color.White.copy(alpha = 0.98f), // 【修改】提高不透明度，几乎纯白
+            border = BorderStroke(1.dp, Color(0x33FFFFFF)),
+            modifier = Modifier.fillMaxWidth().padding(16.dp).heightIn(max = 600.dp) // 【修改】限制最大高度
         ) {
-            Column(modifier = Modifier.padding(24.dp).fillMaxWidth()) {
+            Column(
+                modifier = Modifier
+                    .padding(24.dp)
+                    .fillMaxWidth()
+                    .verticalScroll(rememberScrollState()) // 【修改】内容过长时支持滚动
+            ) {
                 Row(modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                     AppText(text = "夸克登录状态", fontWeight = FontWeight.Bold, fontSize = 18.sp)
                     if (onWebLoginClick != null) {
@@ -623,8 +628,11 @@ fun InternalVideoPlayer(
 
     var errorDialogMsg by remember { mutableStateOf<String?>(null) }
     
-    // 【优化】用普通变量存储时间戳，不触发重组
     val lastManualSwitchTime = remember { longArrayOf(0L) }
+    
+    var isLocked by remember { mutableStateOf(false) }
+    // 【新增】使用 rememberUpdatedState 让传感器闭包能实时读取到最新的锁定状态
+    val currentIsLocked by rememberUpdatedState(isLocked)
 
     LaunchedEffect(Unit) {
         activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE
@@ -634,15 +642,26 @@ fun InternalVideoPlayer(
         val orientationListener = object : OrientationEventListener(context) {
             override fun onOrientationChanged(orientation: Int) {
                 if (orientation == ORIENTATION_UNKNOWN) return
+                if (currentIsLocked) return // 【修复】如果已锁定，不响应重力感应
                 if (System.currentTimeMillis() - lastManualSwitchTime[0] < 2000) return
 
-                val isPortrait = (orientation in 315..360) || (orientation in 0..45) || (orientation in 135..225)
-                val isLandscape = (orientation in 45..135) || (orientation in 225..315)
-
-                if (isPortrait && activity?.requestedOrientation != ActivityInfo.SCREEN_ORIENTATION_PORTRAIT) {
-                    activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
-                } else if (isLandscape && activity?.requestedOrientation != ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE) {
-                    activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE
+                when (orientation) {
+                    in 45..135 -> {
+                        if (activity?.requestedOrientation != ActivityInfo.SCREEN_ORIENTATION_REVERSE_LANDSCAPE) {
+                            activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_REVERSE_LANDSCAPE
+                        }
+                    }
+                    in 135..225 -> {}
+                    in 225..315 -> {
+                        if (activity?.requestedOrientation != ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE) {
+                            activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE
+                        }
+                    }
+                    else -> {
+                        if (activity?.requestedOrientation != ActivityInfo.SCREEN_ORIENTATION_PORTRAIT) {
+                            activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
+                        }
+                    }
                 }
             }
         }
@@ -692,7 +711,6 @@ fun InternalVideoPlayer(
     var resolution by remember { mutableStateOf("") }
     var networkSpeed by remember { mutableStateOf("0 KB/s") }
     var showControls by remember { mutableStateOf(true) }
-    var isLocked by remember { mutableStateOf(false) }
     var showUnlockIcon by remember { mutableStateOf(false) }
     var playbackSpeed by remember { mutableStateOf(1.0f) }
 
