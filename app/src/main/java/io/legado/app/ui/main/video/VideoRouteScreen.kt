@@ -5,7 +5,6 @@ import android.app.Activity
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
-import android.content.Intent
 import android.content.pm.ActivityInfo
 import android.content.res.Configuration
 import android.media.AudioManager
@@ -35,6 +34,7 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.basicMarquee
@@ -67,6 +67,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shadow
@@ -596,7 +597,8 @@ fun WebLoginView(onLoginSuccess: (String) -> Unit, onCancel: () -> Unit) {
                     setSupportZoom(true)
                     builtInZoomControls = true
                     displayZoomControls = false
-                    // 使用默认的移动端 UA，不再强行覆盖 PC UA
+                    // 强制使用 PC 端 UA，因为移动端会拦截跳转 App
+                    userAgentString = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
                     if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.LOLLIPOP) {
                         mixedContentMode = WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
                     }
@@ -610,7 +612,12 @@ fun WebLoginView(onLoginSuccess: (String) -> Unit, onCancel: () -> Unit) {
                 }
                 webViewClient = object : WebViewClient() {
                     override fun shouldOverrideUrlLoading(view: WebView?, request: WebResourceRequest?): Boolean {
-                        // 拦截所有跳转（包括拉起 APP），强制在 WebView 内加载，防止丢失 Cookie
+                        val url = request?.url.toString()
+                        // 拦截非 http/https 协议（防止唤起夸克App）
+                        if (!url.startsWith("http://") && !url.startsWith("https://")) {
+                            Toast.makeText(context, "已拦截外部跳转，请在当前页面完成登录", Toast.LENGTH_SHORT).show()
+                            return true 
+                        }
                         return false 
                     }
                 }
@@ -1218,23 +1225,47 @@ fun InternalVideoPlayer(
                                     },
                                 contentAlignment = Alignment.Center
                             ) {
-                                // 1. 底层：全轨道 (极暗)
-                                Box(modifier = Modifier.fillMaxWidth().height(3.dp).background(Color.White.copy(alpha = 0.2f), RoundedCornerShape(1.5.dp)))
-                                // 2. 中层：缓存进度 (浅灰)
-                                Box(modifier = Modifier.fillMaxWidth(bufferedFraction).height(3.dp).background(Color.White.copy(alpha = 0.5f), RoundedCornerShape(1.5.dp)))
-                                // 3. 上层：播放进度 (纯白) + 圆点焊死
-                                Box(
-                                    modifier = Modifier
-                                        .fillMaxWidth(currentFraction)
-                                        .height(3.dp)
-                                        .background(Color.White, RoundedCornerShape(1.5.dp)),
-                                    contentAlignment = Alignment.CenterEnd
-                                ) {
-                                    // 白色正圆形小圆点，直接贴附在进度条右侧
-                                    Box(
-                                        modifier = Modifier
-                                            .size(12.dp)
-                                            .background(Color.White, CircleShape)
+                                // 使用 Canvas 完美绘制进度条，防止截断和丢失
+                                Canvas(modifier = Modifier.fillMaxWidth().height(12.dp)) {
+                                    val progressY = size.height / 2f
+                                    val trackHeight = 3.dp.toPx()
+                                    val thumbRadius = 6.dp.toPx()
+                                    val maxWidth = size.width - thumbRadius * 2 // 为圆点留出空间
+                                    
+                                    // 1. 全轨道 (极暗)
+                                    drawLine(
+                                        color = Color.White.copy(alpha = 0.2f),
+                                        start = Offset(thumbRadius, progressY),
+                                        end = Offset(size.width - thumbRadius, progressY),
+                                        strokeWidth = trackHeight,
+                                        cap = androidx.compose.ui.graphics.StrokeCap.Round
+                                    )
+                                    // 2. 缓存进度 (浅灰)
+                                    if (bufferedFraction > 0) {
+                                        drawLine(
+                                            color = Color.White.copy(alpha = 0.5f),
+                                            start = Offset(thumbRadius, progressY),
+                                            end = Offset(thumbRadius + maxWidth * bufferedFraction.coerceIn(0f, 1f), progressY),
+                                            strokeWidth = trackHeight,
+                                            cap = androidx.compose.ui.graphics.StrokeCap.Round
+                                        )
+                                    }
+                                    // 3. 播放进度 (纯白)
+                                    if (currentFraction > 0) {
+                                        drawLine(
+                                            color = Color.White,
+                                            start = Offset(thumbRadius, progressY),
+                                            end = Offset(thumbRadius + maxWidth * currentFraction.coerceIn(0f, 1f), progressY),
+                                            strokeWidth = trackHeight,
+                                            cap = androidx.compose.ui.graphics.StrokeCap.Round
+                                        )
+                                    }
+                                    // 4. 圆点 (完美贴附，不裁剪)
+                                    val circleX = thumbRadius + maxWidth * currentFraction.coerceIn(0f, 1f)
+                                    drawCircle(
+                                        color = Color.White,
+                                        radius = thumbRadius,
+                                        center = Offset(circleX, progressY)
                                     )
                                 }
                             }
