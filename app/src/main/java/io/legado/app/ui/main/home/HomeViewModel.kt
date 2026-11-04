@@ -46,7 +46,7 @@ class HomeViewModel(
     private val _activeSheet = MutableStateFlow<HomeSheet?>(null)
     private val _effects = MutableSharedFlow<HomeEffect>(extraBufferCapacity = 16)
     
-    // 【新增】刷新触发器，解决 SharedPreferences 数据更改不触发 Flow 的问题
+    // 刷新触发器，解决 SharedPreferences 数据更改不触发 Flow 的问题
     private val _refreshTrigger = MutableStateFlow(0)
 
     val effects = _effects.asSharedFlow()
@@ -70,30 +70,36 @@ class HomeViewModel(
     ) { dashboardData, backup, dialog, sheet, _ ->
         val (dashboard, selectedSourceUrl, visibleSections) = dashboardData
 
-        // 解析影视记录
-        val videoHistoryUiList = mutableListOf<HomeRecentBookUi>()
+        // 解析影视记录并提取时间戳
+        val videoHistoryUiList = mutableListOf<Pair<HomeRecentBookUi, Long>>()
         try {
             val jsonArray = JSONArray(videoSettingsRepository.recentWatchedVideos)
             for (i in 0 until jsonArray.length()) {
                 val obj = jsonArray.getJSONObject(i)
-                videoHistoryUiList.add(
-                    HomeRecentBookUi(
-                        bookUrl = "hiker://video?fid=${obj.optString("fid")}",
-                        name = obj.optString("seriesTitle"),
-                        author = "影视",
-                        origin = "video",
-                        coverPath = obj.optString("coverPath"),
-                        chapterTitle = obj.optString("title"),
-                        chapterProgress = null
-                    )
+                val ui = HomeRecentBookUi(
+                    bookUrl = "hiker://video?fid=${obj.optString("fid")}",
+                    name = obj.optString("seriesTitle"),
+                    author = "影视",
+                    origin = "video",
+                    coverPath = obj.optString("coverPath"),
+                    chapterTitle = obj.optString("title"),
+                    chapterProgress = null
                 )
+                videoHistoryUiList.add(ui to obj.optLong("timestamp", 0L))
             }
         } catch (e: Exception) {}
 
-        val bookHistoryUiList = dashboard.recentBooks.map { it.toUi() }
+        // 解析小说/漫画记录，生成虚拟时间戳以保证与影视的混合排序
+        val now = System.currentTimeMillis()
+        val bookHistoryUiList = dashboard.recentBooks.mapIndexed { index, book -> 
+            book.toUi() to (now - index) 
+        }
         
-        // 融合排序：影视在前
-        val combinedHistory = (videoHistoryUiList + bookHistoryUiList).take(7)
+        // 融合排序：按时间戳降序排列，确保最近观看/阅读的绝对在前
+        val combinedHistory = (videoHistoryUiList + bookHistoryUiList)
+            .sortedByDescending { it.second }
+            .map { it.first }
+            .take(7)
 
         HomeUiState(
             totalReadBooks = dashboard.totalReadBooks,
@@ -133,7 +139,6 @@ class HomeViewModel(
         }
     }
 
-    // 【新增】供外部调用的刷新方法
     fun refreshData() {
         _refreshTrigger.value++
     }
