@@ -87,7 +87,6 @@ import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
 import androidx.media3.common.VideoSize
 import androidx.media3.datasource.HttpDataSource
-import androidx.media3.datasource.okhttp.OkHttpDataSource
 import androidx.media3.exoplayer.DefaultLoadControl
 import androidx.media3.exoplayer.DefaultRenderersFactory
 import androidx.media3.exoplayer.ExoPlayer
@@ -550,9 +549,8 @@ fun InternalVideoPlayer(
             .readTimeout(60, TimeUnit.SECONDS)
             .build()
 
-        val dataSourceFactory = OkHttpDataSource.Factory(okHttpClient)
-            .setDefaultRequestProperties(headers)
-            .setAllowCrossProtocolRedirects(true)
+        // 【修改】多线程分片预取数据源
+        val dataSourceFactory = ParallelDownloadDataSource.Factory(okHttpClient, headers)
 
         // 2. 构建 RenderersFactory，优先使用 FFmpeg 扩展
         val renderersFactory = DefaultRenderersFactory(context)
@@ -596,9 +594,8 @@ fun InternalVideoPlayer(
             .readTimeout(60, TimeUnit.SECONDS)
             .build()
 
-        val dataSourceFactory = OkHttpDataSource.Factory(okHttpClient)
-            .setDefaultRequestProperties(headers)
-            .setAllowCrossProtocolRedirects(true)
+        // 【修改】多线程分片预取数据源
+        val dataSourceFactory = ParallelDownloadDataSource.Factory(okHttpClient, headers)
 
         val mediaItem = MediaItem.Builder()
             .setUri(url)
