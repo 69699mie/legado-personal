@@ -45,6 +45,10 @@ class HomeViewModel(
     private val _activeDialog = MutableStateFlow<HomeDialog?>(null)
     private val _activeSheet = MutableStateFlow<HomeSheet?>(null)
     private val _effects = MutableSharedFlow<HomeEffect>(extraBufferCapacity = 16)
+    
+    // 【新增】刷新触发器，解决 SharedPreferences 数据更改不触发 Flow 的问题
+    private val _refreshTrigger = MutableStateFlow(0)
+
     val effects = _effects.asSharedFlow()
     private var backupRefreshJob: Job? = null
     private val backupActionMutex = Mutex()
@@ -62,7 +66,8 @@ class HomeViewModel(
         _backupState,
         _activeDialog,
         _activeSheet,
-    ) { dashboardData, backup, dialog, sheet ->
+        _refreshTrigger // 加入 combine 流
+    ) { dashboardData, backup, dialog, sheet, _ ->
         val (dashboard, selectedSourceUrl, visibleSections) = dashboardData
 
         // 解析影视记录
@@ -128,6 +133,11 @@ class HomeViewModel(
         }
     }
 
+    // 【新增】供外部调用的刷新方法
+    fun refreshData() {
+        _refreshTrigger.value++
+    }
+
     fun onIntent(intent: HomeIntent) {
         when (intent) {
             HomeIntent.RecentBookClick -> {
@@ -164,7 +174,6 @@ class HomeViewModel(
     private fun openBookOrVideo(url: String) {
         if (url.startsWith("hiker://video")) {
             viewModelScope.launch {
-                // 构造合法 Book 用于事件传递
                 val fakeBook = Book(bookUrl = url, name = "影视", author = "视频")
                 _effects.emit(HomeEffect.OpenBook(fakeBook))
             }
