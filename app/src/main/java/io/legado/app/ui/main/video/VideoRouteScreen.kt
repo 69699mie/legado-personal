@@ -116,6 +116,7 @@ import kotlin.math.roundToInt
 fun VideoRouteScreen(
     modifier: Modifier = Modifier,
     initialLibraryMode: Boolean? = null,
+    isActive: Boolean = true, // 【新增】当前页面是否处于激活状态
     viewModel: VideoScraperViewModel = koinViewModel()
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
@@ -140,7 +141,7 @@ fun VideoRouteScreen(
 
     LaunchedEffect(Unit) {
         val pendingFid = videoSettingsRepository.pendingPlayFid
-        if (!pendingFid.isNullOrBlank()) {
+        if (isActive && !pendingFid.isNullOrBlank()) {
             viewModel.handlePendingPlayRequest()
         }
     }
@@ -154,7 +155,8 @@ fun VideoRouteScreen(
         else viewModel.goBack()
     }
 
-    if (uiState.playUrl != null && uiState.currentSeries != null && uiState.currentPlayFile != null) {
+    // 【核心修改】加上 isActive 判断，只有当前选中的 Tab 才能弹出播放器
+    if (isActive && uiState.playUrl != null && uiState.currentSeries != null && uiState.currentPlayFile != null) {
         Dialog(
             onDismissRequest = {
                 activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
@@ -747,6 +749,8 @@ fun InternalVideoPlayer(
         onDispose {
             if (exoPlayer.currentPosition > 0) viewModel.saveVideoProgress(currentFile.fid, exoPlayer.currentPosition)
             exoPlayer.removeListener(listener)
+            // 【核心修改】强制停止并释放，防止后台残留声音
+            exoPlayer.stop()
             exoPlayer.release()
         }
     }
@@ -903,7 +907,6 @@ fun InternalVideoPlayer(
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
                     CircularProgressIndicator(color = Color.White, modifier = Modifier.size(36.dp))
                     Spacer(modifier = Modifier.height(12.dp))
-                    // 【修改】在这里调用动画组件
                     AnimatedLoadingDots(color = Color.White, fontSize = 14.sp)
                 }
             }
