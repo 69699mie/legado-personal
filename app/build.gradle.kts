@@ -205,14 +205,13 @@ dependencies {
     implementation(libs.lifecycle.common.java8)
     implementation(libs.lifecycle.service)
     implementation(libs.media.media)
-    
+
     // ===== 播放器模块 =====
     implementation(libs.media3.exoplayer)
     implementation(libs.media3.datasource.okhttp)
     implementation("androidx.media3:media3-ui:1.2.1")
     implementation("androidx.media3:media3-exoplayer-hls:1.2.1")
-    // 【修复】FFmpeg 软解扩展改为 Maven 可解析的 1.0.0 版本
-    implementation("androidx.media3:media3-exoplayer-ffmpeg:1.0.0")
+    // FFmpeg 扩展已移除（Maven 无可用制品，且许可证合规性待定）
     // =====================
 
     implementation(libs.splitties.appctx)
@@ -238,7 +237,7 @@ dependencies {
     implementation(libs.androidsvg)
     implementation(libs.glide.svg)
     implementation(libs.glide.recyclerview)
-    
+
     // ===== Ktor 模块（用于本地视频代理） =====
     implementation(libs.ktor.server.core)
     implementation(libs.ktor.server.cio)
