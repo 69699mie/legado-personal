@@ -19,7 +19,6 @@ class ParallelDownloadDataSource(
     private val client: OkHttpClient,
     private val headers: Map<String, String>,
     private val threadCount: Int = DEFAULT_THREAD_COUNT,
-    private val chunkSize: Long = DEFAULT_CHUNK_SIZE,
     private val maxBufferedChunks: Int = DEFAULT_MAX_BUFFERED
 ) : BaseDataSource(false) {
 
@@ -45,9 +44,42 @@ class ParallelDownloadDataSource(
         currentUrl = spec.uri.toString()
         startPosition = spec.position
 
-        totalLength = probeTotalSize()
-        if (totalLength <= 0) {
-            throw IOException("无法获取文件总大小: $currentUrl")
+        // 直接请求第一块作为探测，同时拿到第一块数据
+        val reqEnd = startPosition + INITIAL_CHUNK_SIZE - 1
+        val req = buildRequest(mapOf("Range" to "bytes=$startPosition-$reqEnd")).build()
+        
+        var firstChunkData: ByteArray
+        
+        try {
+            client.newCall(req).execute().use { res ->
+                if (!res.isSuccessful) {
+                    throw IOException("探测数据失败: HTTP ${res.code}")
+                }
+                
+                val contentType = res.header("Content-Type") ?: ""
+                if (contentType.contains("html") || contentType.contains("json")) {
+                    val errMsg = res.body?.string()?.take(200) ?: ""
+                    throw IOException("服务器返回了错误格式: $contentType\n$errMsg")
+                }
+                
+                firstChunkData = res.body?.bytes() ?: throw IOException("返回数据为空")
+
+                val cr = res.header("Content-Range")
+                if (!cr.isNullOrBlank() && cr.contains("/")) {
+                    val lenStr = cr.substringAfter("/").trim()
+                    if (lenStr != "*") totalLength = lenStr.toLongOrNull() ?: -1L
+                }
+                
+                if (totalLength <= 0) {
+                    if (res.code == 200) {
+                        totalLength = res.header("Content-Length")?.toLongOrNull() ?: -1L
+                    } else {
+                        throw IOException("无法获取文件总长度")
+                    }
+                }
+            }
+        } catch (e: Exception) {
+            throw IOException("获取首块数据异常", e)
         }
 
         endPosition = if (spec.length > 0 && spec.position + spec.length <= totalLength) {
@@ -55,21 +87,31 @@ class ParallelDownloadDataSource(
         } else {
             totalLength
         }
+        
         remainingBytes = endPosition - startPosition
         if (remainingBytes <= 0) return 0
 
-        chunkCount = ((endPosition - startPosition + chunkSize - 1) / chunkSize).toInt()
+        // 计算分块数量
+        val firstChunkActualLen = firstChunkData.size.toLong()
+        val remainingAfterFirst = remainingBytes - firstChunkActualLen
+        val subsequentChunks = if (remainingAfterFirst > 0) ((remainingAfterFirst + SUBSEQUENT_CHUNK_SIZE - 1) / SUBSEQUENT_CHUNK_SIZE).toInt() else 0
+        chunkCount = 1 + subsequentChunks
+
         nextExpectedIndex = 0
         running.set(true)
         readyChunks = ConcurrentHashMap()
         semaphore = Semaphore(maxBufferedChunks)
+
+        // 把首块直接塞进去
+        readyChunks?.put(0, PendingChunk(0, firstChunkData, null))
 
         val ex = Executors.newFixedThreadPool(threadCount) { r ->
             Thread(r, "parallel-dl").apply { isDaemon = true }
         }
         executor = ex
 
-        val nextIdx = AtomicInteger(0)
+        // 线程池从 index 1 开始领任务
+        val nextIdx = AtomicInteger(1)
         for (i in 0 until threadCount) {
             ex.execute {
                 while (running.get()) {
@@ -80,13 +122,16 @@ class ParallelDownloadDataSource(
                     try { sem.acquire() } catch (e: InterruptedException) { break }
                     if (!running.get()) break
 
-                    val chunkStart = startPosition + idx.toLong() * chunkSize
-                    val chunkEnd = minOf(chunkStart + chunkSize, endPosition) - 1
-                    try {
-                        val data = downloadRange(chunkStart, chunkEnd)
-                        readyChunks?.put(idx, PendingChunk(idx, data, null))
-                    } catch (e: Exception) {
-                        readyChunks?.put(idx, PendingChunk(idx, null, e))
+                    val chunkStart = startPosition + INITIAL_CHUNK_SIZE + (idx - 1) * SUBSEQUENT_CHUNK_SIZE
+                    val chunkEnd = minOf(chunkStart + SUBSEQUENT_CHUNK_SIZE, endPosition) - 1
+                    
+                    if (chunkStart <= chunkEnd) {
+                        try {
+                            val data = downloadRange(chunkStart, chunkEnd)
+                            readyChunks?.put(idx, PendingChunk(idx, data, null))
+                        } catch (e: Exception) {
+                            readyChunks?.put(idx, PendingChunk(idx, null, e))
+                        }
                     }
                 }
             }
@@ -164,57 +209,21 @@ class ParallelDownloadDataSource(
         return builder
     }
 
-    private fun probeTotalSize(): Long {
-        val req = buildRequest(mapOf("Range" to "bytes=0-0")).build()
-        client.newCall(req).execute().use { res ->
-            if (!res.isSuccessful) {
-                throw IOException("探测大小失败: HTTP ${res.code}")
-            }
-            val contentType = res.header("Content-Type") ?: ""
-            if (contentType.contains("html") || contentType.contains("json")) {
-                val errMsg = res.body?.string()?.take(200) ?: ""
-                throw IOException("服务器返回了错误格式: $contentType\n$errMsg")
-            }
-            val cr = res.header("Content-Range")
-            if (!cr.isNullOrBlank() && cr.contains("/")) {
-                val len = cr.substringAfter("/").trim().toLongOrNull()
-                if (len != null && len > 0) return len
-            }
-            if (res.code == 200) {
-                return res.header("Content-Length")?.toLongOrNull() ?: -1
-            }
-        }
-        return -1
-    }
-
     private fun downloadRange(start: Long, end: Long): ByteArray {
         val req = buildRequest(mapOf("Range" to "bytes=$start-$end")).build()
         client.newCall(req).execute().use { res ->
             if (!res.isSuccessful) {
                 throw IOException("HTTP ${res.code}")
             }
-            
-            // 校验：请求了 Range 但返回了 200，说明服务器不支持分片，或者重定向到了不支持分片的地址
             if (res.code == 200 && start > 0) {
-                throw IOException("服务器未正确响应分片请求(HTTP 200)，多线程播放失败")
+                throw IOException("服务器未正确响应分片请求(HTTP 200)")
             }
-
             val contentType = res.header("Content-Type") ?: ""
             if (contentType.contains("html") || contentType.contains("json")) {
                 throw IOException("服务器返回了错误格式: $contentType")
             }
-
             val body = res.body ?: throw IOException("empty body")
-            val data = body.bytes()
-            
-            // 校验：如果拿到的是第一块，检查是不是 HTML 或 JSON 错误页面
-            if (start == 0L && data.isNotEmpty()) {
-                val headStr = String(data, 0, minOf(data.size, 20), Charsets.UTF_8).trim()
-                if (headStr.startsWith("<") || headStr.startsWith("{")) {
-                    throw IOException("数据流疑似错误页面: ${headStr.take(50)}")
-                }
-            }
-            return data
+            return body.bytes()
         }
     }
 
@@ -234,8 +243,9 @@ class ParallelDownloadDataSource(
     }
 
     companion object {
-        private const val DEFAULT_THREAD_COUNT = 4
-        private const val DEFAULT_CHUNK_SIZE = 16L * 1024 * 1024
+        private const val DEFAULT_THREAD_COUNT = 6
+        private const val INITIAL_CHUNK_SIZE = 2L * 1024 * 1024 // 首块 2MB 秒开
+        private const val SUBSEQUENT_CHUNK_SIZE = 8L * 1024 * 1024 // 后续块 8MB 高速
         private const val DEFAULT_MAX_BUFFERED = 3
         private const val QUARK_DESKTOP_UA =
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) quark-cloud-drive/2.5.20 Chrome/100.0.4896.160 Electron/18.3.5.4-b478491100 Safari/537.36 Channel/pckk_other_ch"
