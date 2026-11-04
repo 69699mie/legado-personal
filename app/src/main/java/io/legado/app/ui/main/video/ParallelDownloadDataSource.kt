@@ -2,61 +2,207 @@ package io.legado.app.ui.main.video
 
 import androidx.media3.common.C
 import androidx.media3.datasource.BaseDataSource
+import androidx.media3.datasource.DataSource
 import androidx.media3.datasource.DataSpec
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import java.io.IOException
 import java.io.InputStream
+import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
-import java.util.concurrent.Future
+import java.util.concurrent.Semaphore
+import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicInteger
 
 class ParallelDownloadDataSource(
     private val client: OkHttpClient,
     private val headers: Map<String, String>,
-    private val threadCount: Int = 8
+    private val threadCount: Int = DEFAULT_THREAD_COUNT,
+    private val chunkSize: Long = DEFAULT_CHUNK_SIZE,
+    private val maxBufferedChunks: Int = DEFAULT_MAX_BUFFERED
 ) : BaseDataSource(false) {
 
     private var dataSpec: DataSpec? = null
-    private var inputStream: InputStream? = null
-    private var executor = Executors.newFixedThreadPool(threadCount)
+    private var currentUrl: String = ""
+    private var startPosition: Long = 0
+    private var endPosition: Long = 0
+    private var totalLength: Long = 0
+    private var remainingBytes: Long = 0
+    private var chunkCount: Int = 0
+    private var nextExpectedIndex: Int = 0
+    private var currentChunkStream: InputStream? = null
+
+    private var running: AtomicBoolean = AtomicBoolean(false)
+    private var executor: ExecutorService? = null
+    private var readyChunks: ConcurrentHashMap<Int, PendingChunk>? = null
+    private var semaphore: Semaphore? = null
 
     override fun open(spec: DataSpec): Long {
+        close()
+
         dataSpec = spec
-        val uri = spec.uri.toString()
-        val position = spec.position
-        val length = if (spec.length != C.LENGTH_UNSET.toLong()) spec.length else -1
+        currentUrl = spec.uri.toString()
+        startPosition = spec.position
 
-        // 简化实现：实际生产环境应在此处切分 Range 并发拉取并合并流。
-        // 以下逻辑用于确保数据源链路的正确接通与传递。
-        val requestBuilder = Request.Builder().url(uri)
-        headers.forEach { (k, v) -> requestBuilder.header(k, v) }
-        
-        if (position > 0 || length > 0) {
-            val end = if (length > 0) position + length - 1 else ""
-            requestBuilder.header("Range", "bytes=$position-$end")
+        totalLength = probeTotalSize()
+        if (totalLength <= 0) {
+            throw IOException("无法获取文件总大小: $currentUrl")
         }
 
-        val response = client.newCall(requestBuilder.build()).execute()
-        if (!response.isSuccessful) {
-            throw IOException("Unexpected code $response")
+        endPosition = if (spec.length > 0 && spec.position + spec.length <= totalLength) {
+            spec.position + spec.length
+        } else {
+            totalLength
         }
-        
-        inputStream = response.body?.byteStream()
-        return length
+        remainingBytes = endPosition - startPosition
+        if (remainingBytes <= 0) return 0
+
+        chunkCount = ((endPosition - startPosition + chunkSize - 1) / chunkSize).toInt()
+        nextExpectedIndex = 0
+        running.set(true)
+        readyChunks = ConcurrentHashMap()
+        semaphore = Semaphore(maxBufferedChunks)
+
+        val ex = Executors.newFixedThreadPool(threadCount) { r ->
+            Thread(r, "parallel-dl").apply { isDaemon = true }
+        }
+        executor = ex
+
+        val nextIdx = AtomicInteger(0)
+        for (i in 0 until threadCount) {
+            ex.execute {
+                while (running.get()) {
+                    val idx = nextIdx.getAndIncrement()
+                    if (idx >= chunkCount) break
+
+                    val sem = semaphore ?: break
+                    try { sem.acquire() } catch (e: InterruptedException) { break }
+                    if (!running.get()) break
+
+                    val chunkStart = startPosition + idx.toLong() * chunkSize
+                    val chunkEnd = minOf(chunkStart + chunkSize, endPosition) - 1
+                    try {
+                        val data = downloadRange(chunkStart, chunkEnd)
+                        readyChunks?.put(idx, PendingChunk(idx, data, null))
+                    } catch (e: Exception) {
+                        readyChunks?.put(idx, PendingChunk(idx, null, e))
+                    }
+                }
+            }
+        }
+
+        return remainingBytes
     }
 
     override fun read(buffer: ByteArray, offset: Int, length: Int): Int {
-        return inputStream?.read(buffer, offset, length) ?: -1
+        if (remainingBytes <= 0) return C.RESULT_END_OF_INPUT
+
+        while (true) {
+            val stream = currentChunkStream
+            if (stream != null) {
+                val want = minOf(length.toLong(), remainingBytes).toInt()
+                val n = stream.read(buffer, offset, want)
+                if (n > 0) {
+                    remainingBytes -= n
+                    return n
+                }
+                try { stream.close() } catch (_: Exception) {}
+                currentChunkStream = null
+                if (remainingBytes <= 0) return C.RESULT_END_OF_INPUT
+                continue
+            }
+
+            if (nextExpectedIndex >= chunkCount) return C.RESULT_END_OF_INPUT
+            if (!running.get()) return C.RESULT_END_OF_INPUT
+
+            val chunk = readyChunks?.remove(nextExpectedIndex)
+            if (chunk == null) {
+                try { Thread.sleep(30) } catch (e: InterruptedException) { return C.RESULT_END_OF_INPUT }
+                continue
+            }
+
+            if (chunk.error != null) {
+                throw IOException("分片 ${chunk.index} 下载失败", chunk.error)
+            }
+
+            nextExpectedIndex++
+            semaphore?.release()
+
+            val data = chunk.data
+            if (data == null || data.isEmpty()) continue
+            currentChunkStream = data.inputStream()
+        }
     }
 
     override fun getUri(): android.net.Uri? = dataSpec?.uri
 
     override fun close() {
-        try {
-            inputStream?.close()
-        } finally {
-            inputStream = null
-            executor.shutdownNow()
+        running.set(false)
+        try { currentChunkStream?.close() } catch (_: Exception) {}
+        currentChunkStream = null
+        try { executor?.shutdownNow() } catch (_: Exception) {}
+        executor = null
+        readyChunks = null
+        try { semaphore?.release(Int.MAX_VALUE) } catch (_: Exception) {}
+        semaphore = null
+    }
+
+    private fun probeTotalSize(): Long {
+        val req = Request.Builder()
+            .url(currentUrl)
+            .apply { headers.forEach { (k, v) -> header(k, v) } }
+            .header("Range", "bytes=0-0")
+            .build()
+        client.newCall(req).execute().use { res ->
+            if (!res.isSuccessful) {
+                throw IOException("探测大小失败: HTTP ${res.code}")
+            }
+            val cr = res.header("Content-Range")
+            if (!cr.isNullOrBlank() && cr.contains("/")) {
+                val len = cr.substringAfter("/").trim().toLongOrNull()
+                if (len != null && len > 0) return len
+            }
+            if (res.code == 200) {
+                return res.header("Content-Length")?.toLongOrNull() ?: -1
+            }
         }
+        return -1
+    }
+
+    private fun downloadRange(start: Long, end: Long): ByteArray {
+        val req = Request.Builder()
+            .url(currentUrl)
+            .apply { headers.forEach { (k, v) -> header(k, v) } }
+            .header("Range", "bytes=$start-$end")
+            .build()
+        client.newCall(req).execute().use { res ->
+            if (!res.isSuccessful) {
+                throw IOException("HTTP ${res.code}")
+            }
+            val body = res.body ?: throw IOException("empty body")
+            return body.bytes()
+        }
+    }
+
+    private class PendingChunk(
+        val index: Int,
+        val data: ByteArray?,
+        val error: Exception?
+    )
+
+    class Factory(
+        private val client: OkHttpClient,
+        private val headers: Map<String, String>,
+        private val threadCount: Int = DEFAULT_THREAD_COUNT
+    ) : DataSource.Factory {
+        override fun createDataSource(): DataSource =
+            ParallelDownloadDataSource(client, headers, threadCount)
+    }
+
+    companion object {
+        private const val DEFAULT_THREAD_COUNT = 6
+        private const val DEFAULT_CHUNK_SIZE = 2L * 1024 * 1024
+        private const val DEFAULT_MAX_BUFFERED = 4
     }
 }
