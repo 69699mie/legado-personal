@@ -11,6 +11,8 @@ import android.media.AudioManager
 import android.net.TrafficStats
 import android.net.Uri
 import android.os.Process
+import android.view.OrientationEventListener
+import android.view.Surface
 import android.view.ViewGroup
 import android.view.WindowManager
 import android.webkit.CookieManager
@@ -121,7 +123,6 @@ fun VideoLibraryScreen(
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val context = LocalContext.current
-    val activity = context.findActivity()
 
     var showSettingsDialog by remember { mutableStateOf(false) }
 
@@ -211,12 +212,24 @@ fun VideoScraperScreen(
         }
     }
 
-    BackHandler(enabled = uiState.playUrl != null || uiState.currentSeries != null || viewAllCategory != null) {
-        if (uiState.playUrl != null) {
+    BackHandler(enabled = uiState.playUrl != null || uiState.currentPlayFile != null || uiState.currentSeries != null || viewAllCategory != null) {
+        if (uiState.playUrl != null || uiState.currentPlayFile != null) {
             activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
             viewModel.stopPlaying()
         } else if (uiState.currentSeries != null) viewModel.selectSeries(null)
         else if (viewAllCategory != null) viewAllCategory = null
+    }
+
+    // 【新增】黑屏加载拦截：当有文件准备播放，但直链还没获取到时，直接展示黑屏加载，不展示列表和详情页
+    if (isActive && uiState.playUrl == null && uiState.currentPlayFile != null) {
+        Box(modifier = Modifier.fillMaxSize().background(Color.Black), contentAlignment = Alignment.Center) {
+            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                CircularProgressIndicator(color = Color.White)
+                Spacer(modifier = Modifier.height(16.dp))
+                AnimatedLoadingDots(color = Color.White, fontSize = 16.sp)
+            }
+        }
+        return // 拦截后续 UI 的渲染，保持黑屏
     }
 
     // 只有当前处于激活状态，且 playUrl 不为空时，才渲染播放器 Dialog
@@ -365,8 +378,9 @@ private fun SettingsDialog(
     Dialog(onDismissRequest = onDismiss) {
         Surface(
             shape = RoundedCornerShape(24.dp),
-            color = MaterialTheme.colorScheme.surface,
-            tonalElevation = 6.dp,
+            // 【修改】改为半透明磨砂质感，去除泛绿
+            color = Color.White.copy(alpha = 0.85f), 
+            border = BorderStroke(1.dp, Color.White.copy(alpha = 0.3f)),
             modifier = Modifier.fillMaxWidth().padding(16.dp)
         ) {
             Column(modifier = Modifier.padding(24.dp).fillMaxWidth()) {
@@ -377,7 +391,8 @@ private fun SettingsDialog(
                             onClick = onWebLoginClick,
                             shape = RoundedCornerShape(20.dp),
                             contentPadding = PaddingValues(horizontal = 16.dp, vertical = 6.dp),
-                            modifier = Modifier.height(36.dp)
+                            modifier = Modifier.height(36.dp),
+                            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.5f))
                         ) {
                             AppText("网页扫码登录", fontSize = 13.sp)
                         }
@@ -436,15 +451,15 @@ private fun SettingsDialog(
                     }
                 }
 
-                Button(
+                // 【修改】去掉实心背景，改为纯文字按钮
+                TextButton(
                     onClick = {
                         viewModel.saveSettings(inputCookie, inputTmdbKey, inputTmdbUrl)
                         onDismiss()
                     }, 
-                    modifier = Modifier.align(Alignment.End).padding(top = 16.dp).height(40.dp),
-                    shape = RoundedCornerShape(20.dp)
+                    modifier = Modifier.align(Alignment.End).padding(top = 16.dp)
                 ) { 
-                    AppText("保存并刷新") 
+                    AppText("保存并刷新", fontWeight = FontWeight.Bold) 
                 }
             }
         }
@@ -531,7 +546,7 @@ private fun ManualScrapeDialog(
 
 
 // ==========================================
-// 播放器与登录页面（保持原样）
+// 播放器与登录页面
 // ==========================================
 @SuppressLint("SetJavaScriptEnabled")
 @Composable
@@ -614,6 +629,36 @@ fun InternalVideoPlayer(
     val isLandscape = configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
 
     var errorDialogMsg by remember { mutableStateOf<String?>(null) }
+    
+    // 用于处理用户手动旋转与重力感应冲突
+    var lastManualSwitchTime by remember { mutableLongStateOf(0L) }
+
+    // 【新增】强制进入横屏
+    LaunchedEffect(Unit) {
+        activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE
+    }
+
+    // 【新增】重力感应监听
+    DisposableEffect(Unit) {
+        val orientationListener = object : OrientationEventListener(context) {
+            override fun onOrientationChanged(orientation: Int) {
+                if (orientation == ORIENTATION_UNKNOWN) return
+                // 如果用户刚刚手动点击过旋转按钮（2秒内），忽略重力感应，防止打架
+                if (System.currentTimeMillis() - lastManualSwitchTime < 2000) return
+
+                val isPortrait = (orientation in 315..360) || (orientation in 0..45) || (orientation in 135..225)
+                val isLandscape = (orientation in 45..135) || (orientation in 225..315)
+
+                if (isPortrait && activity?.requestedOrientation != ActivityInfo.SCREEN_ORIENTATION_PORTRAIT) {
+                    activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
+                } else if (isLandscape && activity?.requestedOrientation != ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE) {
+                    activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE
+                }
+            }
+        }
+        orientationListener.enable()
+        onDispose { orientationListener.disable() }
+    }
 
     LaunchedEffect(isLandscape) {
         if (view.isInEditMode) return@LaunchedEffect
@@ -634,6 +679,9 @@ fun InternalVideoPlayer(
     val originalBrightness = remember { activity?.window?.attributes?.screenBrightness ?: WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE }
     DisposableEffect(Unit) {
         onDispose {
+            // 【新增】退出时恢复竖屏
+            activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
+            
             val window = (view.parent as? DialogWindowProvider)?.window ?: activity?.window
             window?.let {
                 WindowCompat.setDecorFitsSystemWindows(it, true)
@@ -806,7 +854,6 @@ fun InternalVideoPlayer(
         onDispose {
             if (exoPlayer.currentPosition > 0) viewModel.saveVideoProgress(currentFile.fid, exoPlayer.currentPosition)
             exoPlayer.removeListener(listener)
-            // 确保释放时立刻切断音频
             exoPlayer.stop()
             exoPlayer.release()
         }
@@ -1005,6 +1052,8 @@ fun InternalVideoPlayer(
                 Column(modifier = Modifier.align(Alignment.CenterStart).padding(start = 16.dp), verticalArrangement = Arrangement.spacedBy(30.dp)) {
                     Surface(color = Color.White.copy(alpha = 0.1f), shape = CircleShape, border = BorderStroke(1.dp, Color.White.copy(alpha = 0.2f))) {
                         IconButton(onClick = {
+                            // 【新增】记录手动切换时间，防止和重力感应打架
+                            lastManualSwitchTime = System.currentTimeMillis()
                             if (isLandscape) activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
                             else activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE
                         }) {
