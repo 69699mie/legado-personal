@@ -102,7 +102,12 @@ class ParallelDownloadDataSource(
             val stream = currentChunkStream
             if (stream != null) {
                 val want = minOf(length.toLong(), remainingBytes).toInt()
-                val n = stream.read(buffer, offset, want)
+                val n = try {
+                    stream.read(buffer, offset, want)
+                } catch (e: Exception) {
+                    if (!running.get()) return C.RESULT_END_OF_INPUT
+                    throw IOException("读取数据失败", e)
+                }
                 if (n > 0) {
                     remainingBytes -= n
                     return n
@@ -144,16 +149,23 @@ class ParallelDownloadDataSource(
         try { executor?.shutdownNow() } catch (_: Exception) {}
         executor = null
         readyChunks = null
-        try { semaphore?.release(Int.MAX_VALUE) } catch (_: Exception) {}
         semaphore = null
     }
 
+    private fun buildRequest(extraHeaders: Map<String, String> = emptyMap()): Request.Builder {
+        val builder = Request.Builder().url(currentUrl)
+        headers.forEach { (k, v) ->
+            if (!k.equals("User-Agent", ignoreCase = true)) {
+                builder.header(k, v)
+            }
+        }
+        extraHeaders.forEach { (k, v) -> builder.header(k, v) }
+        builder.header("User-Agent", QUARK_DESKTOP_UA)
+        return builder
+    }
+
     private fun probeTotalSize(): Long {
-        val req = Request.Builder()
-            .url(currentUrl)
-            .apply { headers.forEach { (k, v) -> header(k, v) } }
-            .header("Range", "bytes=0-0")
-            .build()
+        val req = buildRequest(mapOf("Range" to "bytes=0-0")).build()
         client.newCall(req).execute().use { res ->
             if (!res.isSuccessful) {
                 throw IOException("探测大小失败: HTTP ${res.code}")
@@ -171,11 +183,7 @@ class ParallelDownloadDataSource(
     }
 
     private fun downloadRange(start: Long, end: Long): ByteArray {
-        val req = Request.Builder()
-            .url(currentUrl)
-            .apply { headers.forEach { (k, v) -> header(k, v) } }
-            .header("Range", "bytes=$start-$end")
-            .build()
+        val req = buildRequest(mapOf("Range" to "bytes=$start-$end")).build()
         client.newCall(req).execute().use { res ->
             if (!res.isSuccessful) {
                 throw IOException("HTTP ${res.code}")
@@ -201,8 +209,10 @@ class ParallelDownloadDataSource(
     }
 
     companion object {
-        private const val DEFAULT_THREAD_COUNT = 6
-        private const val DEFAULT_CHUNK_SIZE = 2L * 1024 * 1024
-        private const val DEFAULT_MAX_BUFFERED = 4
+        private const val DEFAULT_THREAD_COUNT = 4
+        private const val DEFAULT_CHUNK_SIZE = 16L * 1024 * 1024
+        private const val DEFAULT_MAX_BUFFERED = 3
+        private const val QUARK_DESKTOP_UA =
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) quark-cloud-drive/2.5.20 Chrome/100.0.4896.160 Electron/18.3.5.4-b478491100 Safari/537.36 Channel/pckk_other_ch"
     }
 }
