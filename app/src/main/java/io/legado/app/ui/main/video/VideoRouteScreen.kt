@@ -70,6 +70,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shadow
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
@@ -721,6 +722,9 @@ fun InternalVideoPlayer(
     var isLongPressing by remember { mutableStateOf(false) }
     var gestureType by remember { mutableStateOf("") }
     var gestureValue by remember { mutableFloatStateOf(0f) }
+    
+    // 进度条拖动状态
+    var isDraggingSeekBar by remember { mutableStateOf(false) }
 
     val season = currentFile.parsedInfo?.season ?: 1
     var introSeconds by remember { mutableIntStateOf(0) }
@@ -873,8 +877,10 @@ fun InternalVideoPlayer(
 
     LaunchedEffect(isPlaying) {
         while (isPlaying) {
-            currentPosition = exoPlayer.currentPosition
-            bufferedPosition = exoPlayer.bufferedPosition
+            if (!isDraggingSeekBar) {
+                currentPosition = exoPlayer.currentPosition
+                bufferedPosition = exoPlayer.bufferedPosition
+            }
 
             if (introSeconds > 0 && currentPosition in (introSeconds * 1000L)..(introSeconds * 1000L + 1000L)) showSkipIntro = true
             else if (currentPosition > introSeconds * 1000L) showSkipIntro = false
@@ -1145,62 +1151,76 @@ fun InternalVideoPlayer(
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             AppText(text = formatTime(currentPosition), color = Color.White, fontSize = 12.sp)
                             
+                            // 【完全手写进度条，彻底避免 Slider 的 API 冲突和排版断层】
+                            var sliderWidth by remember { mutableStateOf(1f) }
+                            val bufferedFraction = if (duration > 0) bufferedPosition.toFloat() / duration else 0f
+                            val currentFraction = if (duration > 0) currentPosition.toFloat() / duration else 0f
+
                             Box(
                                 modifier = Modifier
                                     .weight(1f)
                                     .padding(horizontal = 8.dp)
-                                    .height(32.dp),
+                                    .height(32.dp) // 扩大点击区域
+                                    .onSizeChanged { sliderWidth = it.width.toFloat() }
+                                    .pointerInput(duration) {
+                                        detectTapGestures(
+                                            onPress = { offset ->
+                                                if (duration > 0) {
+                                                    isDraggingSeekBar = true
+                                                    val target = (offset.x / sliderWidth).coerceIn(0f, 1f)
+                                                    currentPosition = (target * duration).toLong()
+                                                    exoPlayer.seekTo(currentPosition)
+                                                }
+                                            }
+                                        )
+                                    }
+                                    .pointerInput(duration) {
+                                        detectDragGestures(
+                                            onDragStart = { offset ->
+                                                if (duration > 0) {
+                                                    isDraggingSeekBar = true
+                                                    val target = (offset.x / sliderWidth).coerceIn(0f, 1f)
+                                                    currentPosition = (target * duration).toLong()
+                                                }
+                                            },
+                                            onDrag = { change, _ ->
+                                                change.consume()
+                                                if (duration > 0) {
+                                                    val target = (change.position.x / sliderWidth).coerceIn(0f, 1f)
+                                                    currentPosition = (target * duration).toLong()
+                                                }
+                                            },
+                                            onDragEnd = {
+                                                isDraggingSeekBar = false
+                                                exoPlayer.seekTo(currentPosition)
+                                                if (isPlaying) exoPlayer.play()
+                                            },
+                                            onDragCancel = {
+                                                isDraggingSeekBar = false
+                                            }
+                                        )
+                                    },
                                 contentAlignment = Alignment.Center
                             ) {
-                                val bufferedFraction = if (duration > 0) bufferedPosition.toFloat() / duration else 0f
-                                val currentFraction = if (duration > 0) currentPosition.toFloat() / duration else 0f
+                                // 1. 底层：全轨道 (极暗)
+                                Box(modifier = Modifier.fillMaxWidth().height(3.dp).background(Color.White.copy(alpha = 0.2f), RoundedCornerShape(1.5.dp)))
+                                // 2. 中层：缓存进度 (浅灰)
+                                Box(modifier = Modifier.fillMaxWidth(bufferedFraction).height(3.dp).background(Color.White.copy(alpha = 0.5f), RoundedCornerShape(1.5.dp)))
+                                // 3. 上层：播放进度 (纯白)
+                                Box(modifier = Modifier.fillMaxWidth(currentFraction).height(3.dp).background(Color.White, RoundedCornerShape(1.5.dp)))
                                 
-                                // 底层：缓存进度底轨 (深灰色)
-                                Box(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .height(3.dp)
-                                        .background(Color.White.copy(alpha = 0.2f), RoundedCornerShape(1.5.dp))
-                                )
-                                // 中层：已缓存进度 (浅灰色)
-                                Box(
-                                    modifier = Modifier
-                                        .fillMaxWidth(bufferedFraction)
-                                        .height(3.dp)
-                                        .background(Color.White.copy(alpha = 0.5f), RoundedCornerShape(1.5.dp))
-                                )
-                                // 上层：已播放进度 (纯白色)
+                                // 4. 顶层：正圆形滑块
                                 Box(
                                     modifier = Modifier
                                         .fillMaxWidth(currentFraction)
-                                        .height(3.dp)
-                                        .background(Color.White, RoundedCornerShape(1.5.dp))
-                                )
-                                
-                                // 顶层：透明交互滑块，强制使用白色正圆点
-                                Slider(
-                                    value = currentFraction,
-                                    onValueChange = { currentPosition = (it * duration).toLong() },
-                                    onValueChangeFinished = { exoPlayer.seekTo(currentPosition); if (isPlaying) exoPlayer.play() },
-                                    modifier = Modifier.fillMaxWidth(),
-                                    colors = SliderDefaults.colors(
-                                        thumbColor = Color.White,
-                                        activeTrackColor = Color.Transparent,
-                                        inactiveTrackColor = Color.Transparent,
-                                        activeTickColor = Color.Transparent,
-                                        inactiveTickColor = Color.Transparent
-                                    ),
-                                    thumb = {
-                                        Box(
-                                            modifier = Modifier
-                                                .size(14.dp)
-                                                .background(Color.White, CircleShape)
-                                        )
-                                    },
-                                    track = {
-                                        Box(modifier = Modifier.fillMaxWidth())
-                                    }
-                                )
+                                        .wrapContentWidth(Alignment.End)
+                                ) {
+                                    Box(
+                                        modifier = Modifier
+                                            .size(12.dp)
+                                            .background(Color.White, CircleShape)
+                                    )
+                                }
                             }
                             
                             AppText(text = formatTime(duration), color = Color.White, fontSize = 12.sp)
