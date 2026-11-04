@@ -178,7 +178,6 @@ fun MainScreen(
     val context = LocalContext.current
     val coroutineScope = rememberCoroutineScope()
     
-    // 注入 ViewModel 和 Repository
     val homeViewModel: HomeViewModel = koinViewModel()
     val videoViewModel: VideoScraperViewModel = koinViewModel()
     val videoSettingsRepository = koinInject<VideoSettingsRepository>()
@@ -233,7 +232,7 @@ fun MainScreen(
     }
     val pagerState = rememberPagerState(initialPage = initialPage) { destinations.size }
     
-    // 【新增】当切换到首页（索引 0）时，通知 HomeViewModel 刷新影视记录
+    // 刷新首页数据
     LaunchedEffect(pagerState.currentPage) {
         if (pagerState.currentPage == 0) {
             homeViewModel.refreshData()
@@ -544,15 +543,13 @@ fun MainScreen(
                             MainDestination.Home -> HomeRouteScreen(
                                 onOpenBook = { book ->
                                     if (book.bookUrl.startsWith("hiker://video")) {
-                                        // 提取 fid 存入变量
                                         val fid = book.bookUrl.substringAfter("fid=").substringBefore("&")
                                         videoSettingsRepository.pendingPlayFid = fid
                                         coroutineScope.launch {
                                             val videoIndex = destinations.indexOfFirst { it == MainDestination.Video }
                                             if (videoIndex != -1) {
                                                 pagerState.animateScrollToPage(videoIndex)
-                                                delay(300) // 等待滑动动画完成
-                                                // 直接调用 VideoViewModel 处理播放
+                                                delay(300)
                                                 videoViewModel.handlePendingPlayRequest()
                                             }
                                         }
@@ -607,11 +604,16 @@ fun MainScreen(
                                 animatedVisibilityScope = animatedVisibilityScope,
                             )
 
-                                // ➕ 原“发现”Tab -> 改名为“网盘浏览”，仅显示网盘浏览模式
-                                MainDestination.Explore -> VideoRouteScreen(initialLibraryMode = false)
+                                // 传入 isActive 状态，防止双重弹窗
+                                MainDestination.Explore -> VideoRouteScreen(
+                                    initialLibraryMode = false,
+                                    isActive = page == pagerState.currentPage
+                                )
 
-                                // ➕ 原“影视”Tab -> 仅显示影视库（刮削内容）
-                                MainDestination.Video -> VideoRouteScreen(initialLibraryMode = true)
+                                MainDestination.Video -> VideoRouteScreen(
+                                    initialLibraryMode = true,
+                                    isActive = page == pagerState.currentPage
+                                )
 
                             MainDestination.Rss -> RssRouteScreen(
                                 onOpenSort = { sourceUrl, sortUrl, key ->
