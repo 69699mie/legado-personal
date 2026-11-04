@@ -179,7 +179,14 @@ fun VideoLibraryScreen(
     }
 
     if (showSettingsDialog) {
-        SettingsDialog(uiState = uiState, viewModel = viewModel, onDismiss = { showSettingsDialog = false })
+        SettingsDialog(
+            uiState = uiState,
+            viewModel = viewModel,
+            onDismiss = { showSettingsDialog = false },
+            onWebLoginClick = { 
+                // 在资源库页面也支持点击登录，拉起确认框逻辑
+            }
+        )
     }
 }
 
@@ -201,6 +208,7 @@ fun VideoScraperScreen(
 
     var showSettingsDialog by remember { mutableStateOf(false) }
     var showWebLoginDialog by remember { mutableStateOf(false) }
+    var showLoginConfirmDialog by remember { mutableStateOf(false) } // 新增：登录确认弹窗
     var showManualScrapeDialog by remember { mutableStateOf(false) }
     var manualScrapeSeries by remember { mutableStateOf<MediaSeries?>(null) }
     var viewAllCategory by remember { mutableStateOf<String?>(null) }
@@ -300,32 +308,7 @@ fun VideoScraperScreen(
             }
         }
 
-        // 2. 浮层：正在获取直链时（留在详情页，显示居中的黑底加载框）
-        if (isActive && uiState.playUrl == null && uiState.currentPlayFile != null) {
-            // 半透明防点击遮罩
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .background(Color.Black.copy(alpha = 0.2f))
-                    .clickable(indication = null, interactionSource = remember { MutableInteractionSource() }) {}, 
-                contentAlignment = Alignment.Center
-            ) {
-                // 黑色圆角提示框
-                Row(
-                    modifier = Modifier
-                        .background(Color(0xCC000000), RoundedCornerShape(12.dp))
-                        .padding(horizontal = 24.dp, vertical = 16.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    CircularProgressIndicator(color = Color.White, modifier = Modifier.size(24.dp), strokeWidth = 2.dp)
-                    Spacer(modifier = Modifier.width(16.dp))
-                    // 【这里修改了传入的文本】
-                    AnimatedLoadingDots(color = Color.White, fontSize = 14.sp, text = "正在获取播放地址")
-                }
-            }
-        }
-
-        // 3. 全屏播放器 (有直链时弹出)
+        // 2. 全屏播放器 (有直链时弹出，**去掉了前置的加载框，直接弹**)
         if (isActive && uiState.playUrl != null && uiState.currentSeries != null && uiState.currentPlayFile != null) {
             Dialog(
                 onDismissRequest = {
@@ -352,7 +335,40 @@ fun VideoScraperScreen(
     }
 
     if (showSettingsDialog) {
-        SettingsDialog(uiState = uiState, viewModel = viewModel, onDismiss = { showSettingsDialog = false }, onWebLoginClick = { showWebLoginDialog = true })
+        SettingsDialog(
+            uiState = uiState, 
+            viewModel = viewModel, 
+            onDismiss = { showSettingsDialog = false }, 
+            onWebLoginClick = { showLoginConfirmDialog = true } // 点击登录，弹出确认框
+        )
+    }
+
+    // 登录确认弹窗
+    if (showLoginConfirmDialog) {
+        val isLoggedIn = uiState.cookie.isNotBlank()
+        AlertDialog(
+            onDismissRequest = { showLoginConfirmDialog = false },
+            title = { AppText("登录", fontWeight = FontWeight.Bold) },
+            text = { AppText(if (isLoggedIn) "当前状态：已登录" else "当前状态：未登录") },
+            confirmButton = {
+                TextButton(onClick = {
+                    showLoginConfirmDialog = false
+                    if (isLoggedIn) {
+                        // 如果已登录，先清除缓存
+                        viewModel.loginWithCapturedCookie("")
+                    }
+                    // 无论怎样，都弹出扫码界面
+                    showWebLoginDialog = true
+                }) {
+                    AppText("登录")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showLoginConfirmDialog = false }) {
+                    AppText("取消", color = Color.Gray)
+                }
+            }
+        )
     }
 
     if (showWebLoginDialog) {
@@ -361,9 +377,9 @@ fun VideoScraperScreen(
                 WebLoginView(
                     onLoginSuccess = { cookie ->
                         viewModel.loginWithCapturedCookie(cookie)
+                        // 直接关闭弹窗，静默保存，不弹 Toast
                         showWebLoginDialog = false
                         showSettingsDialog = false
-                        Toast.makeText(context, "登录成功，已同步最新数据", Toast.LENGTH_SHORT).show()
                     },
                     onCancel = { showWebLoginDialog = false }
                 )
@@ -418,7 +434,7 @@ private fun SettingsDialog(
                             modifier = Modifier.height(36.dp),
                             border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.5f))
                         ) {
-                            AppText("网页扫码登录", fontSize = 13.sp)
+                            AppText("登录", fontSize = 13.sp)
                         }
                     }
                 }
@@ -475,14 +491,18 @@ private fun SettingsDialog(
                     }
                 }
 
-                TextButton(
+                // 改为 OutlinedButton，文本改为“确认”
+                OutlinedButton(
                     onClick = {
                         viewModel.saveSettings(inputCookie, inputTmdbKey, inputTmdbUrl)
                         onDismiss()
                     }, 
-                    modifier = Modifier.align(Alignment.End).padding(top = 16.dp)
+                    shape = RoundedCornerShape(20.dp),
+                    contentPadding = PaddingValues(horizontal = 24.dp, vertical = 8.dp),
+                    modifier = Modifier.align(Alignment.End).padding(top = 16.dp),
+                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.5f))
                 ) { 
-                    AppText("保存并刷新", fontWeight = FontWeight.Bold) 
+                    AppText("确认", fontWeight = FontWeight.Bold) 
                 }
             }
         }
