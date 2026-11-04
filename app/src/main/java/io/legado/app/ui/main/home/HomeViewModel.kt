@@ -3,7 +3,9 @@ package io.legado.app.ui.main.home
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import io.legado.app.R
+import io.legado.app.data.entities.Book
 import io.legado.app.data.repository.BookRepository
+import io.legado.app.data.repository.VideoSettingsRepository
 import io.legado.app.domain.gateway.BackupSettingsGateway
 import io.legado.app.domain.model.HomeDashboardSection
 import io.legado.app.domain.model.HomeReadingBook
@@ -28,6 +30,7 @@ import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
+import org.json.JSONArray
 
 class HomeViewModel(
     private val homeDashboardUseCase: HomeDashboardUseCase,
@@ -35,6 +38,7 @@ class HomeViewModel(
     private val webDavBackupUseCase: WebDavBackupUseCase,
     private val backupRestoreUseCase: BackupRestoreUseCase,
     private val backupSettingsGateway: BackupSettingsGateway,
+    private val videoSettingsRepository: VideoSettingsRepository
 ) : ViewModel() {
 
     private val _backupState = MutableStateFlow(HomeBackupState())
@@ -60,17 +64,39 @@ class HomeViewModel(
         _activeSheet,
     ) { dashboardData, backup, dialog, sheet ->
         val (dashboard, selectedSourceUrl, visibleSections) = dashboardData
+
+        // 解析影视记录
+        val videoHistoryUiList = mutableListOf<HomeRecentBookUi>()
+        try {
+            val jsonArray = JSONArray(videoSettingsRepository.recentWatchedVideos)
+            for (i in 0 until jsonArray.length()) {
+                val obj = jsonArray.getJSONObject(i)
+                videoHistoryUiList.add(
+                    HomeRecentBookUi(
+                        bookUrl = "hiker://video?fid=${obj.optString("fid")}",
+                        name = obj.optString("seriesTitle"),
+                        author = "影视",
+                        origin = "video",
+                        coverPath = obj.optString("coverPath"),
+                        chapterTitle = obj.optString("title"),
+                        chapterProgress = null
+                    )
+                )
+            }
+        } catch (e: Exception) {}
+
+        val bookHistoryUiList = dashboard.recentBooks.map { it.toUi() }
+        
+        // 融合排序：影视在前
+        val combinedHistory = (videoHistoryUiList + bookHistoryUiList).take(7)
+
         HomeUiState(
             totalReadBooks = dashboard.totalReadBooks,
             totalReadTimeMillis = dashboard.totalReadTimeMillis,
             todayReadTimeMillis = dashboard.todayReadTimeMillis,
             dailyGoalMinutes = dashboard.dailyGoalMinutes,
-            recentBook = dashboard.recentBooks.firstOrNull()?.toUi(),
-            recentBooks = dashboard.recentBooks
-                .drop(1)
-                .take(6)
-                .map { it.toUi() }
-                .toImmutableList(),
+            recentBook = combinedHistory.firstOrNull(),
+            recentBooks = combinedHistory.drop(1).toImmutableList(),
             selectedSourceSetUrl = selectedSourceUrl,
             visibleSections = visibleSections.toImmutableSet(),
             latestBackup = backup.latest?.toUi(),
@@ -104,62 +130,47 @@ class HomeViewModel(
 
     fun onIntent(intent: HomeIntent) {
         when (intent) {
-            HomeIntent.RecentBookClick -> openRecentBook()
-            is HomeIntent.RecentHistoryBookClick -> openBook(intent.bookUrl)
+            HomeIntent.RecentBookClick -> {
+                val url = uiState.value.recentBook?.bookUrl ?: return
+                openBookOrVideo(url)
+            }
+            is HomeIntent.RecentHistoryBookClick -> openBookOrVideo(intent.bookUrl)
             is HomeIntent.SelectSourceSet -> selectSourceSet(intent.sourceUrl)
-            HomeIntent.DashboardSettingsClick -> {
-                _activeSheet.value = HomeSheet.DashboardSettings
-            }
-
-            is HomeIntent.SetSectionVisible -> {
-                setSectionVisible(intent.section, intent.visible)
-            }
-            HomeIntent.ReadingGoalClick -> {
-                _activeDialog.value = HomeDialog.SetReadingGoal(
-                    uiState.value.dailyGoalMinutes
-                )
-            }
-
+            HomeIntent.DashboardSettingsClick -> _activeSheet.value = HomeSheet.DashboardSettings
+            is HomeIntent.SetSectionVisible -> setSectionVisible(intent.section, intent.visible)
+            HomeIntent.ReadingGoalClick -> _activeDialog.value = HomeDialog.SetReadingGoal(uiState.value.dailyGoalMinutes)
             is HomeIntent.UpdateReadingGoal -> updateReadingGoal(intent.minutes)
             HomeIntent.BackupClick -> _activeSheet.value = HomeSheet.BackupOptions
-            is HomeIntent.BackupDestinationSelected -> {
-                requestBackup(intent.destination)
-            }
-
-            is HomeIntent.BackupDirectorySelected -> {
-                backup(
-                    destination = intent.destination,
-                    path = intent.path,
-                    savePath = true,
-                )
-            }
-
+            is HomeIntent.BackupDestinationSelected -> requestBackup(intent.destination)
+            is HomeIntent.BackupDirectorySelected -> backup(intent.destination, intent.path, savePath = true)
             HomeIntent.RestoreClick -> _activeSheet.value = HomeSheet.RestoreOptions
             HomeIntent.RestoreFromLocal -> {
                 _activeSheet.value = null
                 _effects.tryEmit(HomeEffect.SelectRestoreFile)
             }
-
             HomeIntent.RestoreFromNetwork -> {
                 _activeSheet.value = null
                 requestRestore()
             }
-
             is HomeIntent.RestoreLocalFileSelected -> restoreLocal(intent.uri)
             HomeIntent.ConfirmRestore -> restore()
-            HomeIntent.BackupSettingsClick -> {
-                _effects.tryEmit(HomeEffect.OpenBackupSettings)
-            }
-
+            HomeIntent.BackupSettingsClick -> _effects.tryEmit(HomeEffect.OpenBackupSettings)
             HomeIntent.RetryBackupInfo -> refreshLatestBackup()
             HomeIntent.DismissDialog -> _activeDialog.value = null
             HomeIntent.DismissSheet -> _activeSheet.value = null
         }
     }
 
-    private fun openRecentBook() {
-        val bookUrl = uiState.value.recentBook?.bookUrl ?: return
-        openBook(bookUrl)
+    private fun openBookOrVideo(url: String) {
+        if (url.startsWith("hiker://video")) {
+            viewModelScope.launch {
+                // 构造合法 Book 用于事件传递
+                val fakeBook = Book(bookUrl = url, name = "影视", author = "视频")
+                _effects.emit(HomeEffect.OpenBook(fakeBook))
+            }
+        } else {
+            openBook(url)
+        }
     }
 
     private fun openBook(bookUrl: String) {
@@ -183,10 +194,7 @@ class HomeViewModel(
         }
     }
 
-    private fun setSectionVisible(
-        section: HomeDashboardSection,
-        visible: Boolean,
-    ) {
+    private fun setSectionVisible(section: HomeDashboardSection, visible: Boolean) {
         val sections = uiState.value.visibleSections.toMutableSet().apply {
             if (visible) add(section) else remove(section)
         }
@@ -200,11 +208,8 @@ class HomeViewModel(
         if (backup == null) {
             _effects.tryEmit(
                 HomeEffect.ShowMessage(
-                    if (_backupState.value.isLoadError) {
-                        R.string.home_webdav_backup_load_error
-                    } else {
-                        R.string.home_no_webdav_backup
-                    }
+                    if (_backupState.value.isLoadError) R.string.home_webdav_backup_load_error
+                    else R.string.home_no_webdav_backup
                 )
             )
             return
@@ -223,48 +228,28 @@ class HomeViewModel(
             if (path.isNullOrBlank()) {
                 _effects.emit(HomeEffect.SelectBackupDirectory(destination))
             } else if (!path.isContentScheme()) {
-                _effects.emit(
-                    HomeEffect.RequestBackupStoragePermission(
-                        destination = destination,
-                        path = path,
-                    )
-                )
+                _effects.emit(HomeEffect.RequestBackupStoragePermission(destination = destination, path = path))
             } else {
                 backup(destination = destination, path = path)
             }
         }
     }
 
-    private fun backup(
-        destination: HomeBackupDestination,
-        path: String?,
-        savePath: Boolean = false,
-    ) {
+    private fun backup(destination: HomeBackupDestination, path: String?, savePath: Boolean = false) {
         if (!backupActionMutex.tryLock()) return
         _backupState.update { it.copy(isActionRunning = true) }
         viewModelScope.launch(Dispatchers.IO) {
             try {
                 runCatching {
-                    if (savePath) {
-                        backupSettingsGateway.update { it.copy(backupPath = path) }
-                    }
-                    if (destination != HomeBackupDestination.Local) {
-                        webDavBackupUseCase.refreshConfig()
-                    }
+                    if (savePath) backupSettingsGateway.update { it.copy(backupPath = path) }
+                    if (destination != HomeBackupDestination.Local) webDavBackupUseCase.refreshConfig()
                     backupRestoreUseCase.backup(path, destination.mode)
                 }.onSuccess {
                     _effects.emit(HomeEffect.ShowMessage(R.string.backup_success))
-                    if (destination != HomeBackupDestination.Local) {
-                        refreshLatestBackup()
-                    }
+                    if (destination != HomeBackupDestination.Local) refreshLatestBackup()
                 }.onFailure { error ->
                     if (error is CancellationException) throw error
-                    _effects.emit(
-                        HomeEffect.ShowMessage(
-                            messageRes = R.string.backup_error,
-                            detail = error.localizedMessage,
-                        )
-                    )
+                    _effects.emit(HomeEffect.ShowMessage(messageRes = R.string.backup_error, detail = error.localizedMessage))
                 }
             } finally {
                 _backupState.update { it.copy(isActionRunning = false) }
@@ -278,19 +263,12 @@ class HomeViewModel(
         _backupState.update { it.copy(isActionRunning = true) }
         viewModelScope.launch(Dispatchers.IO) {
             try {
-                runCatching {
-                    backupRestoreUseCase.restoreLocal(uri)
-                }.onSuccess {
-                    _effects.emit(HomeEffect.ShowMessage(R.string.restore_success))
-                }.onFailure { error ->
-                    if (error is CancellationException) throw error
-                    _effects.emit(
-                        HomeEffect.ShowMessage(
-                            messageRes = R.string.restore_error,
-                            detail = error.localizedMessage,
-                        )
-                    )
-                }
+                runCatching { backupRestoreUseCase.restoreLocal(uri) }
+                    .onSuccess { _effects.emit(HomeEffect.ShowMessage(R.string.restore_success)) }
+                    .onFailure { error ->
+                        if (error is CancellationException) throw error
+                        _effects.emit(HomeEffect.ShowMessage(messageRes = R.string.restore_error, detail = error.localizedMessage))
+                    }
             } finally {
                 _backupState.update { it.copy(isActionRunning = false) }
                 backupActionMutex.unlock()
@@ -305,19 +283,12 @@ class HomeViewModel(
         _backupState.update { it.copy(isActionRunning = true) }
         viewModelScope.launch(Dispatchers.IO) {
             try {
-                runCatching {
-                    webDavBackupUseCase.restore(backup.name)
-                }.onSuccess {
-                    _effects.emit(HomeEffect.ShowMessage(R.string.restore_success))
-                }.onFailure { error ->
-                    if (error is CancellationException) throw error
-                    _effects.emit(
-                        HomeEffect.ShowMessage(
-                            messageRes = R.string.restore_error,
-                            detail = error.localizedMessage,
-                        )
-                    )
-                }
+                runCatching { webDavBackupUseCase.restore(backup.name) }
+                    .onSuccess { _effects.emit(HomeEffect.ShowMessage(R.string.restore_success)) }
+                    .onFailure { error ->
+                        if (error is CancellationException) throw error
+                        _effects.emit(HomeEffect.ShowMessage(messageRes = R.string.restore_error, detail = error.localizedMessage))
+                    }
             } finally {
                 _backupState.update { it.copy(isActionRunning = false) }
                 backupActionMutex.unlock()
