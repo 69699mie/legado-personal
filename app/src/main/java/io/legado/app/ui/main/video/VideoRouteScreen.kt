@@ -107,7 +107,7 @@ import kotlin.math.roundToInt
 @Composable
 fun VideoRouteScreen(
     modifier: Modifier = Modifier,
-    initialLibraryMode: Boolean? = null, // 新增参数，如果为 null 则显示 TabRow，否则固定模式并隐藏 TabRow
+    initialLibraryMode: Boolean? = null, // 如果为 null 则显示 TabRow，否则固定模式并隐藏 TabRow
     viewModel: VideoScraperViewModel = koinViewModel()
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
@@ -198,12 +198,12 @@ fun VideoRouteScreen(
                         modifier = Modifier.weight(1f).padding(horizontal = 8.dp),
                         containerColor = Color.Transparent, contentColor = MaterialTheme.colorScheme.primary
                     ) {
-                        Tab(selected = !isLibMode, onClick = { viewModel.setMode(false) }, text = { AppText("网盘浏览") })
+                        Tab(selected = !isLibMode, onClick = { viewModel.setMode(false) }, text = { AppText("资源库") })
                         Tab(selected = isLibMode, onClick = { viewModel.setMode(true) }, text = { AppText("影视库") })
                     }
                 } else {
                     AppText(
-                        text = if (isLibMode) "影视库" else "网盘浏览",
+                        text = if (isLibMode) "影视库" else "资源库", // 左上角文字改为资源库
                         style = MaterialTheme.typography.titleMedium,
                         fontWeight = FontWeight.Bold,
                         modifier = Modifier.weight(1f).padding(start = 16.dp)
@@ -246,7 +246,7 @@ fun VideoRouteScreen(
             } else {
                 PullToRefreshBox(isRefreshing = uiState.isLoading, onRefresh = { viewModel.loadLibraryVideos() }, modifier = Modifier.fillMaxSize()) {
                     if (uiState.selectedLibraryFids.isEmpty()) {
-                        Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { AppText("请先在网盘浏览中勾选媒体文件夹") }
+                        Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { AppText("请先在资源库中勾选媒体文件夹") }
                     } else if (uiState.seriesList.isEmpty() && !uiState.isLoading) {
                         Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { AppText("没找到任何视频，下拉可刷新") }
                     } else {
@@ -285,73 +285,90 @@ fun VideoRouteScreen(
         var isTmdbKeyVisible by remember { mutableStateOf(false) }
 
         Dialog(onDismissRequest = { showSettingsDialog = false }) {
-            Column(
-                modifier = Modifier
-                    .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.95f), RoundedCornerShape(16.dp))
-                    .padding(16.dp)
-                    .fillMaxWidth()
+            // 改为标准的 Surface 卡片，不透明背景，自带主题色和圆角阴影
+            Surface(
+                shape = RoundedCornerShape(24.dp),
+                color = MaterialTheme.colorScheme.surface,
+                tonalElevation = 6.dp,
+                modifier = Modifier.fillMaxWidth().padding(16.dp)
             ) {
-                Row(modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                    AppText(text = "夸克登录状态", fontWeight = FontWeight.Bold)
-                    Button(onClick = { showWebLoginDialog = true }, contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp)) { AppText("网页扫码登录") }
-                }
-                
-                OutlinedTextField(
-                    value = inputCookie,
-                    onValueChange = { inputCookie = it },
-                    modifier = Modifier.padding(vertical = 8.dp).fillMaxWidth(),
-                    visualTransformation = if (isCookieVisible) VisualTransformation.None else PasswordVisualTransformation(),
-                    maxLines = 2,
-                    label = { AppText("手动填写 Cookie（可选）") },
-                    trailingIcon = {
-                        IconButton(onClick = { isCookieVisible = !isCookieVisible }) {
-                            Icon(
-                                imageVector = if (isCookieVisible) Icons.Default.Visibility else Icons.Default.VisibilityOff,
-                                contentDescription = "切换可见性"
-                            )
+                Column(modifier = Modifier.padding(24.dp).fillMaxWidth()) {
+                    Row(modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                        AppText(text = "夸克登录状态", fontWeight = FontWeight.Bold, fontSize = 18.sp)
+                        // 改为优雅的 OutlinedButton 胶囊样式
+                        OutlinedButton(
+                            onClick = { showWebLoginDialog = true },
+                            shape = RoundedCornerShape(20.dp),
+                            contentPadding = PaddingValues(horizontal = 16.dp, vertical = 6.dp),
+                            modifier = Modifier.height(36.dp)
+                        ) {
+                            AppText("网页扫码登录", fontSize = 13.sp)
                         }
                     }
-                )
-                
-                AppText(text = "TMDB API Key (v3 auth)")
-                
-                OutlinedTextField(
-                    value = inputTmdbKey,
-                    onValueChange = { inputTmdbKey = it },
-                    modifier = Modifier.padding(vertical = 8.dp).fillMaxWidth(),
-                    visualTransformation = if (isTmdbKeyVisible) VisualTransformation.None else PasswordVisualTransformation(),
-                    maxLines = 1,
-                    trailingIcon = {
-                        IconButton(onClick = { isTmdbKeyVisible = !isTmdbKeyVisible }) {
-                            Icon(
-                                imageVector = if (isTmdbKeyVisible) Icons.Default.Visibility else Icons.Default.VisibilityOff,
-                                contentDescription = "切换可见性"
-                            )
+                    
+                    OutlinedTextField(
+                        value = inputCookie,
+                        onValueChange = { inputCookie = it },
+                        modifier = Modifier.padding(vertical = 8.dp).fillMaxWidth(),
+                        visualTransformation = if (isCookieVisible) VisualTransformation.None else PasswordVisualTransformation(),
+                        maxLines = 2,
+                        label = { AppText("手动填写 Cookie（可选）") },
+                        trailingIcon = {
+                            IconButton(onClick = { isCookieVisible = !isCookieVisible }) {
+                                Icon(
+                                    imageVector = if (isCookieVisible) Icons.Default.Visibility else Icons.Default.VisibilityOff,
+                                    contentDescription = "切换可见性"
+                                )
+                            }
+                        }
+                    )
+                    
+                    AppText(text = "TMDB API Key (v3 auth)", modifier = Modifier.padding(top = 8.dp))
+                    
+                    OutlinedTextField(
+                        value = inputTmdbKey,
+                        onValueChange = { inputTmdbKey = it },
+                        modifier = Modifier.padding(vertical = 8.dp).fillMaxWidth(),
+                        visualTransformation = if (isTmdbKeyVisible) VisualTransformation.None else PasswordVisualTransformation(),
+                        maxLines = 1,
+                        trailingIcon = {
+                            IconButton(onClick = { isTmdbKeyVisible = !isTmdbKeyVisible }) {
+                                Icon(
+                                    imageVector = if (isTmdbKeyVisible) Icons.Default.Visibility else Icons.Default.VisibilityOff,
+                                    contentDescription = "切换可见性"
+                                )
+                            }
+                        }
+                    )
+
+                    AppText(text = "TMDB API 代理地址")
+                    OutlinedTextField(value = inputTmdbUrl, onValueChange = { inputTmdbUrl = it }, modifier = Modifier.padding(vertical = 8.dp), maxLines = 1)
+                    
+                    HorizontalDivider(modifier = Modifier.padding(vertical = 12.dp))
+                    
+                    Row(
+                        modifier = Modifier.fillMaxWidth().clickable { showThreadSelection = true }.padding(vertical = 8.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        AppText("极速播放线程数")
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            AppText("${uiState.downloadThreads} ", color = Color.Gray)
+                            Icon(Icons.Default.KeyboardArrowRight, null, tint = Color.Gray)
                         }
                     }
-                )
 
-                AppText(text = "TMDB API 代理地址")
-                OutlinedTextField(value = inputTmdbUrl, onValueChange = { inputTmdbUrl = it }, modifier = Modifier.padding(vertical = 8.dp), maxLines = 1)
-                
-                HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
-                
-                Row(
-                    modifier = Modifier.fillMaxWidth().clickable { showThreadSelection = true }.padding(vertical = 8.dp),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    AppText("极速播放线程数")
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        AppText("${uiState.downloadThreads} ", color = Color.Gray)
-                        Icon(Icons.Default.KeyboardArrowRight, null, tint = Color.Gray)
+                    Button(
+                        onClick = {
+                            viewModel.saveSettings(inputCookie, inputTmdbKey, inputTmdbUrl)
+                            showSettingsDialog = false
+                        }, 
+                        modifier = Modifier.align(Alignment.End).padding(top = 16.dp).height(40.dp),
+                        shape = RoundedCornerShape(20.dp)
+                    ) { 
+                        AppText("保存并刷新") 
                     }
                 }
-
-                OutlinedButton(onClick = {
-                    viewModel.saveSettings(inputCookie, inputTmdbKey, inputTmdbUrl)
-                    showSettingsDialog = false
-                }, modifier = Modifier.align(Alignment.End)) { AppText("保存并刷新") }
             }
         }
     }
