@@ -111,7 +111,7 @@ import java.util.concurrent.TimeUnit
 import kotlin.math.roundToInt
 
 // ==========================================
-// 1. 资源库独立页面 (只负责浏览与勾选)
+// 1. 资源库独立页面
 // ==========================================
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
@@ -182,7 +182,7 @@ fun VideoLibraryScreen(
 
 
 // ==========================================
-// 2. 影视库独立页面 (包含播放器、刮削)
+// 2. 影视库独立页面
 // ==========================================
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
@@ -373,15 +373,15 @@ private fun SettingsDialog(
     Dialog(onDismissRequest = onDismiss) {
         Surface(
             shape = RoundedCornerShape(24.dp),
-            color = Color.White.copy(alpha = 0.98f), // 【修改】提高不透明度，几乎纯白
-            border = BorderStroke(1.dp, Color(0x33FFFFFF)),
-            modifier = Modifier.fillMaxWidth().padding(16.dp).heightIn(max = 600.dp) // 【修改】限制最大高度
+            color = Color.White.copy(alpha = 0.96f), 
+            border = BorderStroke(1.dp, Color(0xFFE0E0E0)), 
+            modifier = Modifier.fillMaxWidth().padding(16.dp).heightIn(max = 560.dp) 
         ) {
             Column(
                 modifier = Modifier
                     .padding(24.dp)
                     .fillMaxWidth()
-                    .verticalScroll(rememberScrollState()) // 【修改】内容过长时支持滚动
+                    .verticalScroll(rememberScrollState()) 
             ) {
                 Row(modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                     AppText(text = "夸克登录状态", fontWeight = FontWeight.Bold, fontSize = 18.sp)
@@ -631,7 +631,6 @@ fun InternalVideoPlayer(
     val lastManualSwitchTime = remember { longArrayOf(0L) }
     
     var isLocked by remember { mutableStateOf(false) }
-    // 【新增】使用 rememberUpdatedState 让传感器闭包能实时读取到最新的锁定状态
     val currentIsLocked by rememberUpdatedState(isLocked)
 
     LaunchedEffect(Unit) {
@@ -642,7 +641,7 @@ fun InternalVideoPlayer(
         val orientationListener = object : OrientationEventListener(context) {
             override fun onOrientationChanged(orientation: Int) {
                 if (orientation == ORIENTATION_UNKNOWN) return
-                if (currentIsLocked) return // 【修复】如果已锁定，不响应重力感应
+                if (currentIsLocked) return
                 if (System.currentTimeMillis() - lastManualSwitchTime[0] < 2000) return
 
                 when (orientation) {
@@ -1150,26 +1149,57 @@ fun InternalVideoPlayer(
                                 modifier = Modifier
                                     .weight(1f)
                                     .padding(horizontal = 8.dp)
-                                    .height(24.dp),
+                                    .height(32.dp),
                                 contentAlignment = Alignment.Center
                             ) {
                                 val bufferedFraction = if (duration > 0) bufferedPosition.toFloat() / duration else 0f
-                                LinearProgressIndicator(
-                                    progress = { bufferedFraction },
-                                    modifier = Modifier.fillMaxWidth().height(4.dp).clip(RoundedCornerShape(2.dp)),
-                                    color = Color.White.copy(alpha = 0.3f),
-                                    trackColor = Color.White.copy(alpha = 0.1f)
+                                val currentFraction = if (duration > 0) currentPosition.toFloat() / duration else 0f
+                                
+                                // 底层：缓存进度底轨 (深灰色)
+                                Box(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .height(3.dp)
+                                        .background(Color.White.copy(alpha = 0.2f), RoundedCornerShape(1.5.dp))
                                 )
+                                // 中层：已缓存进度 (浅灰色)
+                                Box(
+                                    modifier = Modifier
+                                        .fillMaxWidth(bufferedFraction)
+                                        .height(3.dp)
+                                        .background(Color.White.copy(alpha = 0.5f), RoundedCornerShape(1.5.dp))
+                                )
+                                // 上层：已播放进度 (纯白色)
+                                Box(
+                                    modifier = Modifier
+                                        .fillMaxWidth(currentFraction)
+                                        .height(3.dp)
+                                        .background(Color.White, RoundedCornerShape(1.5.dp))
+                                )
+                                
+                                // 顶层：透明交互滑块，强制使用白色正圆点
                                 Slider(
-                                    value = if (duration > 0) currentPosition.toFloat() / duration else 0f,
+                                    value = currentFraction,
                                     onValueChange = { currentPosition = (it * duration).toLong() },
                                     onValueChangeFinished = { exoPlayer.seekTo(currentPosition); if (isPlaying) exoPlayer.play() },
                                     modifier = Modifier.fillMaxWidth(),
                                     colors = SliderDefaults.colors(
-                                        thumbColor = Color.White, 
-                                        activeTrackColor = Color.White, 
-                                        inactiveTrackColor = Color.Transparent
-                                    )
+                                        thumbColor = Color.White,
+                                        activeTrackColor = Color.Transparent,
+                                        inactiveTrackColor = Color.Transparent,
+                                        activeTickColor = Color.Transparent,
+                                        inactiveTickColor = Color.Transparent
+                                    ),
+                                    thumb = {
+                                        Box(
+                                            modifier = Modifier
+                                                .size(14.dp)
+                                                .background(Color.White, CircleShape)
+                                        )
+                                    },
+                                    track = {
+                                        Box(modifier = Modifier.fillMaxWidth())
+                                    }
                                 )
                             }
                             
