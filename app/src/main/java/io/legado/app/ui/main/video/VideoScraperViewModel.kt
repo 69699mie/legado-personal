@@ -53,7 +53,7 @@ data class MediaSeries(
     val episodeStills: Map<Int, String> = emptyMap(),
     val seasonEpisodeTitles: Map<String, String> = emptyMap(),
     val seasonEpisodeStills: Map<String, String> = emptyMap(),
-    val groupName: String? = null // 新增：同系列分组名（例如：刺杀小说家）
+    val groupName: String? = null 
 )
 
 data class TmdbSearchResult(
@@ -371,8 +371,8 @@ class VideoScraperViewModel(
                     folderSeason = parseSeasonFromFolder(meaningfulPaths.last())
                     val seasonStr = meaningfulPaths.last()
                     baseTitle = if (meaningfulPaths.size >= 2) meaningfulPaths[meaningfulPaths.size - 2] else meaningfulPaths.last()
-                    groupName = baseTitle // 设置系列分组名
-                    baseTitle = "$baseTitle $seasonStr" // 强制加上季数后缀以便区分
+                    groupName = baseTitle 
+                    baseTitle = "$baseTitle $seasonStr" 
                 } else {
                     baseTitle = meaningfulPaths.last()
                     if (meaningfulPaths.size >= 2 && VideoFileNameParser.isSeasonFolder(meaningfulPaths[meaningfulPaths.size - 2])) {
@@ -473,7 +473,6 @@ class VideoScraperViewModel(
     private fun scrapeSeriesPosters(needScrapeList: List<MediaSeries>, apiKey: String, baseUrl: String) {
         viewModelScope.launch(Dispatchers.IO) {
             val scrapedList = needScrapeList.map { series ->
-                // 清洗用于搜索的名字（去掉“第一季”等后缀）
                 var searchTitle = series.originalParsedTitle
                 if (series.groupName != null) {
                     searchTitle = series.groupName
@@ -785,7 +784,7 @@ class VideoScraperViewModel(
         } catch (e: Exception) { e.printStackTrace() }
 
         _uiState.update { it.copy(playUrl = null, playTitle = titleText, currentSeries = series, currentPlayFile = file) }
-        Toast.makeText(context, "正在加载中...", Toast.LENGTH_SHORT).show()
+        // 【已删除 Toast 弹窗】
 
         viewModelScope.launch {
             val url = withContext(Dispatchers.IO) {
