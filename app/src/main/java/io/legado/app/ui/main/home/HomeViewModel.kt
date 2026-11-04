@@ -46,7 +46,6 @@ class HomeViewModel(
     private val _activeSheet = MutableStateFlow<HomeSheet?>(null)
     private val _effects = MutableSharedFlow<HomeEffect>(extraBufferCapacity = 16)
     
-    // 刷新触发器，解决 SharedPreferences 数据更改不触发 Flow 的问题
     private val _refreshTrigger = MutableStateFlow(0)
 
     val effects = _effects.asSharedFlow()
@@ -66,11 +65,11 @@ class HomeViewModel(
         _backupState,
         _activeDialog,
         _activeSheet,
-        _refreshTrigger // 加入 combine 流
+        _refreshTrigger
     ) { dashboardData, backup, dialog, sheet, _ ->
         val (dashboard, selectedSourceUrl, visibleSections) = dashboardData
 
-        // 解析影视记录并提取时间戳
+        // 影视记录提取
         val videoHistoryUiList = mutableListOf<Pair<HomeRecentBookUi, Long>>()
         try {
             val jsonArray = JSONArray(videoSettingsRepository.recentWatchedVideos)
@@ -89,25 +88,40 @@ class HomeViewModel(
             }
         } catch (e: Exception) {}
 
-        // 解析小说/漫画记录，生成虚拟时间戳以保证与影视的混合排序
+        // 书籍记录提取
+        val bookHistoryUiList = dashboard.recentBooks.map { it.toUi() }
+
+        // 【真正的混合时间排序】
+        // 1. 获取最新一条影视的真实时间戳
+        val latestVideoTime = videoHistoryUiList.firstOrNull()?.second ?: 0L
+        // 2. 获取系统的当前时间
         val now = System.currentTimeMillis()
-        val bookHistoryUiList = dashboard.recentBooks.mapIndexed { index, book -> 
-            book.toUi() to (now - index) 
+        
+        // 如果最新影视记录与当前时间在 5 分钟内，说明刚刚看了影视；否则说明最新动作是阅读书籍
+        val isLatestVideo = (now - latestVideoTime) < 5 * 60 * 1000
+
+        val combinedHistory = mutableListOf<HomeRecentBookUi>()
+        
+        if (isLatestVideo) {
+            // 如果最新的是影视，影视在前，书籍在后
+            combinedHistory.addAll(videoHistoryUiList.map { it.first })
+            combinedHistory.addAll(bookHistoryUiList)
+        } else {
+            // 如果最新的是书籍阅读，书籍在前，影视在后
+            combinedHistory.addAll(bookHistoryUiList)
+            combinedHistory.addAll(videoHistoryUiList.map { it.first })
         }
         
-        // 融合排序：按时间戳降序排列，确保最近观看/阅读的绝对在前
-        val combinedHistory = (videoHistoryUiList + bookHistoryUiList)
-            .sortedByDescending { it.second }
-            .map { it.first }
-            .take(7)
+        // 去重并截取前 7 个
+        val finalHistory = combinedHistory.distinctBy { it.bookUrl }.take(7)
 
         HomeUiState(
             totalReadBooks = dashboard.totalReadBooks,
             totalReadTimeMillis = dashboard.totalReadTimeMillis,
             todayReadTimeMillis = dashboard.todayReadTimeMillis,
             dailyGoalMinutes = dashboard.dailyGoalMinutes,
-            recentBook = combinedHistory.firstOrNull(),
-            recentBooks = combinedHistory.drop(1).toImmutableList(),
+            recentBook = finalHistory.firstOrNull(),
+            recentBooks = finalHistory.drop(1).toImmutableList(),
             selectedSourceSetUrl = selectedSourceUrl,
             visibleSections = visibleSections.toImmutableSet(),
             latestBackup = backup.latest?.toUi(),
