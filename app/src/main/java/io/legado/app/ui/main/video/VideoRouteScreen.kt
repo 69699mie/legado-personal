@@ -1295,9 +1295,9 @@ fun AnimatedLoadingDots(color: Color, fontSize: androidx.compose.ui.unit.TextUni
         // 使用固定宽度的 Box 防止文字由于上下偏移产生 UI 抖动
         Box(modifier = Modifier.width(20.dp).padding(start = 2.dp)) {
             Row {
-                Text(".", color = color, fontSize = fontSize, modifier = Modifier.offset(y = (-4 * dot1Y).dp))
-                Text(".", color = color, fontSize = fontSize, modifier = Modifier.offset(y = (-4 * dot2Y).dp))
-                Text(".", color = color, fontSize = fontSize, modifier = Modifier.offset(y = (-4 * dot3Y).dp))
+                AppText(".", color = color, fontSize = fontSize, modifier = Modifier.offset(y = (-4 * dot1Y).dp))
+                AppText(".", color = color, fontSize = fontSize, modifier = Modifier.offset(y = (-4 * dot2Y).dp))
+                AppText(".", color = color, fontSize = fontSize, modifier = Modifier.offset(y = (-4 * dot3Y).dp))
             }
         }
     }
