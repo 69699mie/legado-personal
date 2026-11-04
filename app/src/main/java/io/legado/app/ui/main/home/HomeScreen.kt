@@ -163,6 +163,11 @@ fun HomeRouteScreen(
     var previewBook by remember { mutableStateOf<SearchBook?>(null) }
     var previewSharedCoverKey by remember { mutableStateOf<String?>(null) }
 
+    // 【新增】每次页面组合时触发一次刷新，以更新影视观看记录
+    LaunchedEffect(Unit) {
+        viewModel.refreshData()
+    }
+
     val feedActions = remember(homepageViewModel, onNavigateToBookInfo, onOpenExploreShow) {
         HomepageFeedActions(
             onModuleHeaderClick = { sourceUrl, exploreUrl, title ->
@@ -860,7 +865,7 @@ private fun RecentBookCard(
                             author = book.author,
                             path = book.coverPath,
                             sourceOrigin = book.origin,
-                            bookUrl = book.bookUrl, // 💡 修复：补全 bookUrl，保证书源头信息与缓存别名可用
+                            bookUrl = book.bookUrl,
                             modifier = Modifier
                                 .width(56.dp)
                                 .aspectRatio(5f / 7f),
@@ -1038,7 +1043,7 @@ private fun RecentHistoryBookCard(
             author = book.author,
             path = book.coverPath,
             sourceOrigin = book.origin,
-            bookUrl = book.bookUrl, // 💡 修复：补全 bookUrl
+            bookUrl = book.bookUrl,
             modifier = Modifier.fillMaxSize(),
             coverModifier = Modifier.fillMaxSize(),
         )
