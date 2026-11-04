@@ -95,10 +95,12 @@ import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.source.ProgressiveMediaSource
 import androidx.media3.ui.PlayerView
 import coil3.compose.AsyncImage
+import io.legado.app.data.repository.VideoSettingsRepository
 import io.legado.app.ui.widget.components.text.AppText
 import kotlinx.coroutines.delay
 import okhttp3.OkHttpClient
 import org.koin.androidx.compose.koinViewModel
+import org.koin.compose.koinInject
 import java.util.Locale
 import java.util.concurrent.TimeUnit
 import kotlin.math.roundToInt
@@ -113,6 +115,8 @@ fun VideoRouteScreen(
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val context = LocalContext.current
     val activity = context.findActivity()
+    val videoSettingsRepository = koinInject<VideoSettingsRepository>() // 注入
+    
     var showSettingsDialog by remember { mutableStateOf(false) }
     var showWebLoginDialog by remember { mutableStateOf(false) }
     var showManualScrapeDialog by remember { mutableStateOf(false) }
@@ -120,13 +124,22 @@ fun VideoRouteScreen(
     var viewAllCategory by remember { mutableStateOf<String?>(null) }
     var showThreadSelection by remember { mutableStateOf(false) }
 
-    // 局部模式变量，避免同一个 ViewModel 在两个 Tab 之间共享状态导致 UI 串扰
+    // 局部模式变量
     val isLibMode = initialLibraryMode ?: uiState.isLibraryMode
 
     // 同步模式到 ViewModel 以触发对应数据的加载
     LaunchedEffect(initialLibraryMode) {
         if (initialLibraryMode != null && uiState.isLibraryMode != initialLibraryMode) {
             viewModel.setMode(initialLibraryMode)
+        }
+    }
+
+    // 【新增】监听首页发来的拉起播放指令
+    LaunchedEffect(Unit) {
+        val pendingFid = videoSettingsRepository.pendingPlayFid
+        if (!pendingFid.isNullOrBlank()) {
+            // 调用 ViewModel 处理，内部会将其消费掉并获取直链
+            viewModel.handlePendingPlayRequest()
         }
     }
 
@@ -191,7 +204,6 @@ fun VideoRouteScreen(
                     IconButton(onClick = { viewModel.goBack() }) { Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "返回") }
                 }
                 
-                // 当传入 initialLibraryMode 时隐藏 TabRow，显示固定标题
                 if (initialLibraryMode == null) {
                     TabRow(
                         selectedTabIndex = if (isLibMode) 1 else 0,
@@ -203,7 +215,7 @@ fun VideoRouteScreen(
                     }
                 } else {
                     AppText(
-                        text = if (isLibMode) "影视库" else "资源库", // 左上角文字改为资源库
+                        text = if (isLibMode) "影视库" else "资源库",
                         style = MaterialTheme.typography.titleMedium,
                         fontWeight = FontWeight.Bold,
                         modifier = Modifier.weight(1f).padding(start = 16.dp)
@@ -285,7 +297,6 @@ fun VideoRouteScreen(
         var isTmdbKeyVisible by remember { mutableStateOf(false) }
 
         Dialog(onDismissRequest = { showSettingsDialog = false }) {
-            // 改为标准的 Surface 卡片，不透明背景，自带主题色和圆角阴影
             Surface(
                 shape = RoundedCornerShape(24.dp),
                 color = MaterialTheme.colorScheme.surface,
@@ -295,7 +306,6 @@ fun VideoRouteScreen(
                 Column(modifier = Modifier.padding(24.dp).fillMaxWidth()) {
                     Row(modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                         AppText(text = "夸克登录状态", fontWeight = FontWeight.Bold, fontSize = 18.sp)
-                        // 改为优雅的 OutlinedButton 胶囊样式
                         OutlinedButton(
                             onClick = { showWebLoginDialog = true },
                             shape = RoundedCornerShape(20.dp),
