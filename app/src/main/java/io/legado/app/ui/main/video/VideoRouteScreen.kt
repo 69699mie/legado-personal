@@ -23,7 +23,6 @@ import android.widget.Toast
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.LinearEasing
-import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.keyframes
@@ -111,12 +110,86 @@ import java.util.Locale
 import java.util.concurrent.TimeUnit
 import kotlin.math.roundToInt
 
-@OptIn(ExperimentalFoundationApi::class, ExperimentalMaterial3Api::class)
+// ==========================================
+// 1. 资源库独立页面 (只负责浏览与勾选)
+// ==========================================
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
-fun VideoRouteScreen(
+fun VideoLibraryScreen(
     modifier: Modifier = Modifier,
-    initialLibraryMode: Boolean? = null,
-    isActive: Boolean = true, // 【新增】当前页面是否处于激活状态
+    viewModel: VideoScraperViewModel = koinViewModel()
+) {
+    val uiState by viewModel.uiState.collectAsStateWithLifecycle()
+    val context = LocalContext.current
+    val activity = context.findActivity()
+
+    var showSettingsDialog by remember { mutableStateOf(false) }
+
+    BackHandler(enabled = uiState.currentFid != "0") {
+        viewModel.goBack()
+    }
+
+    Column(modifier = modifier.fillMaxSize().statusBarsPadding()) {
+        Row(modifier = Modifier.fillMaxWidth().background(Color(0xFFF5F5F5)).padding(horizontal = 16.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+            if (uiState.currentFid != "0") {
+                IconButton(onClick = { viewModel.goBack() }) { Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "返回") }
+            }
+            AppText(
+                text = "资源库",
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.Bold,
+                modifier = Modifier.weight(1f).padding(start = 16.dp)
+            )
+            IconButton(onClick = { showSettingsDialog = true }) { Icon(Icons.Default.Settings, contentDescription = "设置") }
+        }
+
+        if (uiState.errorMsg != null && !uiState.isLoading) {
+            Box(modifier = Modifier.fillMaxWidth().background(Color(0xFFFFCDD2)).padding(8.dp), contentAlignment = Alignment.Center) {
+                AppText(uiState.errorMsg!!, color = Color.Red, style = MaterialTheme.typography.bodySmall)
+            }
+        }
+
+        if (uiState.isLoading && uiState.fileList.isEmpty()) {
+            Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
+        } else {
+            if (uiState.fileList.isEmpty()) {
+                Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { AppText("当前文件夹为空") }
+            } else {
+                LazyColumn(modifier = Modifier.fillMaxSize(), contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    items(uiState.fileList) { file ->
+                        Row(
+                            modifier = Modifier.fillMaxWidth().clickable(enabled = file.isFolder) { if (file.isFolder) viewModel.fetchQuarkFiles(file.fid) }.padding(vertical = 12.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Icon(if (file.isFolder) Icons.Default.Folder else Icons.Default.Movie, null, tint = if (file.isFolder) Color(0xFFFFB300) else Color.Gray)
+                            Column(modifier = Modifier.padding(start = 12.dp).weight(1f)) { AppText(text = file.name, maxLines = 1, overflow = TextOverflow.Ellipsis) }
+                            if (file.isFolder) {
+                                IconButton(onClick = { viewModel.toggleLibrary(file.fid, file.name) }) {
+                                    Icon(if (uiState.selectedLibraryFids.contains(file.fid)) Icons.Default.Star else Icons.Outlined.StarBorder, "加入影视库",
+                                        tint = if (uiState.selectedLibraryFids.contains(file.fid)) Color(0xFFFFB300) else Color.Gray)
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    if (showSettingsDialog) {
+        SettingsDialog(uiState = uiState, viewModel = viewModel, onDismiss = { showSettingsDialog = false })
+    }
+}
+
+
+// ==========================================
+// 2. 影视库独立页面 (包含播放器、刮削)
+// ==========================================
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
+@Composable
+fun VideoScraperScreen(
+    isActive: Boolean = true, // 只有处于当前 Tab 时才允许弹出播放器
+    modifier: Modifier = Modifier,
     viewModel: VideoScraperViewModel = koinViewModel()
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
@@ -129,16 +202,8 @@ fun VideoRouteScreen(
     var showManualScrapeDialog by remember { mutableStateOf(false) }
     var manualScrapeSeries by remember { mutableStateOf<MediaSeries?>(null) }
     var viewAllCategory by remember { mutableStateOf<String?>(null) }
-    var showThreadSelection by remember { mutableStateOf(false) }
 
-    val isLibMode = initialLibraryMode ?: uiState.isLibraryMode
-
-    LaunchedEffect(initialLibraryMode) {
-        if (initialLibraryMode != null && uiState.isLibraryMode != initialLibraryMode) {
-            viewModel.setMode(initialLibraryMode)
-        }
-    }
-
+    // 监听首页发来的拉起播放指令
     LaunchedEffect(Unit) {
         val pendingFid = videoSettingsRepository.pendingPlayFid
         if (isActive && !pendingFid.isNullOrBlank()) {
@@ -146,16 +211,15 @@ fun VideoRouteScreen(
         }
     }
 
-    BackHandler(enabled = uiState.playUrl != null || uiState.currentSeries != null || viewAllCategory != null || (!isLibMode && uiState.currentFid != "0")) {
+    BackHandler(enabled = uiState.playUrl != null || uiState.currentSeries != null || viewAllCategory != null) {
         if (uiState.playUrl != null) {
             activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
             viewModel.stopPlaying()
         } else if (uiState.currentSeries != null) viewModel.selectSeries(null)
         else if (viewAllCategory != null) viewAllCategory = null
-        else viewModel.goBack()
     }
 
-    // 【核心修改】加上 isActive 判断，只有当前选中的 Tab 才能弹出播放器
+    // 只有当前处于激活状态，且 playUrl 不为空时，才渲染播放器 Dialog
     if (isActive && uiState.playUrl != null && uiState.currentSeries != null && uiState.currentPlayFile != null) {
         Dialog(
             onDismissRequest = {
@@ -204,28 +268,12 @@ fun VideoRouteScreen(
     } else {
         Column(modifier = modifier.fillMaxSize().statusBarsPadding()) {
             Row(modifier = Modifier.fillMaxWidth().background(Color(0xFFF5F5F5)).padding(horizontal = 16.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-                if (uiState.currentFid != "0" && !isLibMode) {
-                    IconButton(onClick = { viewModel.goBack() }) { Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "返回") }
-                }
-                
-                if (initialLibraryMode == null) {
-                    TabRow(
-                        selectedTabIndex = if (isLibMode) 1 else 0,
-                        modifier = Modifier.weight(1f).padding(horizontal = 8.dp),
-                        containerColor = Color.Transparent, contentColor = MaterialTheme.colorScheme.primary
-                    ) {
-                        Tab(selected = !isLibMode, onClick = { viewModel.setMode(false) }, text = { AppText("资源库") })
-                        Tab(selected = isLibMode, onClick = { viewModel.setMode(true) }, text = { AppText("影视库") })
-                    }
-                } else {
-                    AppText(
-                        text = if (isLibMode) "影视库" else "资源库",
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.Bold,
-                        modifier = Modifier.weight(1f).padding(start = 16.dp)
-                    )
-                }
-                
+                AppText(
+                    text = "影视库",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold,
+                    modifier = Modifier.weight(1f).padding(start = 16.dp)
+                )
                 IconButton(onClick = { showSettingsDialog = true }) { Icon(Icons.Default.Settings, contentDescription = "设置") }
             }
 
@@ -235,30 +283,8 @@ fun VideoRouteScreen(
                 }
             }
 
-            if (uiState.isLoading && uiState.seriesList.isEmpty() && uiState.fileList.isEmpty()) {
+            if (uiState.isLoading && uiState.seriesList.isEmpty()) {
                 Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
-            } else if (!isLibMode) {
-                if (uiState.fileList.isEmpty()) {
-                    Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { AppText("当前文件夹为空") }
-                } else {
-                    LazyColumn(modifier = Modifier.fillMaxSize(), contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        items(uiState.fileList) { file ->
-                            Row(
-                                modifier = Modifier.fillMaxWidth().clickable(enabled = file.isFolder) { if (file.isFolder) viewModel.fetchQuarkFiles(file.fid) }.padding(vertical = 12.dp),
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Icon(if (file.isFolder) Icons.Default.Folder else Icons.Default.Movie, null, tint = if (file.isFolder) Color(0xFFFFB300) else Color.Gray)
-                                Column(modifier = Modifier.padding(start = 12.dp).weight(1f)) { AppText(text = file.name, maxLines = 1, overflow = TextOverflow.Ellipsis) }
-                                if (file.isFolder) {
-                                    IconButton(onClick = { viewModel.toggleLibrary(file.fid, file.name) }) {
-                                        Icon(if (uiState.selectedLibraryFids.contains(file.fid)) Icons.Default.Star else Icons.Outlined.StarBorder, "加入影视库",
-                                            tint = if (uiState.selectedLibraryFids.contains(file.fid)) Color(0xFFFFB300) else Color.Gray)
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
             } else {
                 PullToRefreshBox(isRefreshing = uiState.isLoading, onRefresh = { viewModel.loadLibraryVideos() }, modifier = Modifier.fillMaxSize()) {
                     if (uiState.selectedLibraryFids.isEmpty()) {
@@ -293,25 +319,62 @@ fun VideoRouteScreen(
     }
 
     if (showSettingsDialog) {
-        var inputCookie by remember { mutableStateOf(uiState.cookie) }
-        var inputTmdbKey by remember { mutableStateOf(uiState.tmdbApiKey) }
-        var inputTmdbUrl by remember { mutableStateOf(uiState.tmdbBaseUrl) }
-        
-        var isCookieVisible by remember { mutableStateOf(false) }
-        var isTmdbKeyVisible by remember { mutableStateOf(false) }
+        SettingsDialog(uiState = uiState, viewModel = viewModel, onDismiss = { showSettingsDialog = false }, onWebLoginClick = { showWebLoginDialog = true })
+    }
 
-        Dialog(onDismissRequest = { showSettingsDialog = false }) {
-            Surface(
-                shape = RoundedCornerShape(24.dp),
-                color = MaterialTheme.colorScheme.surface,
-                tonalElevation = 6.dp,
-                modifier = Modifier.fillMaxWidth().padding(16.dp)
-            ) {
-                Column(modifier = Modifier.padding(24.dp).fillMaxWidth()) {
-                    Row(modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                        AppText(text = "夸克登录状态", fontWeight = FontWeight.Bold, fontSize = 18.sp)
+    if (showWebLoginDialog) {
+        Dialog(onDismissRequest = { showWebLoginDialog = false }, properties = DialogProperties(usePlatformDefaultWidth = false)) {
+            Box(modifier = Modifier.fillMaxSize().background(Color.White).statusBarsPadding()) {
+                WebLoginView(
+                    onLoginSuccess = { cookie ->
+                        viewModel.loginWithCapturedCookie(cookie)
+                        showWebLoginDialog = false
+                        showSettingsDialog = false
+                        Toast.makeText(context, "登录成功，已同步最新数据", Toast.LENGTH_SHORT).show()
+                    },
+                    onCancel = { showWebLoginDialog = false }
+                )
+            }
+        }
+    }
+
+    if (showManualScrapeDialog && manualScrapeSeries != null) {
+        ManualScrapeDialog(series = manualScrapeSeries!!, viewModel = viewModel, onDismiss = { showManualScrapeDialog = false })
+    }
+}
+
+// ==========================================
+// 辅助组件：设置弹窗、手动刮削弹窗
+// ==========================================
+@Composable
+private fun SettingsDialog(
+    uiState: VideoUiState,
+    viewModel: VideoScraperViewModel,
+    onDismiss: () -> Unit,
+    onWebLoginClick: (() -> Unit)? = null
+) {
+    var inputCookie by remember { mutableStateOf(uiState.cookie) }
+    var inputTmdbKey by remember { mutableStateOf(uiState.tmdbApiKey) }
+    var inputTmdbUrl by remember { mutableStateOf(uiState.tmdbBaseUrl) }
+    
+    var isCookieVisible by remember { mutableStateOf(false) }
+    var isTmdbKeyVisible by remember { mutableStateOf(false) }
+    
+    var showThreadSelection by remember { mutableStateOf(false) }
+
+    Dialog(onDismissRequest = onDismiss) {
+        Surface(
+            shape = RoundedCornerShape(24.dp),
+            color = MaterialTheme.colorScheme.surface,
+            tonalElevation = 6.dp,
+            modifier = Modifier.fillMaxWidth().padding(16.dp)
+        ) {
+            Column(modifier = Modifier.padding(24.dp).fillMaxWidth()) {
+                Row(modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                    AppText(text = "夸克登录状态", fontWeight = FontWeight.Bold, fontSize = 18.sp)
+                    if (onWebLoginClick != null) {
                         OutlinedButton(
-                            onClick = { showWebLoginDialog = true },
+                            onClick = onWebLoginClick,
                             shape = RoundedCornerShape(20.dp),
                             contentPadding = PaddingValues(horizontal = 16.dp, vertical = 6.dp),
                             modifier = Modifier.height(36.dp)
@@ -319,69 +382,69 @@ fun VideoRouteScreen(
                             AppText("网页扫码登录", fontSize = 13.sp)
                         }
                     }
-                    
-                    OutlinedTextField(
-                        value = inputCookie,
-                        onValueChange = { inputCookie = it },
-                        modifier = Modifier.padding(vertical = 8.dp).fillMaxWidth(),
-                        visualTransformation = if (isCookieVisible) VisualTransformation.None else PasswordVisualTransformation(),
-                        maxLines = 2,
-                        label = { AppText("手动填写 Cookie（可选）") },
-                        trailingIcon = {
-                            IconButton(onClick = { isCookieVisible = !isCookieVisible }) {
-                                Icon(
-                                    imageVector = if (isCookieVisible) Icons.Default.Visibility else Icons.Default.VisibilityOff,
-                                    contentDescription = "切换可见性"
-                                )
-                            }
-                        }
-                    )
-                    
-                    AppText(text = "TMDB API Key (v3 auth)", modifier = Modifier.padding(top = 8.dp))
-                    
-                    OutlinedTextField(
-                        value = inputTmdbKey,
-                        onValueChange = { inputTmdbKey = it },
-                        modifier = Modifier.padding(vertical = 8.dp).fillMaxWidth(),
-                        visualTransformation = if (isTmdbKeyVisible) VisualTransformation.None else PasswordVisualTransformation(),
-                        maxLines = 1,
-                        trailingIcon = {
-                            IconButton(onClick = { isTmdbKeyVisible = !isTmdbKeyVisible }) {
-                                Icon(
-                                    imageVector = if (isTmdbKeyVisible) Icons.Default.Visibility else Icons.Default.VisibilityOff,
-                                    contentDescription = "切换可见性"
-                                )
-                            }
-                        }
-                    )
-
-                    AppText(text = "TMDB API 代理地址")
-                    OutlinedTextField(value = inputTmdbUrl, onValueChange = { inputTmdbUrl = it }, modifier = Modifier.padding(vertical = 8.dp), maxLines = 1)
-                    
-                    HorizontalDivider(modifier = Modifier.padding(vertical = 12.dp))
-                    
-                    Row(
-                        modifier = Modifier.fillMaxWidth().clickable { showThreadSelection = true }.padding(vertical = 8.dp),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        AppText("极速播放线程数")
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            AppText("${uiState.downloadThreads} ", color = Color.Gray)
-                            Icon(Icons.Default.KeyboardArrowRight, null, tint = Color.Gray)
+                }
+                
+                OutlinedTextField(
+                    value = inputCookie,
+                    onValueChange = { inputCookie = it },
+                    modifier = Modifier.padding(vertical = 8.dp).fillMaxWidth(),
+                    visualTransformation = if (isCookieVisible) VisualTransformation.None else PasswordVisualTransformation(),
+                    maxLines = 2,
+                    label = { AppText("手动填写 Cookie（可选）") },
+                    trailingIcon = {
+                        IconButton(onClick = { isCookieVisible = !isCookieVisible }) {
+                            Icon(
+                                imageVector = if (isCookieVisible) Icons.Default.Visibility else Icons.Default.VisibilityOff,
+                                contentDescription = "切换可见性"
+                            )
                         }
                     }
-
-                    Button(
-                        onClick = {
-                            viewModel.saveSettings(inputCookie, inputTmdbKey, inputTmdbUrl)
-                            showSettingsDialog = false
-                        }, 
-                        modifier = Modifier.align(Alignment.End).padding(top = 16.dp).height(40.dp),
-                        shape = RoundedCornerShape(20.dp)
-                    ) { 
-                        AppText("保存并刷新") 
+                )
+                
+                AppText(text = "TMDB API Key (v3 auth)", modifier = Modifier.padding(top = 8.dp))
+                
+                OutlinedTextField(
+                    value = inputTmdbKey,
+                    onValueChange = { inputTmdbKey = it },
+                    modifier = Modifier.padding(vertical = 8.dp).fillMaxWidth(),
+                    visualTransformation = if (isTmdbKeyVisible) VisualTransformation.None else PasswordVisualTransformation(),
+                    maxLines = 1,
+                    trailingIcon = {
+                        IconButton(onClick = { isTmdbKeyVisible = !isTmdbKeyVisible }) {
+                            Icon(
+                                imageVector = if (isTmdbKeyVisible) Icons.Default.Visibility else Icons.Default.VisibilityOff,
+                                contentDescription = "切换可见性"
+                            )
+                        }
                     }
+                )
+
+                AppText(text = "TMDB API 代理地址")
+                OutlinedTextField(value = inputTmdbUrl, onValueChange = { inputTmdbUrl = it }, modifier = Modifier.padding(vertical = 8.dp), maxLines = 1)
+                
+                HorizontalDivider(modifier = Modifier.padding(vertical = 12.dp))
+                
+                Row(
+                    modifier = Modifier.fillMaxWidth().clickable { showThreadSelection = true }.padding(vertical = 8.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    AppText("极速播放线程数")
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        AppText("${uiState.downloadThreads} ", color = Color.Gray)
+                        Icon(Icons.Default.KeyboardArrowRight, null, tint = Color.Gray)
+                    }
+                }
+
+                Button(
+                    onClick = {
+                        viewModel.saveSettings(inputCookie, inputTmdbKey, inputTmdbUrl)
+                        onDismiss()
+                    }, 
+                    modifier = Modifier.align(Alignment.End).padding(top = 16.dp).height(40.dp),
+                    shape = RoundedCornerShape(20.dp)
+                ) { 
+                    AppText("保存并刷新") 
                 }
             }
         }
@@ -415,60 +478,50 @@ fun VideoRouteScreen(
             }
         )
     }
+}
 
-    if (showWebLoginDialog) {
-        Dialog(onDismissRequest = { showWebLoginDialog = false }, properties = DialogProperties(usePlatformDefaultWidth = false)) {
-            Box(modifier = Modifier.fillMaxSize().background(Color.White).statusBarsPadding()) {
-                WebLoginView(
-                    onLoginSuccess = { cookie ->
-                        viewModel.loginWithCapturedCookie(cookie)
-                        showWebLoginDialog = false
-                        showSettingsDialog = false
-                        Toast.makeText(context, "登录成功，已同步最新数据", Toast.LENGTH_SHORT).show()
-                    },
-                    onCancel = { showWebLoginDialog = false }
-                )
+@Composable
+private fun ManualScrapeDialog(
+    series: MediaSeries,
+    viewModel: VideoScraperViewModel,
+    onDismiss: () -> Unit
+) {
+    var searchKeyword by remember { mutableStateOf(series.title) }
+    var searchResults by remember { mutableStateOf<List<TmdbSearchResult>?>(null) }
+    var categoryInput by remember { mutableStateOf(series.category) }
+
+    Dialog(onDismissRequest = onDismiss) {
+        Column(modifier = Modifier.background(Color.White).padding(16.dp).fillMaxWidth().heightIn(max = 600.dp)) {
+            AppText("手动修正刮削信息")
+            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(vertical = 8.dp)) {
+                AppText("分类：", modifier = Modifier.width(50.dp))
+                OutlinedTextField(value = categoryInput, onValueChange = { categoryInput = it }, modifier = Modifier.weight(1f), placeholder = { AppText("如：动漫、电影") })
             }
-        }
-    }
-
-    if (showManualScrapeDialog && manualScrapeSeries != null) {
-        var searchKeyword by remember { mutableStateOf(manualScrapeSeries!!.title) }
-        var searchResults by remember { mutableStateOf<List<TmdbSearchResult>?>(null) }
-        var categoryInput by remember { mutableStateOf(manualScrapeSeries!!.category) }
-        Dialog(onDismissRequest = { showManualScrapeDialog = false }) {
-            Column(modifier = Modifier.background(Color.White).padding(16.dp).fillMaxWidth().heightIn(max = 600.dp)) {
-                AppText("手动修正刮削信息")
-                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(vertical = 8.dp)) {
-                    AppText("分类：", modifier = Modifier.width(50.dp))
-                    OutlinedTextField(value = categoryInput, onValueChange = { categoryInput = it }, modifier = Modifier.weight(1f), placeholder = { AppText("如：动漫、电影") })
-                }
-                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(bottom = 8.dp)) {
-                    AppText("名称：", modifier = Modifier.width(50.dp))
-                    OutlinedTextField(value = searchKeyword, onValueChange = { searchKeyword = it }, modifier = Modifier.weight(1f))
-                    OutlinedButton(onClick = { viewModel.applyManualScrape(manualScrapeSeries!!.id, null, categoryInput, searchKeyword); showManualScrapeDialog = false }, modifier = Modifier.padding(start = 8.dp)) { AppText("仅保存") }
-                }
-                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(bottom = 8.dp)) {
-                    Spacer(modifier = Modifier.width(50.dp))
-                    OutlinedButton(onClick = { viewModel.searchTmdbManually(searchKeyword) { searchResults = it } }, modifier = Modifier.fillMaxWidth()) { AppText("去 TMDB 搜索海报") }
-                }
-                if (searchResults == null) {
-                    Box(modifier = Modifier.fillMaxWidth().padding(24.dp), contentAlignment = Alignment.Center) { AppText("输入名称并搜索", color = Color.Gray) }
-                } else if (searchResults!!.isEmpty()) {
-                    Box(modifier = Modifier.fillMaxWidth().padding(24.dp), contentAlignment = Alignment.Center) { AppText("未找到", color = Color.Red) }
-                } else {
-                    LazyColumn(modifier = Modifier.weight(1f)) {
-                        items(searchResults!!) { result ->
-                            Row(modifier = Modifier.fillMaxWidth().clickable { viewModel.applyManualScrape(manualScrapeSeries!!.id, result, categoryInput, result.title); showManualScrapeDialog = false }.padding(vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-                                if (result.posterUrl != null) AsyncImage(model = result.posterUrl, contentDescription = null, modifier = Modifier.size(60.dp, 90.dp).clip(RoundedCornerShape(8.dp)), contentScale = ContentScale.Crop)
-                                else Box(modifier = Modifier.size(60.dp, 90.dp).background(Color.LightGray).clip(RoundedCornerShape(8.dp)))
-                                Column(modifier = Modifier.padding(start = 12.dp).weight(1f)) {
-                                    AppText(result.title, style = MaterialTheme.typography.titleMedium)
-                                    AppText(result.year, color = Color.Gray, style = MaterialTheme.typography.bodySmall)
-                                }
+            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(bottom = 8.dp)) {
+                AppText("名称：", modifier = Modifier.width(50.dp))
+                OutlinedTextField(value = searchKeyword, onValueChange = { searchKeyword = it }, modifier = Modifier.weight(1f))
+                OutlinedButton(onClick = { viewModel.applyManualScrape(series.id, null, categoryInput, searchKeyword); onDismiss() }, modifier = Modifier.padding(start = 8.dp)) { AppText("仅保存") }
+            }
+            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(bottom = 8.dp)) {
+                Spacer(modifier = Modifier.width(50.dp))
+                OutlinedButton(onClick = { viewModel.searchTmdbManually(searchKeyword) { searchResults = it } }, modifier = Modifier.fillMaxWidth()) { AppText("去 TMDB 搜索海报") }
+            }
+            if (searchResults == null) {
+                Box(modifier = Modifier.fillMaxWidth().padding(24.dp), contentAlignment = Alignment.Center) { AppText("输入名称并搜索", color = Color.Gray) }
+            } else if (searchResults!!.isEmpty()) {
+                Box(modifier = Modifier.fillMaxWidth().padding(24.dp), contentAlignment = Alignment.Center) { AppText("未找到", color = Color.Red) }
+            } else {
+                LazyColumn(modifier = Modifier.weight(1f)) {
+                    items(searchResults!!) { result ->
+                        Row(modifier = Modifier.fillMaxWidth().clickable { viewModel.applyManualScrape(series.id, result, categoryInput, result.title); onDismiss() }.padding(vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                            if (result.posterUrl != null) AsyncImage(model = result.posterUrl, contentDescription = null, modifier = Modifier.size(60.dp, 90.dp).clip(RoundedCornerShape(8.dp)), contentScale = ContentScale.Crop)
+                            else Box(modifier = Modifier.size(60.dp, 90.dp).background(Color.LightGray).clip(RoundedCornerShape(8.dp)))
+                            Column(modifier = Modifier.padding(start = 12.dp).weight(1f)) {
+                                AppText(result.title, style = MaterialTheme.typography.titleMedium)
+                                AppText(result.year, color = Color.Gray, style = MaterialTheme.typography.bodySmall)
                             }
-                            HorizontalDivider()
                         }
+                        HorizontalDivider()
                     }
                 }
             }
@@ -476,6 +529,10 @@ fun VideoRouteScreen(
     }
 }
 
+
+// ==========================================
+// 播放器与登录页面（保持原样）
+// ==========================================
 @SuppressLint("SetJavaScriptEnabled")
 @Composable
 fun WebLoginView(onLoginSuccess: (String) -> Unit, onCancel: () -> Unit) {
@@ -749,7 +806,7 @@ fun InternalVideoPlayer(
         onDispose {
             if (exoPlayer.currentPosition > 0) viewModel.saveVideoProgress(currentFile.fid, exoPlayer.currentPosition)
             exoPlayer.removeListener(listener)
-            // 【核心修改】强制停止并释放，防止后台残留声音
+            // 确保释放时立刻切断音频
             exoPlayer.stop()
             exoPlayer.release()
         }
@@ -1249,7 +1306,9 @@ fun InternalVideoPlayer(
     }
 }
 
-// 【新增】动态跳动的加载文字组件
+// ==========================================
+// 辅助工具
+// ==========================================
 @Composable
 fun AnimatedLoadingDots(color: Color, fontSize: androidx.compose.ui.unit.TextUnit) {
     val transition = rememberInfiniteTransition(label = "loadingDots")
@@ -1295,7 +1354,6 @@ fun AnimatedLoadingDots(color: Color, fontSize: androidx.compose.ui.unit.TextUni
 
     Row(verticalAlignment = Alignment.CenterVertically) {
         AppText("正在加载中", color = color, fontSize = fontSize)
-        // 使用固定宽度的 Box 防止文字由于上下偏移产生 UI 抖动
         Box(modifier = Modifier.width(20.dp).padding(start = 2.dp)) {
             Row {
                 AppText(".", color = color, fontSize = fontSize, modifier = Modifier.offset(y = (-4 * dot1Y).dp))
