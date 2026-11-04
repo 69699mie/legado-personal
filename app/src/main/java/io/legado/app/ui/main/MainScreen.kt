@@ -90,10 +90,12 @@ import io.legado.app.ui.main.bookshelf.BookShelfItem
 import io.legado.app.ui.main.bookshelf.BookshelfRouteScreen
 import io.legado.app.ui.main.bookshelf.BookshelfViewModel
 import io.legado.app.ui.main.home.HomeRouteScreen
+import io.legado.app.ui.main.home.HomeViewModel
 import io.legado.app.ui.main.my.MyRouteScreen
 import io.legado.app.ui.main.my.PrefClickEvent
 import io.legado.app.ui.main.rss.RssRouteScreen
 import io.legado.app.ui.main.video.VideoRouteScreen
+import io.legado.app.ui.main.video.VideoScraperViewModel
 import io.legado.app.ui.theme.LegadoTheme
 import io.legado.app.ui.theme.ThemeResolver
 import io.legado.app.ui.widget.components.AppScaffold
@@ -111,6 +113,7 @@ import io.legado.app.ui.widget.components.pager.rememberPagerFlingPassThroughCon
 import io.legado.app.ui.widget.components.text.AppText
 import io.legado.app.utils.sendToClip
 import io.legado.app.utils.startActivityForBook
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 import org.koin.androidx.compose.koinViewModel
@@ -174,7 +177,11 @@ fun MainScreen(
 ) {
     val context = LocalContext.current
     val coroutineScope = rememberCoroutineScope()
-    val videoSettingsRepository = koinInject<VideoSettingsRepository>() // 注入视频设置以保存跳转指令
+    
+    // 注入 ViewModel 和 Repository
+    val homeViewModel: HomeViewModel = koinViewModel()
+    val videoViewModel: VideoScraperViewModel = koinViewModel()
+    val videoSettingsRepository = koinInject<VideoSettingsRepository>()
 
     LaunchedEffect(effects, context) {
         effects.collectLatest { effect ->
@@ -225,6 +232,14 @@ fun MainScreen(
         if (index != -1) index else 0
     }
     val pagerState = rememberPagerState(initialPage = initialPage) { destinations.size }
+    
+    // 【新增】当切换到首页（索引 0）时，通知 HomeViewModel 刷新影视记录
+    LaunchedEffect(pagerState.currentPage) {
+        if (pagerState.currentPage == 0) {
+            homeViewModel.refreshData()
+        }
+    }
+
     val pagerNestedScrollConnection = rememberPagerFlingPassThroughConnection(
         state = pagerState,
         orientation = Orientation.Horizontal,
@@ -529,12 +544,17 @@ fun MainScreen(
                             MainDestination.Home -> HomeRouteScreen(
                                 onOpenBook = { book ->
                                     if (book.bookUrl.startsWith("hiker://video")) {
-                                        // 【核心拦截】如果是影视记录，提取 fid 存入临时变量，并切换到影视 Tab
+                                        // 提取 fid 存入变量
                                         val fid = book.bookUrl.substringAfter("fid=").substringBefore("&")
                                         videoSettingsRepository.pendingPlayFid = fid
                                         coroutineScope.launch {
                                             val videoIndex = destinations.indexOfFirst { it == MainDestination.Video }
-                                            if (videoIndex != -1) pagerState.animateScrollToPage(videoIndex)
+                                            if (videoIndex != -1) {
+                                                pagerState.animateScrollToPage(videoIndex)
+                                                delay(300) // 等待滑动动画完成
+                                                // 直接调用 VideoViewModel 处理播放
+                                                videoViewModel.handlePendingPlayRequest()
+                                            }
                                         }
                                     } else {
                                         context.startActivityForBook(book)
