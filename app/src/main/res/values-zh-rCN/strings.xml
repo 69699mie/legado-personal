@@ -2,7 +2,7 @@
     <!--App-->
     <string name="app_name">阅影</string>
     <string name="app_name_a">阅影·A</string>
-    <string name="receiving_shared_label">阅读 · 搜索</string>
+    <string name="receiving_shared_label">阅影 · 搜索</string>
     <string name="tip_perm_request_storage">阅影需要访问存储卡权限，请前往“设置”—“应用权限”，打开所需权限</string>
 
     <!--Other-->
@@ -76,8 +76,8 @@
     <string name="rss">订阅</string>
     <string name="all">全部</string>
     <string name="rss_feed_management">订阅源管理</string>
-    <string name="recent_reading">最近阅读</string>
-    <string name="last_read">最后阅读</string>
+    <string name="recent_reading">最近观看</string>
+    <string name="last_read">最后观看</string>
     <string name="update_log">更新日志</string>
     <string name="bookshelf_empty">书架还空着，先去搜索书籍或从发现里添加吧！</string>
     <string name="action_search">搜索</string>
@@ -485,7 +485,7 @@
     <string name="book_info">书籍信息</string>
     <string name="book_info_edit">书籍信息编辑</string>
     <string name="ps_default_read">默认打开书架</string>
-    <string name="pt_default_read">自动跳转最近阅读</string>
+    <string name="pt_default_read">自动跳转最近观看</string>
     <string name="replace_scope">替换范围，选填书名或者书源 URL</string>
     <string name="menu_action_group">分组</string>
     <string name="download_path">内容缓存路径</string>
@@ -1352,9 +1352,9 @@
     <string name="error_image_url_empty">图片链接为空，检查替换净化规则</string>
     <string name="variable_comment">变量说明(variableComment)</string>
     <string name="remote_book">远程书籍</string>
-    <string name="reading_time_sort">阅读时长排序</string>
+    <string name="reading_time_sort">观看时长排序</string>
     <string name="last_read_time_sort">阅读时间排序</string>
-    <string name="reading_time_tag">阅读时长：</string>
+    <string name="reading_time_tag">观看时长：</string>
     <string name="last_read_time_tag">最后阅读时间：</string>
     <string name="page_touch_slop_title">滑动翻页阈值</string>
     <string name="page_touch_slop_dialog_title">滑动翻页阈值（0 = 系统默认值）</string>
@@ -2148,15 +2148,15 @@
     <string name="homepage_type_label">类型</string>
     <string name="homepage_layout_config_label">布局配置</string>
     <string name="homepage_edit_raw_json">编辑原始 JSON (LayoutConfig)</string>
-    <string name="home_recent_reading">最近阅读</string>
-    <string name="home_recent_books">最近阅读记录</string>
+    <string name="home_recent_reading">最近观看</string>
+    <string name="home_recent_books">最近观看记录</string>
     <string name="home_dashboard_settings">首页组件</string>
     <string name="home_no_recent_reading">暂无阅读记录</string>
-    <string name="home_total_read_books">累计阅读</string>
-    <string name="home_total_reading_time">阅读时长</string>
+    <string name="home_total_read_books">累计观看</string>
+    <string name="home_total_reading_time">观看时长</string>
     <string name="unit_books">本</string>
     <string name="unit_hours">小时</string>
-    <string name="home_today_reading_goal">今日阅读目标</string>
+    <string name="home_today_reading_goal">今日观看目标</string>
     <string name="home_set_goal">设定目标</string>
     <string name="home_today_goal_value">%1$d / %2$d</string>
     <string name="home_minutes">分钟</string>
@@ -2605,7 +2605,7 @@
     <string name="no_crash_logs">暂无崩溃日志</string>
     <string name="select_or_search_category">选择或搜索分类</string>
     <string name="multi_select_items">多选项目</string>
-    <string name="recently_read">最近阅读：</string>
+    <string name="recently_read">最近观看：</string>
     <string name="no_favorites_rss">还没有收藏订阅！</string>
     <string name="suggestion_label">建议:</string>
     <string name="weekday_mon">一</string>
@@ -2812,12 +2812,12 @@
     <string name="no_merge_candidates">没有可合并的其它阅读记录</string>
     <string name="a11y_merge_same_name_read_records">将阅读记录合并到此书</string>
     <string name="read_record_date_overview">%1$d月%2$d日阅读概览</string>
-    <string name="read_record_total_achievement">累计阅读成就</string>
+    <string name="read_record_total_achievement">累计观看成就</string>
     <string name="chapter_index_format">第 %1$d 章</string>
-    <string name="a11y_read_record_latest_item">%1$s，%2$s，阅读时长 %3$s，最后阅读 %4$s</string>
-    <string name="a11y_read_record_timeline_item">%1$s，%2$s，%3$s，阅读时长 %4$s，结束于 %5$s</string>
-    <string name="a11y_read_record_detail_item">%1$s，%2$s，阅读时长 %3$s</string>
-    <string name="reading_time_with_value">阅读时长：%1$s</string>
+    <string name="a11y_read_record_latest_item">%1$s，%2$s，观看时长 %3$s，最后阅读 %4$s</string>
+    <string name="a11y_read_record_timeline_item">%1$s，%2$s，%3$s，观看时长 %4$s，结束于 %5$s</string>
+    <string name="a11y_read_record_detail_item">%1$s，%2$s，观看时长 %3$s</string>
+    <string name="reading_time_with_value">观看时长：%1$s</string>
     <string name="a11y_reading_summary_card">%1$s，%2$d 本书，总时长 %3$s，打开总览</string>
     <string name="read_books_prefix">已读 </string>
     <string name="read_books_suffix"> 本书</string>
@@ -2834,15 +2834,15 @@
     <string name="reading_books">在读书籍</string>
     <string name="reading_data">阅读数据</string>
     <string name="reading_heatmap">阅读热力图</string>
-    <string name="reading_time_ranking">阅读时长榜</string>
+    <string name="reading_time_ranking">观看时长榜</string>
     <string name="reading_calendar">读书日历</string>
     <string name="days_format">%1$d天</string>
     <string name="books_format">%1$d本</string>
-    <string name="a11y_reading_ranking_item">第 %1$d 名，%2$s，%3$s，阅读时长 %4$s</string>
+    <string name="a11y_reading_ranking_item">第 %1$d 名，%2$s，%3$s，观看时长 %4$s</string>
     <string name="a11y_reading_calendar_day_with_book">%1$s，阅读最多：%2$s，作者 %3$s</string>
     <string name="a11y_reading_calendar_day_empty">%1$s，没有阅读记录</string>
     <string name="a11y_heatmap_day_count">%1$s，阅读 %2$d 次</string>
-    <string name="a11y_heatmap_day_duration">%1$s，阅读时长 %2$s</string>
+    <string name="a11y_heatmap_day_duration">%1$s，观看时长 %2$s</string>
     <string name="start_download">开始下载</string>
     <string name="stop_download">停止下载</string>
     <string name="cache_section_bookshelf">书架书籍</string>
