@@ -2,6 +2,8 @@ package io.legado.app.ui.main.video
 
 import android.annotation.SuppressLint
 import android.app.Activity
+import android.content.ClipData
+import android.content.ClipboardManager
 import android.content.Context
 import android.content.pm.ActivityInfo
 import android.content.res.Configuration
@@ -254,7 +256,7 @@ fun VideoRouteScreen(
         var inputCookie by remember { mutableStateOf(uiState.cookie) }
         var inputTmdbKey by remember { mutableStateOf(uiState.tmdbApiKey) }
         var inputTmdbUrl by remember { mutableStateOf(uiState.tmdbBaseUrl) }
-
+        
         var isCookieVisible by remember { mutableStateOf(false) }
         var isTmdbKeyVisible by remember { mutableStateOf(false) }
 
@@ -264,7 +266,7 @@ fun VideoRouteScreen(
                     AppText(text = "夸克登录状态", fontWeight = FontWeight.Bold)
                     Button(onClick = { showWebLoginDialog = true }, contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp)) { AppText("网页扫码登录") }
                 }
-
+                
                 OutlinedTextField(
                     value = inputCookie,
                     onValueChange = { inputCookie = it },
@@ -281,9 +283,9 @@ fun VideoRouteScreen(
                         }
                     }
                 )
-
+                
                 AppText(text = "TMDB API Key (v3 auth)")
-
+                
                 OutlinedTextField(
                     value = inputTmdbKey,
                     onValueChange = { inputTmdbKey = it },
@@ -389,7 +391,7 @@ fun WebLoginView(onLoginSuccess: (String) -> Unit, onCancel: () -> Unit) {
                     CookieManager.getInstance().flush()
                     reloadTrigger++
                 }) { AppText("清空缓存", color = Color.Red) }
-
+                
                 TextButton(onClick = {
                     val cookie = CookieManager.getInstance().getCookie("https://pan.quark.cn/")
                     if (!cookie.isNullOrBlank() && cookie.contains("__uid=")) {
@@ -538,10 +540,8 @@ fun InternalVideoPlayer(
     }
 
     val exoPlayer = remember {
-        // 1. 构建自定义 OkHttp 数据源，注入海阔视界的 Headers
         val headers = mapOf(
             "Cookie" to cookie,
-            "User-Agent" to "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/100.0.4896.58 UCBrowser/16.5.8.1309 Mobile Safari/537.36",
             "Referer" to "https://drive.quark.cn/"
         )
         val okHttpClient = OkHttpClient.Builder()
@@ -549,20 +549,16 @@ fun InternalVideoPlayer(
             .readTimeout(60, TimeUnit.SECONDS)
             .build()
 
-        // 多线程分片预取数据源
         val dataSourceFactory = ParallelDownloadDataSource.Factory(okHttpClient, headers)
 
-        // 2. 构建 RenderersFactory（FFmpeg 扩展已移除，使用平台默认渲染器）
         val renderersFactory = DefaultRenderersFactory(context)
             .setEnableAudioFloatOutput(true)
 
-        // 3. 创建 MediaItem
         val mediaItem = MediaItem.Builder()
             .setUri(url)
             .setMediaMetadata(MediaMetadata.Builder().setTitle(title).build())
             .build()
 
-        // 4. 构建 MediaSource
         val mediaSource = ProgressiveMediaSource.Factory(dataSourceFactory)
             .createMediaSource(mediaItem)
 
@@ -585,7 +581,6 @@ fun InternalVideoPlayer(
         hasRestoredProgress = false
         val headers = mapOf(
             "Cookie" to cookie,
-            "User-Agent" to "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/100.0.4896.58 UCBrowser/16.5.8.1309 Mobile Safari/537.36",
             "Referer" to "https://drive.quark.cn/"
         )
         val okHttpClient = OkHttpClient.Builder()
@@ -628,14 +623,23 @@ fun InternalVideoPlayer(
                 if (videoSize.width > 0 && videoSize.height > 0) resolution = "${videoSize.width}×${videoSize.height}"
             }
             override fun onPlayerError(error: PlaybackException) {
-                val msg = when (val cause = error.cause) {
-                    is HttpDataSource.InvalidResponseCodeException -> {
-                        val body = cause.responseBody?.let { String(it) } ?: cause.message
-                        "播放失败: HTTP ${cause.responseCode}\n\n$body"
+                // 【核心修改】深度解析错误堆栈，提取最底层真实原因
+                val sb = StringBuilder()
+                sb.append("错误码: ${error.errorCodeName}\n")
+                
+                var cause: Throwable? = error
+                var depth = 0
+                while (cause != null) {
+                    sb.append("\n[第 ${depth} 层] ${cause.javaClass.simpleName}\n")
+                    if (cause is HttpDataSource.InvalidResponseCodeException) {
+                        sb.append("HTTP状态码: ${cause.responseCode}\n")
+                        cause.responseBody?.let { sb.append("响应体: ${String(it)}\n") }
                     }
-                    else -> "播放失败: ${error.errorCodeName}\n${cause?.message}"
+                    sb.append("信息: ${cause.message ?: "无"}\n")
+                    cause = cause.cause
+                    depth++
                 }
-                errorDialogMsg = msg
+                errorDialogMsg = sb.toString()
             }
         }
         exoPlayer.addListener(listener)
@@ -686,17 +690,31 @@ fun InternalVideoPlayer(
             onDismissRequest = { errorDialogMsg = null },
             title = { AppText("播放失败详情", fontWeight = FontWeight.Bold) },
             text = {
-                SelectionContainer {
-                    Text(
-                        text = errorDialogMsg ?: "",
-                        modifier = Modifier.heightIn(max = 300.dp).verticalScroll(rememberScrollState()),
-                        fontSize = 12.sp
-                    )
+                Column {
+                    SelectionContainer {
+                        Text(
+                            text = errorDialogMsg ?: "",
+                            modifier = Modifier
+                                .heightIn(max = 400.dp) // 放宽高度限制
+                                .verticalScroll(rememberScrollState()),
+                            fontSize = 12.sp,
+                            color = Color.DarkGray
+                        )
+                    }
                 }
             },
             confirmButton = {
-                TextButton(onClick = { errorDialogMsg = null }) {
-                    AppText("关闭")
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    TextButton(onClick = {
+                        val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                        clipboard.setPrimaryClip(ClipData.newPlainText("播放错误", errorDialogMsg))
+                        Toast.makeText(context, "已复制到剪贴板", Toast.LENGTH_SHORT).show()
+                    }) {
+                        AppText("复制全部", color = MaterialTheme.colorScheme.primary)
+                    }
+                    TextButton(onClick = { errorDialogMsg = null }) {
+                        AppText("关闭")
+                    }
                 }
             }
         )
