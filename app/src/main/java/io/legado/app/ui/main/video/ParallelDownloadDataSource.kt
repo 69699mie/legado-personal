@@ -170,6 +170,11 @@ class ParallelDownloadDataSource(
             if (!res.isSuccessful) {
                 throw IOException("探测大小失败: HTTP ${res.code}")
             }
+            val contentType = res.header("Content-Type") ?: ""
+            if (contentType.contains("html") || contentType.contains("json")) {
+                val errMsg = res.body?.string()?.take(200) ?: ""
+                throw IOException("服务器返回了错误格式: $contentType\n$errMsg")
+            }
             val cr = res.header("Content-Range")
             if (!cr.isNullOrBlank() && cr.contains("/")) {
                 val len = cr.substringAfter("/").trim().toLongOrNull()
@@ -188,8 +193,28 @@ class ParallelDownloadDataSource(
             if (!res.isSuccessful) {
                 throw IOException("HTTP ${res.code}")
             }
+            
+            // 校验：请求了 Range 但返回了 200，说明服务器不支持分片，或者重定向到了不支持分片的地址
+            if (res.code == 200 && start > 0) {
+                throw IOException("服务器未正确响应分片请求(HTTP 200)，多线程播放失败")
+            }
+
+            val contentType = res.header("Content-Type") ?: ""
+            if (contentType.contains("html") || contentType.contains("json")) {
+                throw IOException("服务器返回了错误格式: $contentType")
+            }
+
             val body = res.body ?: throw IOException("empty body")
-            return body.bytes()
+            val data = body.bytes()
+            
+            // 校验：如果拿到的是第一块，检查是不是 HTML 或 JSON 错误页面
+            if (start == 0L && data.isNotEmpty()) {
+                val headStr = String(data, 0, minOf(data.size, 20), Charsets.UTF_8).trim()
+                if (headStr.startsWith("<") || headStr.startsWith("{")) {
+                    throw IOException("数据流疑似错误页面: ${headStr.take(50)}")
+                }
+            }
+            return data
         }
     }
 
