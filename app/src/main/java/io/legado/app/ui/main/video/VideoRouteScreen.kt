@@ -86,20 +86,21 @@ import androidx.media3.common.MediaMetadata
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
 import androidx.media3.common.VideoSize
-import androidx.media3.datasource.DefaultHttpDataSource
 import androidx.media3.datasource.HttpDataSource
+import androidx.media3.datasource.okhttp.OkHttpDataSource
 import androidx.media3.exoplayer.DefaultLoadControl
 import androidx.media3.exoplayer.DefaultRenderersFactory
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.hls.HlsMediaSource
 import androidx.media3.exoplayer.source.ProgressiveMediaSource
-import androidx.media3.ui.AspectRatioFrameLayout
 import androidx.media3.ui.PlayerView
 import coil3.compose.AsyncImage
 import io.legado.app.ui.widget.components.text.AppText
 import kotlinx.coroutines.delay
+import okhttp3.OkHttpClient
 import org.koin.androidx.compose.koinViewModel
 import java.util.Locale
+import java.util.concurrent.TimeUnit
 import kotlin.math.roundToInt
 
 @OptIn(ExperimentalFoundationApi::class, ExperimentalMaterial3Api::class)
@@ -538,29 +539,46 @@ fun InternalVideoPlayer(
     }
 
     val exoPlayer = remember {
-        // 延长超时时间，防止本地代理初期加载慢导致断连
-        val dataSourceFactory = DefaultHttpDataSource.Factory()
+        // 1. 构建自定义 OkHttp 数据源，注入海阔视界的 Headers
+        val headers = mapOf(
+            "Cookie" to cookie,
+            "User-Agent" to "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/100.0.4896.58 UCBrowser/16.5.8.1309 Mobile Safari/537.36",
+            "Referer" to "https://drive.quark.cn/"
+        )
+        val okHttpClient = OkHttpClient.Builder()
+            .connectTimeout(60, TimeUnit.SECONDS)
+            .readTimeout(60, TimeUnit.SECONDS)
+            .build()
+
+        val dataSourceFactory = OkHttpDataSource.Factory(okHttpClient)
+            .setDefaultRequestProperties(headers)
             .setAllowCrossProtocolRedirects(true)
-            .setConnectTimeoutMs(60000)
-            .setReadTimeoutMs(60000)
 
-        val mediaItem = MediaItem.Builder().setUri(url).setMediaMetadata(MediaMetadata.Builder().setTitle(title).build()).build()
-        
-        // 本地代理播放流，强制使用 ProgressiveMediaSource 确保解析稳定
-        val mediaSource = ProgressiveMediaSource.Factory(dataSourceFactory).createMediaSource(mediaItem)
-
-        val loadControl = DefaultLoadControl.Builder().setBufferDurationsMs(30000, 120000, 1500, 3000).build()
-
+        // 2. 构建 RenderersFactory，优先使用 FFmpeg 扩展
         val renderersFactory = DefaultRenderersFactory(context)
             .setEnableAudioFloatOutput(true)
             .setExtensionRendererMode(DefaultRenderersFactory.EXTENSION_RENDERER_MODE_PREFER)
+
+        // 3. 创建 MediaItem，不再强制指定 MimeType，交由 FFmpeg 嗅探
+        val mediaItem = MediaItem.Builder()
+            .setUri(url)
+            .setMediaMetadata(MediaMetadata.Builder().setTitle(title).build())
+            .build()
+
+        // 4. 构建 MediaSource（FFmpeg 能够直接探测容器，无需区分 HLS 或 Progressive）
+        val mediaSource = ProgressiveMediaSource.Factory(dataSourceFactory)
+            .createMediaSource(mediaItem)
+
+        val loadControl = DefaultLoadControl.Builder()
+            .setBufferDurationsMs(30000, 120000, 1500, 3000)
+            .build()
 
         ExoPlayer.Builder(context, renderersFactory)
             .setLoadControl(loadControl)
             .build()
             .apply {
-                setMediaSource(mediaSource);
-                prepare();
+                setMediaSource(mediaSource)
+                prepare()
                 playWhenReady = true
                 setWakeMode(androidx.media3.common.C.WAKE_MODE_NETWORK)
             }
@@ -568,11 +586,25 @@ fun InternalVideoPlayer(
 
     LaunchedEffect(url) {
         hasRestoredProgress = false
-        val dataSourceFactory = DefaultHttpDataSource.Factory()
+        val headers = mapOf(
+            "Cookie" to cookie,
+            "User-Agent" to "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/100.0.4896.58 UCBrowser/16.5.8.1309 Mobile Safari/537.36",
+            "Referer" to "https://drive.quark.cn/"
+        )
+        val okHttpClient = OkHttpClient.Builder()
+            .connectTimeout(60, TimeUnit.SECONDS)
+            .readTimeout(60, TimeUnit.SECONDS)
+            .build()
+
+        val dataSourceFactory = OkHttpDataSource.Factory(okHttpClient)
+            .setDefaultRequestProperties(headers)
             .setAllowCrossProtocolRedirects(true)
-            .setConnectTimeoutMs(60000)
-            .setReadTimeoutMs(60000)
-        val mediaItem = MediaItem.Builder().setUri(url).setMediaMetadata(MediaMetadata.Builder().setTitle(title).build()).build()
+
+        val mediaItem = MediaItem.Builder()
+            .setUri(url)
+            .setMediaMetadata(MediaMetadata.Builder().setTitle(title).build())
+            .build()
+
         val mediaSource = ProgressiveMediaSource.Factory(dataSourceFactory).createMediaSource(mediaItem)
         exoPlayer.setMediaSource(mediaSource); exoPlayer.prepare(); exoPlayer.playWhenReady = true
     }
