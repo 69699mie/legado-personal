@@ -80,7 +80,7 @@ import com.kyant.backdrop.backdrops.rememberLayerBackdrop
 import dev.chrisbanes.haze.HazeState
 import dev.chrisbanes.haze.hazeSource
 import io.legado.app.R
-// import io.legado.app.feature.explore.ExploreMainRoute // 已注释或删除，因为发现Tab现在用作网盘浏览
+import io.legado.app.data.repository.VideoSettingsRepository
 import io.legado.app.ui.book.readaloud.ReadAloudBarCapsuleEndPadding
 import io.legado.app.ui.book.readaloud.ReadAloudBarCapsuleSize
 import io.legado.app.ui.book.readaloud.ReadAloudBarCapsuleSlot
@@ -114,6 +114,7 @@ import io.legado.app.utils.startActivityForBook
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 import org.koin.androidx.compose.koinViewModel
+import org.koin.compose.koinInject
 import top.yukonga.miuix.kmp.basic.FloatingActionButton
 import top.yukonga.miuix.kmp.basic.NavigationRailDefaults
 import top.yukonga.miuix.kmp.basic.NavigationRailValue
@@ -133,7 +134,6 @@ fun MainScreen(
     onIntent: (MainUiIntent) -> Unit,
     effects: kotlinx.coroutines.flow.Flow<MainEffect>,
     useRail: Boolean,
-    /** 听书胶囊的形变状态：胶囊要排在悬浮底栏同一行，需要把锚点上报给同一个进度源。 */
     readAloudMorph: ReadAloudMorphState?,
     homePlaybackCapsuleEnabled: Boolean,
     capsuleAnchorPreview: io.legado.app.domain.model.PlaybackCapsuleState?,
@@ -174,6 +174,7 @@ fun MainScreen(
 ) {
     val context = LocalContext.current
     val coroutineScope = rememberCoroutineScope()
+    val videoSettingsRepository = koinInject<VideoSettingsRepository>() // 注入视频设置以保存跳转指令
 
     LaunchedEffect(effects, context) {
         effects.collectLatest { effect ->
@@ -527,7 +528,17 @@ fun MainScreen(
                             when (destination) {
                             MainDestination.Home -> HomeRouteScreen(
                                 onOpenBook = { book ->
-                                    context.startActivityForBook(book)
+                                    if (book.bookUrl.startsWith("hiker://video")) {
+                                        // 【核心拦截】如果是影视记录，提取 fid 存入临时变量，并切换到影视 Tab
+                                        val fid = book.bookUrl.substringAfter("fid=").substringBefore("&")
+                                        videoSettingsRepository.pendingPlayFid = fid
+                                        coroutineScope.launch {
+                                            val videoIndex = destinations.indexOfFirst { it == MainDestination.Video }
+                                            if (videoIndex != -1) pagerState.animateScrollToPage(videoIndex)
+                                        }
+                                    } else {
+                                        context.startActivityForBook(book)
+                                    }
                                 },
                                 onNavigateToBookInfo = { name, author, bookUrl, origin, coverPath, sharedCoverKey ->
                                     onNavigateToBookInfo(
@@ -643,7 +654,6 @@ fun MainScreen(
                         val gap = ReadAloudBarCapsuleEndPadding
                         val capsuleReserve by animateDpAsState(
                             targetValue = if (readAloudCapsuleShown) ReadAloudBarCapsuleSize + gap else 0.dp,
-                            // 入场前立即留出空间；退场后逐步归还，避免停播时导航宽度跳变。
                             animationSpec = if (readAloudCapsuleShown) snap() else spring(
                                 dampingRatio = 1f,
                                 stiffness = 260f
@@ -652,7 +662,6 @@ fun MainScreen(
                         )
                         val navigationAvailableWidth =
                             (maxWidth - capsuleReserve).coerceAtLeast(0.dp)
-                        // 保留原导航项的自然宽度和居中位置，不把没有胶囊的底栏拉满。
                         val normalNavigationWidth =
                             (MainNavigationTabMinWidth * destinations.size + 8.dp)
                                 .coerceAtMost(navigationAvailableWidth)
@@ -730,13 +739,11 @@ fun MainScreen(
                                 }
                             }
                         }
-                        // 打开听书播放页：与阅读器共用同一条全局请求通道。
                         ReadAloudBarCapsuleSlot(
                             enabled = homePlaybackCapsuleEnabled,
                             onOpenPlayer = { ReadAloudPlayerOverlayBus.request(it) },
                             morph = readAloudMorph,
                             anchorPreview = capsuleAnchorPreview,
-                            // 与悬浮底栏共用同一份 backdrop，液态玻璃开关一致。
                             backdrop = floatingBarBackdrop,
                             isBlurEnabled = useLiquidGlass,
                             controlsExpanded = playbackControlsExpanded,
