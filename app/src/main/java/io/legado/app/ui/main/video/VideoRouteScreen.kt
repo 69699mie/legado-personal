@@ -254,9 +254,11 @@ fun VideoScraperScreen(
     } else if (uiState.currentSeries != null) {
         MediaDetailScreen(
             series = uiState.currentSeries!!,
+            allSeries = uiState.seriesList,
             onBack = { viewModel.selectSeries(null) },
             onPlay = { series, file -> viewModel.playVideo(context, series, file) },
-            onLongClickPoster = { manualScrapeSeries = it; showManualScrapeDialog = true }
+            onLongClickPoster = { manualScrapeSeries = it; showManualScrapeDialog = true },
+            onSelectSeries = { viewModel.selectSeries(it) }
         )
     } else if (viewAllCategory != null) {
         val categorySeries = uiState.seriesList.filter { it.category == viewAllCategory }
@@ -723,7 +725,6 @@ fun InternalVideoPlayer(
     var gestureType by remember { mutableStateOf("") }
     var gestureValue by remember { mutableFloatStateOf(0f) }
     
-    // 进度条拖动状态
     var isDraggingSeekBar by remember { mutableStateOf(false) }
 
     val season = currentFile.parsedInfo?.season ?: 1
@@ -1059,7 +1060,7 @@ fun InternalVideoPlayer(
         if (isLocked) {
             if (showUnlockIcon) {
                 IconButton(onClick = { isLocked = false; showControls = true }, modifier = Modifier.align(Alignment.CenterStart).padding(32.dp)) {
-                    Icon(Icons.Default.Lock, contentDescription = "解锁", tint = Color.White, modifier = Modifier.size(36.dp))
+                    Icon(Icons.Default.Lock, contentDescription = "解锁", tint = Color.White, modifier = Modifier.size(24.dp))
                 }
             }
             return@Box
@@ -1151,7 +1152,6 @@ fun InternalVideoPlayer(
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             AppText(text = formatTime(currentPosition), color = Color.White, fontSize = 12.sp)
                             
-                            // 【完全手写进度条，彻底避免 Slider 的 API 冲突和排版断层】
                             var sliderWidth by remember { mutableStateOf(1f) }
                             val bufferedFraction = if (duration > 0) bufferedPosition.toFloat() / duration else 0f
                             val currentFraction = if (duration > 0) currentPosition.toFloat() / duration else 0f
@@ -1160,7 +1160,7 @@ fun InternalVideoPlayer(
                                 modifier = Modifier
                                     .weight(1f)
                                     .padding(horizontal = 8.dp)
-                                    .height(32.dp) // 扩大点击区域
+                                    .height(32.dp) 
                                     .onSizeChanged { sliderWidth = it.width.toFloat() }
                                     .pointerInput(duration) {
                                         detectTapGestures(
@@ -1206,15 +1206,15 @@ fun InternalVideoPlayer(
                                 Box(modifier = Modifier.fillMaxWidth().height(3.dp).background(Color.White.copy(alpha = 0.2f), RoundedCornerShape(1.5.dp)))
                                 // 2. 中层：缓存进度 (浅灰)
                                 Box(modifier = Modifier.fillMaxWidth(bufferedFraction).height(3.dp).background(Color.White.copy(alpha = 0.5f), RoundedCornerShape(1.5.dp)))
-                                // 3. 上层：播放进度 (纯白)
-                                Box(modifier = Modifier.fillMaxWidth(currentFraction).height(3.dp).background(Color.White, RoundedCornerShape(1.5.dp)))
-                                
-                                // 4. 顶层：正圆形滑块
+                                // 3. 上层：播放进度 (纯白) + 圆点焊死
                                 Box(
                                     modifier = Modifier
                                         .fillMaxWidth(currentFraction)
-                                        .wrapContentWidth(Alignment.End)
+                                        .height(3.dp)
+                                        .background(Color.White, RoundedCornerShape(1.5.dp)),
+                                    contentAlignment = Alignment.CenterEnd
                                 ) {
+                                    // 白色正圆形小圆点，直接贴附在进度条右侧
                                     Box(
                                         modifier = Modifier
                                             .size(12.dp)
@@ -1546,24 +1546,22 @@ fun SeriesPosterCard(series: MediaSeries, onClick: () -> Unit, onLongClick: () -
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun MediaDetailScreen(
-    series: MediaSeries, onBack: () -> Unit, onPlay: (MediaSeries, QuarkFile) -> Unit, onLongClickPoster: (MediaSeries) -> Unit
+    series: MediaSeries, 
+    allSeries: List<MediaSeries>,
+    onBack: () -> Unit, 
+    onPlay: (MediaSeries, QuarkFile) -> Unit, 
+    onLongClickPoster: (MediaSeries) -> Unit,
+    onSelectSeries: (MediaSeries) -> Unit
 ) {
     val viewModel: VideoScraperViewModel = koinViewModel()
 
-    val seasons = remember(series) { series.videos.map { it.parsedInfo?.season ?: 1 }.distinct().sorted() }
+    val relatedSeries = remember(series, allSeries) {
+        if (series.groupName.isNullOrBlank()) emptyList()
+        else allSeries.filter { it.groupName == series.groupName && it.id != series.id }
+    }
 
-    val latestWatchedFile = series.videos.maxByOrNull { viewModel.getVideoProgress(it.fid) }
-    val latestPlayedSeason = latestWatchedFile?.parsedInfo?.season ?: 1
-
-    var selectedSeason by remember { mutableStateOf(latestPlayedSeason) }
-
-    val currentSeasonDetail = series.seasonDetails[selectedSeason]
-    val displayPoster = currentSeasonDetail?.posterUrl ?: series.posterUrl
-    val displayOverview = if (!currentSeasonDetail?.overview.isNullOrBlank()) currentSeasonDetail?.overview else series.overview
-
-    val currentSeasonVideos = remember(series, selectedSeason) {
-        series.videos.filter { (it.parsedInfo?.season ?: 1) == selectedSeason }
-            .sortedWith(compareBy<QuarkFile> { it.parsedInfo?.episode ?: 0 }.thenBy { it.name })
+    val currentSeasonVideos = remember(series) {
+        series.videos.sortedWith(compareBy<QuarkFile> { it.parsedInfo?.season ?: 1 }.thenBy { it.parsedInfo?.episode ?: 0 }.thenBy { it.name })
     }
 
     val latestWatchedInCurrentSeason = currentSeasonVideos.maxByOrNull { viewModel.getVideoProgress(it.fid) }
@@ -1579,14 +1577,14 @@ fun MediaDetailScreen(
         val ep = targetPlayFile.parsedInfo?.episode
         if (ep != null) "继续播放 第${ep}集" else "继续播放"
     } else {
-        if (seasons.size > 1) "播放 第${selectedSeason}季" else "播放"
+        "播放"
     }
 
     LazyColumn(modifier = Modifier.fillMaxSize().background(Color.White)) {
         item {
             Box(modifier = Modifier.fillMaxWidth().height(350.dp)) {
-                if (displayPoster != null) {
-                    AsyncImage(model = displayPoster, contentDescription = null, modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
+                if (series.posterUrl != null) {
+                    AsyncImage(model = series.posterUrl, contentDescription = null, modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
                     Box(modifier = Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(Color.Transparent, Color.White), startY = 200f, endY = 900f)))
                 } else Box(modifier = Modifier.fillMaxSize().background(Color.LightGray))
                 Row(modifier = Modifier.fillMaxWidth().statusBarsPadding().padding(8.dp), horizontalArrangement = Arrangement.SpaceBetween) {
@@ -1617,34 +1615,13 @@ fun MediaDetailScreen(
                     Icon(Icons.Default.PlayArrow, null, tint = Color.White); AppText(text = " $playBtnText", color = Color.White, style = MaterialTheme.typography.titleMedium)
                 }
                 AppText(text = "剧情简介", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, modifier = Modifier.padding(top = 16.dp))
-                AppText(text = displayOverview ?: "暂无简介", style = MaterialTheme.typography.bodyMedium, color = Color.DarkGray, modifier = Modifier.padding(top = 8.dp))
-            }
-        }
-
-        if (seasons.size > 1) {
-            item {
-                ScrollableTabRow(
-                    selectedTabIndex = seasons.indexOf(selectedSeason),
-                    edgePadding = 16.dp,
-                    modifier = Modifier.padding(top = 16.dp),
-                    containerColor = Color.Transparent,
-                    contentColor = MaterialTheme.colorScheme.primary,
-                    divider = {}
-                ) {
-                    seasons.forEach { season ->
-                        Tab(
-                            selected = selectedSeason == season,
-                            onClick = { selectedSeason = season },
-                            text = { AppText("第${season}季") }
-                        )
-                    }
-                }
+                AppText(text = series.overview ?: "暂无简介", style = MaterialTheme.typography.bodyMedium, color = Color.DarkGray, modifier = Modifier.padding(top = 8.dp))
             }
         }
 
         item {
             AppText(
-                text = "剧集列表",
+                text = "剧集/视频列表",
                 style = MaterialTheme.typography.titleMedium,
                 fontWeight = FontWeight.Bold,
                 modifier = Modifier.padding(start = 16.dp, top = 24.dp, bottom = 8.dp)
@@ -1667,6 +1644,34 @@ fun MediaDetailScreen(
                             else Icon(Icons.Default.PlayArrow, null, tint = Color.White)
                         }
                         AppText(text = label, maxLines = 1, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(top = 4.dp), fontWeight = FontWeight.Bold)
+                    }
+                }
+            }
+        }
+
+        // 【新增】系列其他影片推荐
+        if (relatedSeries.isNotEmpty()) {
+            item {
+                AppText(
+                    text = "系列其他影片",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold,
+                    modifier = Modifier.padding(start = 16.dp, top = 24.dp, bottom = 8.dp)
+                )
+            }
+            item {
+                LazyRow(contentPadding = PaddingValues(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    items(relatedSeries) { relSeries ->
+                        Column(modifier = Modifier.width(110.dp).clickable { onSelectSeries(relSeries) }) {
+                            Box(modifier = Modifier.fillMaxWidth().aspectRatio(2f / 3f).clip(RoundedCornerShape(8.dp)).background(Color(0xFFE0E0E0)), contentAlignment = Alignment.Center) {
+                                if (relSeries.posterUrl != null) AsyncImage(model = relSeries.posterUrl, contentDescription = null, modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
+                                else AppText("无海报", color = Color.Gray, style = MaterialTheme.typography.bodySmall)
+                                if (relSeries.rating != null) {
+                                    AppText(text = relSeries.rating, color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.ExtraBold, style = TextStyle(shadow = Shadow(color = Color.Black, offset = Offset(1f, 1f), blurRadius = 3f)), modifier = Modifier.align(Alignment.BottomEnd).padding(6.dp))
+                                }
+                            }
+                            AppText(text = relSeries.title, maxLines = 1, modifier = Modifier.padding(top = 4.dp).basicMarquee(), style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Bold)
+                        }
                     }
                 }
             }
