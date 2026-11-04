@@ -220,123 +220,75 @@ fun VideoScraperScreen(
         else if (viewAllCategory != null) viewAllCategory = null
     }
 
-    if (isActive && uiState.playUrl == null && uiState.currentPlayFile != null) {
-        // 【新增】使用横屏海报作为加载背景，绝对不用竖屏兼容
-        val season = uiState.currentPlayFile?.parsedInfo?.season ?: 1
-        val ep = uiState.currentPlayFile?.parsedInfo?.episode
-        val stillUrl = if (ep != null) {
-            uiState.currentSeries?.seasonEpisodeStills?.get("${season}_${ep}") 
-                ?: uiState.currentSeries?.episodeStills?.get(ep)
-        } else null
-
-        Box(modifier = Modifier.fillMaxSize().background(Color.Black), contentAlignment = Alignment.Center) {
-            if (stillUrl != null) {
-                AsyncImage(
-                    model = stillUrl,
-                    contentDescription = "Loading Background",
-                    modifier = Modifier.fillMaxSize(),
-                    contentScale = ContentScale.Crop
-                )
-                // 遮罩层
-                Box(modifier = Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.5f)))
-            }
-            Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                CircularProgressIndicator(color = Color.White)
-                Spacer(modifier = Modifier.height(16.dp))
-                AnimatedLoadingDots(color = Color.White, fontSize = 16.sp)
-            }
-        }
-        return
-    }
-
-    if (isActive && uiState.playUrl != null && uiState.currentSeries != null && uiState.currentPlayFile != null) {
-        Dialog(
-            onDismissRequest = {
-                activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
-                viewModel.stopPlaying()
-            },
-            properties = DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false)
-        ) {
-            InternalVideoPlayer(
-                url = uiState.playUrl!!,
-                title = uiState.playTitle ?: "播放中",
-                cookie = uiState.cookie,
+    Box(modifier = Modifier.fillMaxSize()) {
+        // 1. 正常内容渲染
+        if (uiState.currentSeries != null) {
+            MediaDetailScreen(
                 series = uiState.currentSeries!!,
-                currentFile = uiState.currentPlayFile!!,
-                viewModel = viewModel,
-                downloadThreads = uiState.downloadThreads,
-                onBack = {
-                    activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
-                    viewModel.stopPlaying()
-                }
+                allSeries = uiState.seriesList,
+                onBack = { viewModel.selectSeries(null) },
+                onPlay = { series, file -> viewModel.playVideo(context, series, file) },
+                onLongClickPoster = { manualScrapeSeries = it; showManualScrapeDialog = true },
+                onSelectSeries = { viewModel.selectSeries(it) }
             )
-        }
-    } else if (uiState.currentSeries != null) {
-        MediaDetailScreen(
-            series = uiState.currentSeries!!,
-            allSeries = uiState.seriesList,
-            onBack = { viewModel.selectSeries(null) },
-            onPlay = { series, file -> viewModel.playVideo(context, series, file) },
-            onLongClickPoster = { manualScrapeSeries = it; showManualScrapeDialog = true },
-            onSelectSeries = { viewModel.selectSeries(it) }
-        )
-    } else if (viewAllCategory != null) {
-        val categorySeries = uiState.seriesList.filter { it.category == viewAllCategory }
-        Column(modifier = Modifier.fillMaxSize().statusBarsPadding().background(Color.White)) {
-            Row(modifier = Modifier.fillMaxWidth().padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
-                IconButton(onClick = { viewAllCategory = null }) { Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "返回", tint = Color.Black) }
-                AppText(text = viewAllCategory ?: "", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, modifier = Modifier.padding(start = 8.dp))
-            }
-            LazyVerticalGrid(
-                columns = GridCells.Fixed(3), contentPadding = PaddingValues(16.dp),
-                horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(16.dp)
-            ) {
-                items(categorySeries) { series ->
-                    SeriesPosterCard(series = series, onClick = { viewModel.selectSeries(series) }, onLongClick = { manualScrapeSeries = series; showManualScrapeDialog = true })
+        } else if (viewAllCategory != null) {
+            val categorySeries = uiState.seriesList.filter { it.category == viewAllCategory }
+            Column(modifier = Modifier.fillMaxSize().statusBarsPadding().background(Color.White)) {
+                Row(modifier = Modifier.fillMaxWidth().padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
+                    IconButton(onClick = { viewAllCategory = null }) { Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "返回", tint = Color.Black) }
+                    AppText(text = viewAllCategory ?: "", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, modifier = Modifier.padding(start = 8.dp))
+                }
+                LazyVerticalGrid(
+                    columns = GridCells.Fixed(3), contentPadding = PaddingValues(16.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(16.dp)
+                ) {
+                    items(categorySeries) { series ->
+                        SeriesPosterCard(series = series, onClick = { viewModel.selectSeries(series) }, onLongClick = { manualScrapeSeries = series; showManualScrapeDialog = true })
+                    }
                 }
             }
-        }
-    } else {
-        Column(modifier = modifier.fillMaxSize().statusBarsPadding()) {
-            Row(modifier = Modifier.fillMaxWidth().background(Color(0xFFF5F5F5)).padding(horizontal = 16.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-                AppText(
-                    text = "影视库",
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.Bold,
-                    modifier = Modifier.weight(1f).padding(start = 16.dp)
-                )
-                IconButton(onClick = { showSettingsDialog = true }) { Icon(Icons.Default.Settings, contentDescription = "设置") }
-            }
-
-            if (uiState.errorMsg != null && !uiState.isLoading) {
-                Box(modifier = Modifier.fillMaxWidth().background(Color(0xFFFFCDD2)).padding(8.dp), contentAlignment = Alignment.Center) {
-                    AppText(uiState.errorMsg!!, color = Color.Red, style = MaterialTheme.typography.bodySmall)
+        } else {
+            Column(modifier = modifier.fillMaxSize().statusBarsPadding()) {
+                Row(modifier = Modifier.fillMaxWidth().background(Color(0xFFF5F5F5)).padding(horizontal = 16.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                    AppText(
+                        text = "影视库",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold,
+                        modifier = Modifier.weight(1f).padding(start = 16.dp)
+                    )
+                    IconButton(onClick = { showSettingsDialog = true }) { Icon(Icons.Default.Settings, contentDescription = "设置") }
                 }
-            }
 
-            if (uiState.isLoading && uiState.seriesList.isEmpty()) {
-                Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
-            } else {
-                PullToRefreshBox(isRefreshing = uiState.isLoading, onRefresh = { viewModel.loadLibraryVideos() }, modifier = Modifier.fillMaxSize()) {
-                    if (uiState.selectedLibraryFids.isEmpty()) {
-                        Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { AppText("请先在资源库中勾选媒体文件夹") }
-                    } else if (uiState.seriesList.isEmpty() && !uiState.isLoading) {
-                        Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { AppText("没找到任何视频，下拉可刷新") }
-                    } else {
-                        val grouped = uiState.seriesList.groupBy { it.category }
-                        LazyColumn(modifier = Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 16.dp)) {
-                            grouped.forEach { (categoryName, seriesList) ->
-                                if (seriesList.isNotEmpty()) {
-                                    item {
-                                        Row(modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                                            AppText(text = categoryName, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-                                            AppText(text = "全部 ${seriesList.size} 部 >", style = MaterialTheme.typography.bodySmall, color = Color.Gray, modifier = Modifier.clickable { viewAllCategory = categoryName })
+                if (uiState.errorMsg != null && !uiState.isLoading) {
+                    Box(modifier = Modifier.fillMaxWidth().background(Color(0xFFFFCDD2)).padding(8.dp), contentAlignment = Alignment.Center) {
+                        AppText(uiState.errorMsg!!, color = Color.Red, style = MaterialTheme.typography.bodySmall)
+                    }
+                }
+
+                if (uiState.isLoading && uiState.seriesList.isEmpty()) {
+                    Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
+                } else {
+                    PullToRefreshBox(isRefreshing = uiState.isLoading, onRefresh = { viewModel.loadLibraryVideos() }, modifier = Modifier.fillMaxSize()) {
+                        if (uiState.selectedLibraryFids.isEmpty()) {
+                            Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { AppText("请先在资源库中勾选媒体文件夹") }
+                        } else if (uiState.seriesList.isEmpty() && !uiState.isLoading) {
+                            Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { AppText("没找到任何视频，下拉可刷新") }
+                        } else {
+                            val grouped = uiState.seriesList.groupBy { it.category }
+                            LazyColumn(modifier = Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 16.dp)) {
+                                grouped.forEach { (categoryName, seriesList) ->
+                                    if (seriesList.isNotEmpty()) {
+                                        item {
+                                            Row(modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                                                AppText(text = categoryName, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                                                AppText(text = "全部 ${seriesList.size} 部 >", style = MaterialTheme.typography.bodySmall, color = Color.Gray, modifier = Modifier.clickable { viewAllCategory = categoryName })
+                                            }
                                         }
-                                    }
-                                    item {
-                                        LazyRow(contentPadding = PaddingValues(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                                            items(seriesList) { series ->
-                                                SeriesPosterCard(series = series, onClick = { viewModel.selectSeries(series) }, onLongClick = { manualScrapeSeries = series; showManualScrapeDialog = true })
+                                        item {
+                                            LazyRow(contentPadding = PaddingValues(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                                                items(seriesList) { series ->
+                                                    SeriesPosterCard(series = series, onClick = { viewModel.selectSeries(series) }, onLongClick = { manualScrapeSeries = series; showManualScrapeDialog = true })
+                                                }
                                             }
                                         }
                                     }
@@ -345,6 +297,56 @@ fun VideoScraperScreen(
                         }
                     }
                 }
+            }
+        }
+
+        // 2. 浮层：正在获取直链时（留在详情页，显示居中的黑底加载框）
+        if (isActive && uiState.playUrl == null && uiState.currentPlayFile != null) {
+            // 半透明防点击遮罩
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(Color.Black.copy(alpha = 0.2f))
+                    .clickable(indication = null, interactionSource = remember { MutableInteractionSource() }) {}, 
+                contentAlignment = Alignment.Center
+            ) {
+                // 黑色圆角提示框
+                Row(
+                    modifier = Modifier
+                        .background(Color(0xCC000000), RoundedCornerShape(12.dp))
+                        .padding(horizontal = 24.dp, vertical = 16.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    CircularProgressIndicator(color = Color.White, modifier = Modifier.size(24.dp), strokeWidth = 2.dp)
+                    Spacer(modifier = Modifier.width(16.dp))
+                    // 【这里修改了传入的文本】
+                    AnimatedLoadingDots(color = Color.White, fontSize = 14.sp, text = "正在获取播放地址")
+                }
+            }
+        }
+
+        // 3. 全屏播放器 (有直链时弹出)
+        if (isActive && uiState.playUrl != null && uiState.currentSeries != null && uiState.currentPlayFile != null) {
+            Dialog(
+                onDismissRequest = {
+                    activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
+                    viewModel.stopPlaying()
+                },
+                properties = DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false)
+            ) {
+                InternalVideoPlayer(
+                    url = uiState.playUrl!!,
+                    title = uiState.playTitle ?: "播放中",
+                    cookie = uiState.cookie,
+                    series = uiState.currentSeries!!,
+                    currentFile = uiState.currentPlayFile!!,
+                    viewModel = viewModel,
+                    downloadThreads = uiState.downloadThreads,
+                    onBack = {
+                        activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
+                        viewModel.stopPlaying()
+                    }
+                )
             }
         }
     }
@@ -1501,7 +1503,7 @@ fun InternalVideoPlayer(
 // 辅助工具
 // ==========================================
 @Composable
-fun AnimatedLoadingDots(color: Color, fontSize: androidx.compose.ui.unit.TextUnit) {
+fun AnimatedLoadingDots(color: Color, fontSize: androidx.compose.ui.unit.TextUnit, text: String = "正在加载中") {
     val transition = rememberInfiniteTransition(label = "loadingDots")
     
     val dot1Y by transition.animateFloat(
@@ -1544,7 +1546,7 @@ fun AnimatedLoadingDots(color: Color, fontSize: androidx.compose.ui.unit.TextUni
     )
 
     Row(verticalAlignment = Alignment.CenterVertically) {
-        AppText("正在加载中", color = color, fontSize = fontSize)
+        AppText(text, color = color, fontSize = fontSize)
         Box(modifier = Modifier.width(20.dp).padding(start = 2.dp)) {
             Row {
                 AppText(".", color = color, fontSize = fontSize, modifier = Modifier.offset(y = (-4 * dot1Y).dp))
