@@ -5,6 +5,7 @@ import android.app.Activity
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
+import android.content.Intent
 import android.content.pm.ActivityInfo
 import android.content.res.Configuration
 import android.media.AudioManager
@@ -15,6 +16,7 @@ import android.view.ViewGroup
 import android.view.WindowManager
 import android.webkit.CookieManager
 import android.webkit.WebChromeClient
+import android.webkit.WebResourceRequest
 import android.webkit.WebSettings
 import android.webkit.WebView
 import android.webkit.WebViewClient
@@ -555,6 +557,7 @@ fun WebLoginView(onLoginSuccess: (String) -> Unit, onCancel: () -> Unit) {
     val context = LocalContext.current
     var webViewRef by remember { mutableStateOf<WebView?>(null) }
     var reloadTrigger by remember { mutableIntStateOf(0) }
+    var loadingProgress by remember { mutableFloatStateOf(0f) }
 
     DisposableEffect(Unit) { onDispose { webViewRef?.destroy(); webViewRef = null } }
     Column(modifier = Modifier.fillMaxSize()) {
@@ -578,6 +581,9 @@ fun WebLoginView(onLoginSuccess: (String) -> Unit, onCancel: () -> Unit) {
                 }) { AppText("完成登录", color = MaterialTheme.colorScheme.primary) }
             }
         }
+        if (loadingProgress < 1f) {
+            LinearProgressIndicator(progress = { loadingProgress }, modifier = Modifier.fillMaxWidth().height(2.dp))
+        }
         AndroidView(modifier = Modifier.weight(1f).fillMaxWidth(), factory = { ctx ->
             WebView(ctx).apply {
                 webViewRef = this
@@ -590,15 +596,24 @@ fun WebLoginView(onLoginSuccess: (String) -> Unit, onCancel: () -> Unit) {
                     setSupportZoom(true)
                     builtInZoomControls = true
                     displayZoomControls = false
+                    // 使用默认的移动端 UA，不再强行覆盖 PC UA
                     if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.LOLLIPOP) {
                         mixedContentMode = WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
                     }
-                    userAgentString = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
                 }
                 CookieManager.getInstance().setAcceptCookie(true)
                 CookieManager.getInstance().setAcceptThirdPartyCookies(this, true)
-                webChromeClient = WebChromeClient()
-                webViewClient = object : WebViewClient() {}
+                webChromeClient = object : WebChromeClient() {
+                    override fun onProgressChanged(view: WebView?, newProgress: Int) {
+                        loadingProgress = newProgress / 100f
+                    }
+                }
+                webViewClient = object : WebViewClient() {
+                    override fun shouldOverrideUrlLoading(view: WebView?, request: WebResourceRequest?): Boolean {
+                        // 拦截所有跳转（包括拉起 APP），强制在 WebView 内加载，防止丢失 Cookie
+                        return false 
+                    }
+                }
                 loadUrl("https://pan.quark.cn/")
             }
         }, update = { webView ->
@@ -606,6 +621,7 @@ fun WebLoginView(onLoginSuccess: (String) -> Unit, onCancel: () -> Unit) {
                 webView.clearHistory()
                 webView.clearCache(true)
                 webView.loadUrl("https://pan.quark.cn/")
+                reloadTrigger = 0 // 重置
             }
         })
     }
@@ -1649,7 +1665,7 @@ fun MediaDetailScreen(
             }
         }
 
-        // 【新增】系列其他影片推荐
+        // 系列其他影片推荐
         if (relatedSeries.isNotEmpty()) {
             item {
                 AppText(
