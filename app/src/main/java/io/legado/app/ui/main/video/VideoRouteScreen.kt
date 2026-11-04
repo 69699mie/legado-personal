@@ -254,7 +254,7 @@ fun VideoRouteScreen(
         var inputCookie by remember { mutableStateOf(uiState.cookie) }
         var inputTmdbKey by remember { mutableStateOf(uiState.tmdbApiKey) }
         var inputTmdbUrl by remember { mutableStateOf(uiState.tmdbBaseUrl) }
-        
+
         var isCookieVisible by remember { mutableStateOf(false) }
         var isTmdbKeyVisible by remember { mutableStateOf(false) }
 
@@ -264,7 +264,7 @@ fun VideoRouteScreen(
                     AppText(text = "夸克登录状态", fontWeight = FontWeight.Bold)
                     Button(onClick = { showWebLoginDialog = true }, contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp)) { AppText("网页扫码登录") }
                 }
-                
+
                 OutlinedTextField(
                     value = inputCookie,
                     onValueChange = { inputCookie = it },
@@ -281,9 +281,9 @@ fun VideoRouteScreen(
                         }
                     }
                 )
-                
+
                 AppText(text = "TMDB API Key (v3 auth)")
-                
+
                 OutlinedTextField(
                     value = inputTmdbKey,
                     onValueChange = { inputTmdbKey = it },
@@ -389,7 +389,7 @@ fun WebLoginView(onLoginSuccess: (String) -> Unit, onCancel: () -> Unit) {
                     CookieManager.getInstance().flush()
                     reloadTrigger++
                 }) { AppText("清空缓存", color = Color.Red) }
-                
+
                 TextButton(onClick = {
                     val cookie = CookieManager.getInstance().getCookie("https://pan.quark.cn/")
                     if (!cookie.isNullOrBlank() && cookie.contains("__uid=")) {
@@ -549,21 +549,20 @@ fun InternalVideoPlayer(
             .readTimeout(60, TimeUnit.SECONDS)
             .build()
 
-        // 【修改】多线程分片预取数据源
+        // 多线程分片预取数据源
         val dataSourceFactory = ParallelDownloadDataSource.Factory(okHttpClient, headers)
 
-        // 2. 构建 RenderersFactory，优先使用 FFmpeg 扩展
+        // 2. 构建 RenderersFactory（FFmpeg 扩展已移除，使用平台默认渲染器）
         val renderersFactory = DefaultRenderersFactory(context)
             .setEnableAudioFloatOutput(true)
-            .setExtensionRendererMode(DefaultRenderersFactory.EXTENSION_RENDERER_MODE_PREFER)
 
-        // 3. 创建 MediaItem，不再强制指定 MimeType，交由 FFmpeg 嗅探
+        // 3. 创建 MediaItem
         val mediaItem = MediaItem.Builder()
             .setUri(url)
             .setMediaMetadata(MediaMetadata.Builder().setTitle(title).build())
             .build()
 
-        // 4. 构建 MediaSource（FFmpeg 能够直接探测容器，无需区分 HLS 或 Progressive）
+        // 4. 构建 MediaSource
         val mediaSource = ProgressiveMediaSource.Factory(dataSourceFactory)
             .createMediaSource(mediaItem)
 
@@ -594,7 +593,6 @@ fun InternalVideoPlayer(
             .readTimeout(60, TimeUnit.SECONDS)
             .build()
 
-        // 【修改】多线程分片预取数据源
         val dataSourceFactory = ParallelDownloadDataSource.Factory(okHttpClient, headers)
 
         val mediaItem = MediaItem.Builder()
