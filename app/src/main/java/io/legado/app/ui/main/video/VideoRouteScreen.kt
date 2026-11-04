@@ -107,6 +107,7 @@ import kotlin.math.roundToInt
 @Composable
 fun VideoRouteScreen(
     modifier: Modifier = Modifier,
+    initialLibraryMode: Boolean? = null, // 新增参数，如果为 null 则显示 TabRow，否则固定模式并隐藏 TabRow
     viewModel: VideoScraperViewModel = koinViewModel()
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
@@ -119,7 +120,17 @@ fun VideoRouteScreen(
     var viewAllCategory by remember { mutableStateOf<String?>(null) }
     var showThreadSelection by remember { mutableStateOf(false) }
 
-    BackHandler(enabled = uiState.playUrl != null || uiState.currentSeries != null || viewAllCategory != null || (!uiState.isLibraryMode && uiState.currentFid != "0")) {
+    // 局部模式变量，避免同一个 ViewModel 在两个 Tab 之间共享状态导致 UI 串扰
+    val isLibMode = initialLibraryMode ?: uiState.isLibraryMode
+
+    // 同步模式到 ViewModel 以触发对应数据的加载
+    LaunchedEffect(initialLibraryMode) {
+        if (initialLibraryMode != null && uiState.isLibraryMode != initialLibraryMode) {
+            viewModel.setMode(initialLibraryMode)
+        }
+    }
+
+    BackHandler(enabled = uiState.playUrl != null || uiState.currentSeries != null || viewAllCategory != null || (!isLibMode && uiState.currentFid != "0")) {
         if (uiState.playUrl != null) {
             activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
             viewModel.stopPlaying()
@@ -176,17 +187,29 @@ fun VideoRouteScreen(
     } else {
         Column(modifier = modifier.fillMaxSize().statusBarsPadding()) {
             Row(modifier = Modifier.fillMaxWidth().background(Color(0xFFF5F5F5)).padding(horizontal = 16.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-                if (uiState.currentFid != "0" && !uiState.isLibraryMode) {
+                if (uiState.currentFid != "0" && !isLibMode) {
                     IconButton(onClick = { viewModel.goBack() }) { Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "返回") }
                 }
-                TabRow(
-                    selectedTabIndex = if (uiState.isLibraryMode) 1 else 0,
-                    modifier = Modifier.weight(1f).padding(horizontal = 8.dp),
-                    containerColor = Color.Transparent, contentColor = MaterialTheme.colorScheme.primary
-                ) {
-                    Tab(selected = !uiState.isLibraryMode, onClick = { viewModel.setMode(false) }, text = { AppText("网盘浏览") })
-                    Tab(selected = uiState.isLibraryMode, onClick = { viewModel.setMode(true) }, text = { AppText("影视库") })
+                
+                // 当传入 initialLibraryMode 时隐藏 TabRow，显示固定标题
+                if (initialLibraryMode == null) {
+                    TabRow(
+                        selectedTabIndex = if (isLibMode) 1 else 0,
+                        modifier = Modifier.weight(1f).padding(horizontal = 8.dp),
+                        containerColor = Color.Transparent, contentColor = MaterialTheme.colorScheme.primary
+                    ) {
+                        Tab(selected = !isLibMode, onClick = { viewModel.setMode(false) }, text = { AppText("网盘浏览") })
+                        Tab(selected = isLibMode, onClick = { viewModel.setMode(true) }, text = { AppText("影视库") })
+                    }
+                } else {
+                    AppText(
+                        text = if (isLibMode) "影视库" else "网盘浏览",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold,
+                        modifier = Modifier.weight(1f).padding(start = 16.dp)
+                    )
                 }
+                
                 IconButton(onClick = { showSettingsDialog = true }) { Icon(Icons.Default.Settings, contentDescription = "设置") }
             }
 
@@ -198,7 +221,7 @@ fun VideoRouteScreen(
 
             if (uiState.isLoading && uiState.seriesList.isEmpty() && uiState.fileList.isEmpty()) {
                 Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
-            } else if (!uiState.isLibraryMode) {
+            } else if (!isLibMode) {
                 if (uiState.fileList.isEmpty()) {
                     Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { AppText("当前文件夹为空") }
                 } else {
@@ -262,7 +285,12 @@ fun VideoRouteScreen(
         var isTmdbKeyVisible by remember { mutableStateOf(false) }
 
         Dialog(onDismissRequest = { showSettingsDialog = false }) {
-            Column(modifier = Modifier.background(Color.White).padding(16.dp).fillMaxWidth()) {
+            Column(
+                modifier = Modifier
+                    .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.95f), RoundedCornerShape(16.dp))
+                    .padding(16.dp)
+                    .fillMaxWidth()
+            ) {
                 Row(modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                     AppText(text = "夸克登录状态", fontWeight = FontWeight.Bold)
                     Button(onClick = { showWebLoginDialog = true }, contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp)) { AppText("网页扫码登录") }
