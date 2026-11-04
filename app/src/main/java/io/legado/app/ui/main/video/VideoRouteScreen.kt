@@ -22,6 +22,12 @@ import android.widget.FrameLayout
 import android.widget.Toast
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.keyframes
+import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -109,14 +115,14 @@ import kotlin.math.roundToInt
 @Composable
 fun VideoRouteScreen(
     modifier: Modifier = Modifier,
-    initialLibraryMode: Boolean? = null, // 如果为 null 则显示 TabRow，否则固定模式并隐藏 TabRow
+    initialLibraryMode: Boolean? = null,
     viewModel: VideoScraperViewModel = koinViewModel()
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val context = LocalContext.current
     val activity = context.findActivity()
-    val videoSettingsRepository = koinInject<VideoSettingsRepository>() // 注入
-    
+    val videoSettingsRepository = koinInject<VideoSettingsRepository>()
+
     var showSettingsDialog by remember { mutableStateOf(false) }
     var showWebLoginDialog by remember { mutableStateOf(false) }
     var showManualScrapeDialog by remember { mutableStateOf(false) }
@@ -124,21 +130,17 @@ fun VideoRouteScreen(
     var viewAllCategory by remember { mutableStateOf<String?>(null) }
     var showThreadSelection by remember { mutableStateOf(false) }
 
-    // 局部模式变量
     val isLibMode = initialLibraryMode ?: uiState.isLibraryMode
 
-    // 同步模式到 ViewModel 以触发对应数据的加载
     LaunchedEffect(initialLibraryMode) {
         if (initialLibraryMode != null && uiState.isLibraryMode != initialLibraryMode) {
             viewModel.setMode(initialLibraryMode)
         }
     }
 
-    // 【新增】监听首页发来的拉起播放指令
     LaunchedEffect(Unit) {
         val pendingFid = videoSettingsRepository.pendingPlayFid
         if (!pendingFid.isNullOrBlank()) {
-            // 调用 ViewModel 处理，内部会将其消费掉并获取直链
             viewModel.handlePendingPlayRequest()
         }
     }
@@ -901,7 +903,8 @@ fun InternalVideoPlayer(
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
                     CircularProgressIndicator(color = Color.White, modifier = Modifier.size(36.dp))
                     Spacer(modifier = Modifier.height(12.dp))
-                    AppText("正在加载中...", color = Color.White, fontSize = 14.sp)
+                    // 【修改】在这里调用动画组件
+                    AnimatedLoadingDots(color = Color.White, fontSize = 14.sp)
                 }
             }
         }
@@ -1238,6 +1241,63 @@ fun InternalVideoPlayer(
                     },
                     modifier = Modifier.align(Alignment.End)
                 ) { AppText("保存设置") }
+            }
+        }
+    }
+}
+
+// 【新增】动态跳动的加载文字组件
+@Composable
+fun AnimatedLoadingDots(color: Color, fontSize: androidx.compose.ui.unit.TextUnit) {
+    val transition = rememberInfiniteTransition(label = "loadingDots")
+    
+    val dot1Y by transition.animateFloat(
+        initialValue = 0f, targetValue = 1f,
+        animationSpec = infiniteRepeatable(
+            animation = keyframes {
+                durationMillis = 1200
+                0f at 0 using LinearEasing
+                1f at 300 using LinearEasing
+                0f at 600 using LinearEasing
+                0f at 1200 using LinearEasing
+            }
+        ), label = "dot1"
+    )
+    val dot2Y by transition.animateFloat(
+        initialValue = 0f, targetValue = 1f,
+        animationSpec = infiniteRepeatable(
+            animation = keyframes {
+                durationMillis = 1200
+                0f at 0 using LinearEasing
+                0f at 100 using LinearEasing
+                1f at 400 using LinearEasing
+                0f at 700 using LinearEasing
+                0f at 1200 using LinearEasing
+            }
+        ), label = "dot2"
+    )
+    val dot3Y by transition.animateFloat(
+        initialValue = 0f, targetValue = 1f,
+        animationSpec = infiniteRepeatable(
+            animation = keyframes {
+                durationMillis = 1200
+                0f at 0 using LinearEasing
+                0f at 200 using LinearEasing
+                1f at 500 using LinearEasing
+                0f at 800 using LinearEasing
+                0f at 1200 using LinearEasing
+            }
+        ), label = "dot3"
+    )
+
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        AppText("正在加载中", color = color, fontSize = fontSize)
+        // 使用固定宽度的 Box 防止文字由于上下偏移产生 UI 抖动
+        Box(modifier = Modifier.width(20.dp).padding(start = 2.dp)) {
+            Row {
+                Text(".", color = color, fontSize = fontSize, modifier = Modifier.offset(y = (-4 * dot1Y).dp))
+                Text(".", color = color, fontSize = fontSize, modifier = Modifier.offset(y = (-4 * dot2Y).dp))
+                Text(".", color = color, fontSize = fontSize, modifier = Modifier.offset(y = (-4 * dot3Y).dp))
             }
         }
     }
