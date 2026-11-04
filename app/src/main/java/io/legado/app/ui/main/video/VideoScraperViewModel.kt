@@ -33,7 +33,6 @@ data class QuarkFile(
     val size: Long = 0L
 )
 
-// 新增：用于存储每一季独有的详情
 data class SeasonDetail(
     val posterUrl: String? = null,
     val overview: String? = null
@@ -49,14 +48,12 @@ data class MediaSeries(
     val overview: String? = null,
     val rating: String? = null,
     val videos: List<QuarkFile> = emptyList(),
-    // 新增：各季度的独立海报与简介
     val seasonDetails: Map<Int, SeasonDetail> = emptyMap(),
-    // 向下兼容：原来的 Map<Int, String> 保留，用于旧缓存
     val episodeTitles: Map<Int, String> = emptyMap(),
     val episodeStills: Map<Int, String> = emptyMap(),
-    // 新增：精确区分季集名称 (如 "1_1")
     val seasonEpisodeTitles: Map<String, String> = emptyMap(),
-    val seasonEpisodeStills: Map<String, String> = emptyMap()
+    val seasonEpisodeStills: Map<String, String> = emptyMap(),
+    val groupName: String? = null // 新增：同系列分组名（例如：刺杀小说家）
 )
 
 data class TmdbSearchResult(
@@ -80,7 +77,8 @@ data class ScrapeCacheItem(
     val episodeTitles: Map<Int, String> = emptyMap(),
     val episodeStills: Map<Int, String> = emptyMap(),
     val seasonEpisodeTitles: Map<String, String> = emptyMap(),
-    val seasonEpisodeStills: Map<String, String> = emptyMap()
+    val seasonEpisodeStills: Map<String, String> = emptyMap(),
+    val groupName: String? = null
 )
 
 class VideoScraperViewModel(
@@ -172,7 +170,8 @@ class VideoScraperViewModel(
                         episodeTitles = epTitles,
                         episodeStills = epStills,
                         seasonEpisodeTitles = sEpTitles,
-                        seasonEpisodeStills = sEpStills
+                        seasonEpisodeStills = sEpStills,
+                        groupName = itemObj.optString("groupName").takeIf { it.isNotBlank() && it != "null" }
                     )
                 }
             }
@@ -189,6 +188,7 @@ class VideoScraperViewModel(
                 itemObj.put("posterUrl", item.posterUrl ?: "")
                 itemObj.put("overview", item.overview ?: "")
                 itemObj.put("rating", item.rating ?: "")
+                itemObj.put("groupName", item.groupName ?: "")
                 
                 val epTitlesObj = JSONObject()
                 item.episodeTitles.forEach { (k, v) -> epTitlesObj.put(k.toString(), v) }
@@ -318,7 +318,8 @@ class VideoScraperViewModel(
                                 episodeTitles = cached.episodeTitles,
                                 episodeStills = cached.episodeStills,
                                 seasonEpisodeTitles = cached.seasonEpisodeTitles,
-                                seasonEpisodeStills = cached.seasonEpisodeStills
+                                seasonEpisodeStills = cached.seasonEpisodeStills,
+                                groupName = cached.groupName
                             )
                         }
                     } else {
@@ -362,16 +363,23 @@ class VideoScraperViewModel(
 
             val meaningfulPaths = v.folderPath.filter { !excludeFolders.contains(it) }
             var baseTitle = ""
+            var groupName: String? = null
             var folderSeason: Int? = null
 
             if (meaningfulPaths.isNotEmpty()) {
                 if (VideoFileNameParser.isSeasonFolder(meaningfulPaths.last())) {
                     folderSeason = parseSeasonFromFolder(meaningfulPaths.last())
+                    val seasonStr = meaningfulPaths.last()
                     baseTitle = if (meaningfulPaths.size >= 2) meaningfulPaths[meaningfulPaths.size - 2] else meaningfulPaths.last()
+                    groupName = baseTitle // 设置系列分组名
+                    baseTitle = "$baseTitle $seasonStr" // 强制加上季数后缀以便区分
                 } else {
                     baseTitle = meaningfulPaths.last()
                     if (meaningfulPaths.size >= 2 && VideoFileNameParser.isSeasonFolder(meaningfulPaths[meaningfulPaths.size - 2])) {
-                        folderSeason = parseSeasonFromFolder(meaningfulPaths[meaningfulPaths.size - 2])
+                        val seasonStr = meaningfulPaths[meaningfulPaths.size - 2]
+                        folderSeason = parseSeasonFromFolder(seasonStr)
+                        groupName = baseTitle
+                        baseTitle = "$baseTitle $seasonStr"
                     }
                 }
             } else {
@@ -401,7 +409,8 @@ class VideoScraperViewModel(
             } else {
                 seriesMap[key] = MediaSeries(
                     id = key, title = baseTitle, originalParsedTitle = baseTitle,
-                    year = parsed.year, category = finalCategory, videos = listOf(updatedV)
+                    year = parsed.year, category = finalCategory, videos = listOf(updatedV),
+                    groupName = groupName
                 )
             }
         }
@@ -464,12 +473,26 @@ class VideoScraperViewModel(
     private fun scrapeSeriesPosters(needScrapeList: List<MediaSeries>, apiKey: String, baseUrl: String) {
         viewModelScope.launch(Dispatchers.IO) {
             val scrapedList = needScrapeList.map { series ->
-                val match = searchTmdbWithFallback(series.originalParsedTitle, series.year, apiKey, baseUrl)
+                // 清洗用于搜索的名字（去掉“第一季”等后缀）
+                var searchTitle = series.originalParsedTitle
+                if (series.groupName != null) {
+                    searchTitle = series.groupName
+                }
+
+                val match = searchTmdbWithFallback(searchTitle, series.year, apiKey, baseUrl)
                 if (match != null) {
                     var finalTitle = match.title
-                    if (finalTitle.matches(Regex("^[a-zA-Z0-9\\s\\p{Punct}]+$")) && series.originalParsedTitle.any { it.code > 127 }) {
-                        finalTitle = series.originalParsedTitle
+                    if (series.groupName != null && series.originalParsedTitle.contains("第")) {
+                        val suffix = series.originalParsedTitle.substringAfter(series.groupName).trim()
+                        if (suffix.isNotBlank() && !finalTitle.contains(suffix)) {
+                            finalTitle = "$finalTitle $suffix"
+                        }
                     }
+                    
+                    if (finalTitle.matches(Regex("^[a-zA-Z0-9\\s\\p{Punct}]+$")) && searchTitle.any { it.code > 127 }) {
+                        finalTitle = searchTitle
+                    }
+                    
                     var finalCategory = series.category
                     if (finalCategory == "未分类") {
                         finalCategory = when {
@@ -528,7 +551,8 @@ class VideoScraperViewModel(
                         episodeTitles = newSeries.episodeTitles,
                         episodeStills = newSeries.episodeStills,
                         seasonEpisodeTitles = newSeries.seasonEpisodeTitles,
-                        seasonEpisodeStills = newSeries.seasonEpisodeStills
+                        seasonEpisodeStills = newSeries.seasonEpisodeStills,
+                        groupName = newSeries.groupName
                     )
                     newSeries
                 } else {
@@ -720,7 +744,8 @@ class VideoScraperViewModel(
                 episodeTitles = updatedSeries.episodeTitles,
                 episodeStills = updatedSeries.episodeStills,
                 seasonEpisodeTitles = updatedSeries.seasonEpisodeTitles,
-                seasonEpisodeStills = updatedSeries.seasonEpisodeStills
+                seasonEpisodeStills = updatedSeries.seasonEpisodeStills,
+                groupName = updatedSeries.groupName
             )
             saveScrapedCache()
         }
@@ -771,7 +796,6 @@ class VideoScraperViewModel(
                 _uiState.update { it.copy(playUrl = url) }
             } else {
                 val detail = lastQuarkError ?: "未知错误"
-                // 【隐患修复】如果失败，必须把 currentPlayFile 清空，防止黑屏卡死
                 stopPlaying()
                 withContext(Dispatchers.Main) {
                     AlertDialog.Builder(context)
@@ -806,7 +830,6 @@ class VideoScraperViewModel(
                 if (url != null) {
                     _uiState.update { it.copy(playUrl = url) }
                 } else {
-                    // 【隐患修复】同上，跨页拉起失败也直接回退
                     stopPlaying()
                 }
             }
