@@ -40,12 +40,17 @@ class VideoSettingsRepository(context: Context) {
         get() = prefs.getString("scraped_cache_data", "") ?: ""
         set(value) { prefs.edit().putString("scraped_cache_data", value).apply() }
 
-    // 【新增】最近观看的影视记录（JSON格式）
+    // 最近观看的影视记录（JSON格式）
     var recentWatchedVideos: String
         get() = prefs.getString("recent_watched_videos", "[]") ?: "[]"
         set(value) { prefs.edit().putString("recent_watched_videos", value).apply() }
 
-    // 【新增】跨页面播放指令：当从首页点击影视记录时，存入此字段
+    // 【新增】影视累计观看时长（毫秒）
+    var totalVideoWatchTime: Long
+        get() = prefs.getLong("total_video_watch_time", 0L)
+        set(value) { prefs.edit().putLong("total_video_watch_time", value).apply() }
+
+    // 跨页面播放指令：当从首页点击影视记录时，存入此字段
     var pendingPlayFid: String?
         get() = prefs.getString("pending_play_fid", null)
         set(value) { prefs.edit().putString("pending_play_fid", value).apply() }
