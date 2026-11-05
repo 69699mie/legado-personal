@@ -11,6 +11,7 @@ import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.snap
 import androidx.compose.animation.core.spring
 import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.background
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.gestures.Orientation
 import androidx.compose.foundation.interaction.MutableInteractionSource
@@ -94,9 +95,11 @@ import io.legado.app.ui.main.home.HomeViewModel
 import io.legado.app.ui.main.my.MyRouteScreen
 import io.legado.app.ui.main.my.PrefClickEvent
 import io.legado.app.ui.main.rss.RssRouteScreen
+import io.legado.app.ui.main.video.InternalVideoPlayer
 import io.legado.app.ui.main.video.VideoLibraryScreen
 import io.legado.app.ui.main.video.VideoScraperScreen
 import io.legado.app.ui.main.video.VideoScraperViewModel
+import io.legado.app.ui.main.video.AnimatedLoadingDots
 import io.legado.app.ui.theme.LegadoTheme
 import io.legado.app.ui.theme.ThemeResolver
 import io.legado.app.ui.widget.components.AppScaffold
@@ -182,6 +185,10 @@ fun MainScreen(
     val homeViewModel: HomeViewModel = koinViewModel()
     val videoViewModel: VideoScraperViewModel = koinViewModel()
     val videoSettingsRepository = koinInject<VideoSettingsRepository>()
+    
+    // 【新增】监听播放状态
+    val videoUiState by videoViewModel.uiState.collectAsStateWithLifecycle()
+    val isVideoPlaying = videoUiState.playUrl != null || videoUiState.currentPlayFile != null || videoUiState.isDirectPlay
 
     LaunchedEffect(effects, context) {
         effects.collectLatest { effect ->
@@ -286,158 +293,72 @@ fun MainScreen(
             WideNavigationRailValue.Collapsed
     )
 
-    Row(modifier = Modifier.fillMaxSize()) {
-        if (useRail && mainUiState.showBottomView) {
-            if (ThemeResolver.isMiuixEngine(LegadoTheme.composeEngine)) {
-                val miuixNavState = rememberNavigationRailState(
-                    initialValue = if (mainUiState.navExtended) {
-                        NavigationRailValue.Expanded
-                    } else {
-                        NavigationRailValue.Collapsed
-                    }
-                )
-                LaunchedEffect(miuixNavState.currentValue) {
-                    onIntent(MainUiIntent.SetNavigationRailExpanded(miuixNavState.isExpanded))
-                }
-                MiuixNavigationRail(
-                    state = miuixNavState,
-                    header = {
-                        FloatingActionButton(
-                            modifier = Modifier
-                                .align(Alignment.Start)
-                                .padding(start = NavigationRailDefaults.ExpandedItemHorizontalMargin),
-                            onClick = { onNavigateToSearch(null) },
-                        ) {
-                            AppIcon(
-                                Icons.Default.Search,
-                                contentDescription = null,
-                                tint = Color.White
-                            )
+    // 最外层包裹一个 Box，用于放置全局播放器和黑屏
+    Box(modifier = Modifier.fillMaxSize()) {
+        Row(modifier = Modifier.fillMaxSize()) {
+            if (useRail && mainUiState.showBottomView && !isVideoPlaying) {
+                if (ThemeResolver.isMiuixEngine(LegadoTheme.composeEngine)) {
+                    val miuixNavState = rememberNavigationRailState(
+                        initialValue = if (mainUiState.navExtended) {
+                            NavigationRailValue.Expanded
+                        } else {
+                            NavigationRailValue.Collapsed
                         }
+                    )
+                    LaunchedEffect(miuixNavState.currentValue) {
+                        onIntent(MainUiIntent.SetNavigationRailExpanded(miuixNavState.isExpanded))
                     }
-                ) {
-                    destinations.forEachIndexed { index, destination ->
-                        val selected = pagerState.targetPage == index
-                        var showGroupMenu by remember { mutableStateOf(false) }
-                        val haptic = LocalHapticFeedback.current
-                        val destinationLabel = stringResource(destination.labelId)
-                        Box {
-                            MiuixNavigationRailItem(
+                    MiuixNavigationRail(
+                        state = miuixNavState,
+                        header = {
+                            FloatingActionButton(
                                 modifier = Modifier
-                                    .semantics(mergeDescendants = true) {
-                                        contentDescription = destinationLabel
-                                    }
-                                    .then(
-                                        if (destination == MainDestination.Bookshelf) {
-                                            Modifier.combinedClickable(
-                                                interactionSource = remember { MutableInteractionSource() },
-                                                indication = null,
-                                                onClick = {
-                                                    handleMainDestinationClick(
-                                                        index,
-                                                        destination
-                                                    )
-                                                },
-                                                onLongClick = {
-                                                    haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                                                    showGroupMenu = true
-                                                }
-                                            )
-                                        } else Modifier
-                                    ),
-                                selected = selected,
-                                onClick = { handleMainDestinationClick(index, destination) },
-                                icon = AppIcons.mainDestination(destination, selected),
-                                label = destinationLabel,
-                            )
-                            if (destination == MainDestination.Bookshelf && showGroupMenu) {
-                                BookshelfRailGroupMenuRoute(
-                                    expanded = showGroupMenu,
-                                    onDismissRequest = { showGroupMenu = false },
-                                    onBeforeSelectGroup = {
-                                        if (pagerState.currentPage != index) {
-                                            pagerState.scrollToPage(index)
-                                        }
-                                    }
+                                    .align(Alignment.Start)
+                                    .padding(start = NavigationRailDefaults.ExpandedItemHorizontalMargin),
+                                onClick = { onNavigateToSearch(null) },
+                            ) {
+                                AppIcon(
+                                    Icons.Default.Search,
+                                    contentDescription = null,
+                                    tint = Color.White
                                 )
                             }
                         }
-                    }
-                }
-            } else WideNavigationRail(
-                state = navState,
-                header = {
-                    val expanded = navState.targetValue == WideNavigationRailValue.Expanded
-
-                    Column {
-                        MediumTonalButton(
-                            modifier = Modifier.padding(start = 24.dp),
-                            onClick = {
-                                coroutineScope.launch {
-                                    val targetExpanded = !expanded
-                                    if (targetExpanded) navState.expand()
-                                    else navState.collapse()
-                                    onIntent(MainUiIntent.SetNavigationRailExpanded(targetExpanded))
-                                }
-                            },
-                            icon = if (expanded) {
-                                Icons.AutoMirrored.Filled.MenuOpen
-                            } else {
-                                Icons.Default.Menu
-                            },
-                            contentDescription = stringResource(
-                                if (expanded) R.string.collapse else R.string.expand
-                            ),
-                        )
-
-                        Spacer(modifier = Modifier.height(8.dp))
-
-                        ExtendedFloatingActionButton(
-                            modifier = Modifier.padding(start = 20.dp),
-                            onClick = { onNavigateToSearch(null) },
-                            expanded = expanded,
-                            icon = { AppIcon(Icons.Default.Search, contentDescription = null) },
-                            text = { AppText(stringResource(R.string.search)) }
-                        )
-                    }
-                }
-            ) {
-                destinations.forEachIndexed { index, destination ->
-                    val selected = pagerState.targetPage == index
-                    var showGroupMenu by remember { mutableStateOf(false) }
-                    val haptic = LocalHapticFeedback.current
-                    val destinationLabel = stringResource(destination.labelId)
-
-                    WideNavigationRailItem(
-                        modifier = Modifier.semantics(mergeDescendants = true) {
-                            contentDescription = destinationLabel
-                        },
-                        railExpanded = navState.targetValue == WideNavigationRailValue.Expanded,
-                        selected = selected,
-                        onClick = {
-                            handleMainDestinationClick(index, destination)
-                        },
-                        icon = {
+                    ) {
+                        destinations.forEachIndexed { index, destination ->
+                            val selected = pagerState.targetPage == index
+                            var showGroupMenu by remember { mutableStateOf(false) }
+                            val haptic = LocalHapticFeedback.current
+                            val destinationLabel = stringResource(destination.labelId)
                             Box {
-                                NavigationIcon(
-                                    destination = destination,
+                                MiuixNavigationRailItem(
+                                    modifier = Modifier
+                                        .semantics(mergeDescendants = true) {
+                                            contentDescription = destinationLabel
+                                        }
+                                        .then(
+                                            if (destination == MainDestination.Bookshelf) {
+                                                Modifier.combinedClickable(
+                                                    interactionSource = remember { MutableInteractionSource() },
+                                                    indication = null,
+                                                    onClick = {
+                                                        handleMainDestinationClick(
+                                                            index,
+                                                            destination
+                                                        )
+                                                    },
+                                                    onLongClick = {
+                                                        haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                                                        showGroupMenu = true
+                                                    }
+                                                )
+                                            } else Modifier
+                                        ),
                                     selected = selected,
-                                    customIconPath = mainUiState.customIconPath(destination),
-                                    modifier = if (destination == MainDestination.Bookshelf) {
-                                        Modifier.combinedClickable(
-                                            interactionSource = remember { MutableInteractionSource() },
-                                            indication = null,
-                                            onClick = {
-                                                handleMainDestinationClick(index, destination)
-                                            },
-                                            onLongClick = {
-                                                haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                                                showGroupMenu = true
-                                            }
-                                        )
-                                    } else Modifier
+                                    onClick = { handleMainDestinationClick(index, destination) },
+                                    icon = AppIcons.mainDestination(destination, selected),
+                                    label = destinationLabel,
                                 )
-
                                 if (destination == MainDestination.Bookshelf && showGroupMenu) {
                                     BookshelfRailGroupMenuRoute(
                                         expanded = showGroupMenu,
@@ -450,274 +371,110 @@ fun MainScreen(
                                     )
                                 }
                             }
-                        },
-                        label = if (labelVisibilityMode != "unlabeled") {
-                            { AppText(stringResource(destination.labelId)) }
-                        } else null
-                    )
-                }
-            }
-        }
+                        }
+                    }
+                } else WideNavigationRail(
+                    state = navState,
+                    header = {
+                        val expanded = navState.targetValue == WideNavigationRailValue.Expanded
 
-        AppScaffold(
-            modifier = Modifier.weight(1f),
-            bottomBar = {
-                if (!useRail && mainUiState.showBottomView && !useFloatingBottomBar) {
-                    AppNavigationBar(
-                        showLabel = showLabel,
-                        alwaysShowLabel = alwaysShowLabel
-                    ) {
-                        destinations.forEachIndexed { index, destination ->
-                            val selected = pagerState.targetPage == index
-                            val customIconPath = mainUiState.customIconPath(destination)
-                            val selectedCustomIconPath =
-                                mainUiState.selectedCustomIconPath(destination)
-                            val destinationLabel = stringResource(destination.labelId)
-                            AppNavigationBarItem(
-                                modifier = Modifier.semantics(mergeDescendants = true) {
-                                    contentDescription = destinationLabel
-                                },
-                                selected = selected,
+                        Column {
+                            MediumTonalButton(
+                                modifier = Modifier.padding(start = 24.dp),
                                 onClick = {
-                                    handleMainDestinationClick(index, destination)
+                                    coroutineScope.launch {
+                                        val targetExpanded = !expanded
+                                        if (targetExpanded) navState.expand()
+                                        else navState.collapse()
+                                        onIntent(MainUiIntent.SetNavigationRailExpanded(targetExpanded))
+                                    }
                                 },
-                                labelString = stringResource(destination.labelId),
-                                iconVector = AppIcons.mainDestination(destination, selected),
-                                m3Icon = {
+                                icon = if (expanded) {
+                                    Icons.AutoMirrored.Filled.MenuOpen
+                                } else {
+                                    Icons.Default.Menu
+                                },
+                                contentDescription = stringResource(
+                                    if (expanded) R.string.collapse else R.string.expand
+                                ),
+                            )
+
+                            Spacer(modifier = Modifier.height(8.dp))
+
+                            ExtendedFloatingActionButton(
+                                modifier = Modifier.padding(start = 20.dp),
+                                onClick = { onNavigateToSearch(null) },
+                                expanded = expanded,
+                                icon = { AppIcon(Icons.Default.Search, contentDescription = null) },
+                                text = { AppText(stringResource(R.string.search)) }
+                            )
+                        }
+                    }
+                ) {
+                    destinations.forEachIndexed { index, destination ->
+                        val selected = pagerState.targetPage == index
+                        var showGroupMenu by remember { mutableStateOf(false) }
+                        val haptic = LocalHapticFeedback.current
+                        val destinationLabel = stringResource(destination.labelId)
+
+                        WideNavigationRailItem(
+                            modifier = Modifier.semantics(mergeDescendants = true) {
+                                contentDescription = destinationLabel
+                            },
+                            railExpanded = navState.targetValue == WideNavigationRailValue.Expanded,
+                            selected = selected,
+                            onClick = {
+                                handleMainDestinationClick(index, destination)
+                            },
+                            icon = {
+                                Box {
                                     NavigationIcon(
                                         destination = destination,
                                         selected = selected,
-                                        customIconPath = if (selected) {
-                                            selectedCustomIconPath.ifEmpty { customIconPath }
-                                        } else customIconPath,
+                                        customIconPath = mainUiState.customIconPath(destination),
+                                        modifier = if (destination == MainDestination.Bookshelf) {
+                                            Modifier.combinedClickable(
+                                                interactionSource = remember { MutableInteractionSource() },
+                                                indication = null,
+                                                onClick = {
+                                                    handleMainDestinationClick(index, destination)
+                                                },
+                                                onLongClick = {
+                                                    haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                                                    showGroupMenu = true
+                                                }
+                                            )
+                                        } else Modifier
                                     )
-                                },
-                                m3IndicatorColor = GlassDefaults.glassColor(
-                                    noBlurColor = LegadoTheme.colorScheme.secondaryContainer,
-                                    blurAlpha = GlassDefaults.ThickBlurAlpha
-                                ),
-                                m3ShowLabel = showLabel,
-                                m3AlwaysShowLabel = alwaysShowLabel,
-                                useCustomIcon =
-                                    customIconPath.isNotEmpty() || selectedCustomIconPath.isNotEmpty(),
-                            )
-                        }
-                    }
-                }
-            },
-            contentWindowInsets = WindowInsets(0)
-        ) { _ ->
-            Box(
-                modifier = Modifier.fillMaxSize()
-            ) {
-                Box(
-                    modifier = Modifier.then(
-                        if (useLiquidGlass) {
-                            Modifier
-                                .hazeSource(hazeState)
-                                .layerBackdrop(floatingBarBackdrop)
-                        } else {
-                            Modifier
-                        }
-                    )
-                ) {
-                    HorizontalPager(
-                        state = pagerState,
-                        pageNestedScrollConnection = pagerNestedScrollConnection,
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .then(
-                                with(sharedTransitionScope) {
-                                    if (this != null) Modifier.skipToLookaheadSize() else Modifier
-                                }
-                            ),
-                        userScrollEnabled = true,
-                        beyondViewportPageCount = 4
-                    ) { page ->
-                        val destination = destinations.getOrNull(page) ?: return@HorizontalPager
-                        val pageLifecycleOwner = rememberMainPageLifecycleOwner(
-                            isActive = page == pagerState.currentPage
-                        )
-                        CompositionLocalProvider(LocalLifecycleOwner provides pageLifecycleOwner) {
-                            when (destination) {
-                            MainDestination.Home -> HomeRouteScreen(
-                                onOpenBook = { book ->
-                                    if (book.bookUrl.startsWith("hiker://video")) {
-                                        val fid = book.bookUrl.substringAfter("fid=").substringBefore("&")
-                                        videoSettingsRepository.pendingPlayFid = fid
-                                        coroutineScope.launch {
-                                            val videoIndex = destinations.indexOfFirst { it == MainDestination.Video }
-                                            if (videoIndex != -1) {
-                                                pagerState.animateScrollToPage(videoIndex)
-                                                delay(300)
-                                                videoViewModel.handlePendingPlayRequest()
+
+                                    if (destination == MainDestination.Bookshelf && showGroupMenu) {
+                                        BookshelfRailGroupMenuRoute(
+                                            expanded = showGroupMenu,
+                                            onDismissRequest = { showGroupMenu = false },
+                                            onBeforeSelectGroup = {
+                                                if (pagerState.currentPage != index) {
+                                                    pagerState.scrollToPage(index)
+                                                }
                                             }
-                                        }
-                                    } else {
-                                        context.startActivityForBook(book)
-                                    }
-                                },
-                                onNavigateToBookInfo = { name, author, bookUrl, origin, coverPath, sharedCoverKey ->
-                                    onNavigateToBookInfo(
-                                        name ?: "",
-                                        author ?: "",
-                                        bookUrl,
-                                        origin,
-                                        coverPath,
-                                        sharedCoverKey,
-                                    )
-                                },
-                                onOpenExploreShow = onNavigateToExploreShow,
-                                onOpenBackupSettings = onNavigateToBackupSettings,
-                                onNavigateToReadRecord = onNavigateToReadRecord,
-                                onNavigateToReadRecordOverview = onNavigateToReadRecordOverview,
-                                sharedTransitionScope = sharedTransitionScope,
-                                animatedVisibilityScope = animatedVisibilityScope,
-                            )
-
-                            MainDestination.Bookshelf -> BookshelfRouteScreen(
-                                scrollToTopRequest = bookshelfScrollToTopRequest,
-                                onScrollToTopRequestHandled = { handledRequest ->
-                                    if (bookshelfScrollToTopRequest == handledRequest) {
-                                        bookshelfScrollToTopRequest = 0L
-                                    }
-                                },
-                                onBookClick = { book, sharedCoverKey ->
-                                    onOpenBookshelfBook(book, sharedCoverKey)
-                                },
-                                onBookLongClick = { book, sharedCoverKey ->
-                                    onNavigateToBookInfo(
-                                        book.name,
-                                        book.author,
-                                        book.bookUrl,
-                                        book.origin,
-                                        book.getDisplayCover(),
-                                        sharedCoverKey
-                                    )
-                                },
-                                onNavigateToSearch = { query -> onNavigateToSearch(query) },
-                                onNavigateToRemoteImport = onNavigateToRemoteImport,
-                                onNavigateToLocalImport = onNavigateToLocalImport,
-                                onNavigateToCache = onNavigateToCache,
-                                onNavigateToSettings = onOpenSettings,
-                                sharedTransitionScope = sharedTransitionScope,
-                                animatedVisibilityScope = animatedVisibilityScope,
-                            )
-
-                                // 彻底拆分：资源库仅用于浏览和勾选，不加载播放器
-                                MainDestination.Explore -> VideoLibraryScreen()
-
-                                // 彻底拆分：影视库负责刮削与播放，传入 isActive 防双开
-                                MainDestination.Video -> VideoScraperScreen(
-                                    isActive = page == pagerState.currentPage
-                                )
-
-                            MainDestination.Rss -> RssRouteScreen(
-                                onOpenSort = { sourceUrl, sortUrl, key ->
-                                    onNavigateToRssSort(sourceUrl, sortUrl, key)
-                                },
-                                onOpenRead = { title, origin, link, openUrl, startPage ->
-                                    onNavigateToRssRead(title, origin, link, openUrl, startPage)
-                                },
-                                onOpenFavorites = onNavigateToRssFavorites,
-                                onOpenRuleSub = onNavigateToRuleSub,
-                                onOpenLogin = { sourceUrl ->
-                                    onNavigateToSourceLogin(
-                                        io.legado.app.ui.login.SourceLoginType.RssSource,
-                                        sourceUrl,
-                                    )
-                                },
-                                onOpenSourceEdit = onNavigateToRssSourceEdit,
-                                onOpenSourceManage = onNavigateToRssSourceManage,
-                            )
-                            MainDestination.My -> MyRouteScreen(
-                                onOpenSettings = onOpenSettings,
-                                onNavigateToChat = onNavigateToChat,
-                                onNavigate = { event ->
-                                    when (event) {
-                                        PrefClickEvent.OpenBookCacheManage -> onNavigateToBookCacheManage()
-                                        PrefClickEvent.OpenBookSourceManage -> onNavigateToBookSourceManage()
-                                        PrefClickEvent.OpenReplaceRules -> onNavigateToReplaceRules()
-                                        PrefClickEvent.OpenReadRecord -> onNavigateToReadRecord()
-                                        else -> onIntent(MainUiIntent.HandlePreferenceClick(event))
+                                        )
                                     }
                                 }
-                            )
-                        }
-                        }
+                            },
+                            label = if (labelVisibilityMode != "unlabeled") {
+                                { AppText(stringResource(destination.labelId)) }
+                            } else null
+                        )
                     }
                 }
+            }
 
-                if (useFloatingBottomBar) {
-                    var readAloudCapsuleShown by remember { mutableStateOf(false) }
-                    var playbackControlsExpanded by rememberSaveable { mutableStateOf(false) }
-                    val expansion by animateFloatAsState(
-                        targetValue = if (playbackControlsExpanded && readAloudCapsuleShown) 1f else 0f,
-                        animationSpec = spring(
-                            dampingRatio = 1f,
-                            stiffness = 260f,
-                            visibilityThreshold = 0.0001f
-                        ),
-                        label = "homePlaybackControls",
-                    )
-                    BoxWithConstraints(
-                        modifier = Modifier
-                            .align(Alignment.BottomCenter)
-                            .fillMaxWidth()
-                            .padding(horizontal = 16.dp)
-                            .padding(
-                                bottom = 12.dp + WindowInsets.navigationBars.asPaddingValues()
-                                    .calculateBottomPadding()
-                            )
-                    ) {
-                        val gap = ReadAloudBarCapsuleEndPadding
-                        val capsuleReserve by animateDpAsState(
-                            targetValue = if (readAloudCapsuleShown) ReadAloudBarCapsuleSize + gap else 0.dp,
-                            animationSpec = if (readAloudCapsuleShown) snap() else spring(
-                                dampingRatio = 1f,
-                                stiffness = 260f
-                            ),
-                            label = "homePlaybackReserve",
-                        )
-                        val navigationAvailableWidth =
-                            (maxWidth - capsuleReserve).coerceAtLeast(0.dp)
-                        val normalNavigationWidth =
-                            (MainNavigationTabMinWidth * destinations.size + 8.dp)
-                                .coerceAtMost(navigationAvailableWidth)
-                        val navigationStartInset =
-                            (navigationAvailableWidth - normalNavigationWidth) / 2
-                        val expandedCapsuleWidth = (maxWidth - ReadAloudBarCapsuleSize - gap)
-                            .coerceAtLeast(ReadAloudBarCapsuleSize)
-                        val capsuleWidth = ReadAloudBarCapsuleSize +
-                                (expandedCapsuleWidth - ReadAloudBarCapsuleSize) * expansion
-                        val navigationWidth = normalNavigationWidth +
-                                (ReadAloudBarCapsuleSize.coerceAtMost(maxWidth) - normalNavigationWidth) * expansion
-                        FloatingBottomBar(
-                            modifier = Modifier
-                                .align(Alignment.BottomStart)
-                                .offset(x = navigationStartInset * (1f - expansion))
-                                .width(navigationWidth),
-                            compactProgress = expansion,
-                            expandedWidth = normalNavigationWidth,
-                            onRestoreNavigation = { playbackControlsExpanded = false },
-                            selectedIndex = { pagerState.targetPage },
-                            onSelected = { index ->
-                                destinations.getOrNull(index)?.let { destination ->
-                                    handleMainDestinationClick(index, destination)
-                                }
-                            },
-                            onReselected = { index ->
-                                destinations.getOrNull(index)?.let { destination ->
-                                    handleMainDestinationClick(index, destination)
-                                }
-                            },
-                            backdrop = floatingBarBackdrop,
-                            tabsCount = destinations.size,
-                            isBlurEnabled = useLiquidGlass,
-                            hasCustomIcons = destinations.any { dest ->
-                                mainUiState.customIconPath(dest).isNotEmpty() ||
-                                        mainUiState.selectedCustomIconPath(dest).isNotEmpty()
-                            }
+            AppScaffold(
+                modifier = Modifier.weight(1f),
+                bottomBar = {
+                    if (!useRail && mainUiState.showBottomView && !useFloatingBottomBar && !isVideoPlaying) {
+                        AppNavigationBar(
+                            showLabel = showLabel,
+                            alwaysShowLabel = alwaysShowLabel
                         ) {
                             destinations.forEachIndexed { index, destination ->
                                 val selected = pagerState.targetPage == index
@@ -725,57 +482,336 @@ fun MainScreen(
                                 val selectedCustomIconPath =
                                     mainUiState.selectedCustomIconPath(destination)
                                 val destinationLabel = stringResource(destination.labelId)
-                                FloatingBottomBarItem(
-                                    enabled = !playbackControlsExpanded && expansion <= 0.05f,
+                                AppNavigationBarItem(
+                                    modifier = Modifier.semantics(mergeDescendants = true) {
+                                        contentDescription = destinationLabel
+                                    },
+                                    selected = selected,
                                     onClick = {
                                         handleMainDestinationClick(index, destination)
                                     },
-                                    modifier = Modifier
-                                        .defaultMinSize(
-                                            minWidth = MainNavigationTabMinWidth
+                                    labelString = stringResource(destination.labelId),
+                                    iconVector = AppIcons.mainDestination(destination, selected),
+                                    m3Icon = {
+                                        NavigationIcon(
+                                            destination = destination,
+                                            selected = selected,
+                                            customIconPath = if (selected) {
+                                                selectedCustomIconPath.ifEmpty { customIconPath }
+                                            } else customIconPath,
                                         )
-                                        .semantics(mergeDescendants = true) {
-                                            contentDescription = destinationLabel
+                                    },
+                                    m3IndicatorColor = GlassDefaults.glassColor(
+                                        noBlurColor = LegadoTheme.colorScheme.secondaryContainer,
+                                        blurAlpha = GlassDefaults.ThickBlurAlpha
+                                    ),
+                                    m3ShowLabel = showLabel,
+                                    m3AlwaysShowLabel = alwaysShowLabel,
+                                    useCustomIcon =
+                                        customIconPath.isNotEmpty() || selectedCustomIconPath.isNotEmpty(),
+                                )
+                            }
+                        }
+                    }
+                },
+                contentWindowInsets = WindowInsets(0)
+            ) { _ ->
+                Box(
+                    modifier = Modifier.fillMaxSize()
+                ) {
+                    Box(
+                        modifier = Modifier.then(
+                            if (useLiquidGlass) {
+                                Modifier
+                                    .hazeSource(hazeState)
+                                    .layerBackdrop(floatingBarBackdrop)
+                            } else {
+                                Modifier
+                            }
+                        )
+                    ) {
+                        HorizontalPager(
+                            state = pagerState,
+                            pageNestedScrollConnection = pagerNestedScrollConnection,
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .then(
+                                    with(sharedTransitionScope) {
+                                        if (this != null) Modifier.skipToLookaheadSize() else Modifier
+                                    }
+                                ),
+                            userScrollEnabled = !isVideoPlaying, // 播放时禁止滑动
+                            beyondViewportPageCount = 4
+                        ) { page ->
+                            val destination = destinations.getOrNull(page) ?: return@HorizontalPager
+                            val pageLifecycleOwner = rememberMainPageLifecycleOwner(
+                                isActive = page == pagerState.currentPage
+                            )
+                            CompositionLocalProvider(LocalLifecycleOwner provides pageLifecycleOwner) {
+                                when (destination) {
+                                MainDestination.Home -> HomeRouteScreen(
+                                    onOpenBook = { book ->
+                                        if (book.bookUrl.startsWith("hiker://video")) {
+                                            val fid = book.bookUrl.substringAfter("fid=").substringBefore("&")
+                                            videoSettingsRepository.pendingPlayFid = fid
+                                            // 【修改】直接调用，不切Tab
+                                            videoViewModel.handlePendingPlayRequest()
+                                        } else {
+                                            context.startActivityForBook(book)
                                         }
-                                ) {
-                                    NavigationIcon(
-                                        destination = destination,
-                                        customIconPath = if (selected) {
-                                            selectedCustomIconPath.ifEmpty { customIconPath }
-                                        } else customIconPath,
-                                        selected = selected
-                                    )
-                                    if (
-                                        showLabel && (alwaysShowLabel || selected)
-                                    ) {
-                                        AppText(
-                                            text = stringResource(destination.labelId),
-                                            style = LegadoTheme.typography.labelSmall,
-                                            maxLines = 1,
-                                            overflow = TextOverflow.Ellipsis
+                                    },
+                                    onNavigateToBookInfo = { name, author, bookUrl, origin, coverPath, sharedCoverKey ->
+                                        onNavigateToBookInfo(
+                                            name ?: "",
+                                            author ?: "",
+                                            bookUrl,
+                                            origin,
+                                            coverPath,
+                                            sharedCoverKey,
                                         )
+                                    },
+                                    onOpenExploreShow = onNavigateToExploreShow,
+                                    onOpenBackupSettings = onNavigateToBackupSettings,
+                                    onNavigateToReadRecord = onNavigateToReadRecord,
+                                    onNavigateToReadRecordOverview = onNavigateToReadRecordOverview,
+                                    sharedTransitionScope = sharedTransitionScope,
+                                    animatedVisibilityScope = animatedVisibilityScope,
+                                )
+
+                                MainDestination.Bookshelf -> BookshelfRouteScreen(
+                                    scrollToTopRequest = bookshelfScrollToTopRequest,
+                                    onScrollToTopRequestHandled = { handledRequest ->
+                                        if (bookshelfScrollToTopRequest == handledRequest) {
+                                            bookshelfScrollToTopRequest = 0L
+                                        }
+                                    },
+                                    onBookClick = { book, sharedCoverKey ->
+                                        onOpenBookshelfBook(book, sharedCoverKey)
+                                    },
+                                    onBookLongClick = { book, sharedCoverKey ->
+                                        onNavigateToBookInfo(
+                                            book.name,
+                                            book.author,
+                                            book.bookUrl,
+                                            book.origin,
+                                            book.getDisplayCover(),
+                                            sharedCoverKey
+                                        )
+                                    },
+                                    onNavigateToSearch = { query -> onNavigateToSearch(query) },
+                                    onNavigateToRemoteImport = onNavigateToRemoteImport,
+                                    onNavigateToLocalImport = onNavigateToLocalImport,
+                                    onNavigateToCache = onNavigateToCache,
+                                    onNavigateToSettings = onOpenSettings,
+                                    sharedTransitionScope = sharedTransitionScope,
+                                    animatedVisibilityScope = animatedVisibilityScope,
+                                )
+
+                                    // 资源库
+                                    MainDestination.Explore -> VideoLibraryScreen()
+
+                                    // 影视库 (去掉内部播放器逻辑，只负责列表)
+                                    MainDestination.Video -> VideoScraperScreen(
+                                        isActive = page == pagerState.currentPage
+                                    )
+
+                                MainDestination.Rss -> RssRouteScreen(
+                                    onOpenSort = { sourceUrl, sortUrl, key ->
+                                        onNavigateToRssSort(sourceUrl, sortUrl, key)
+                                    },
+                                    onOpenRead = { title, origin, link, openUrl, startPage ->
+                                        onNavigateToRssRead(title, origin, link, openUrl, startPage)
+                                    },
+                                    onOpenFavorites = onNavigateToRssFavorites,
+                                    onOpenRuleSub = onNavigateToRuleSub,
+                                    onOpenLogin = { sourceUrl ->
+                                        onNavigateToSourceLogin(
+                                            io.legado.app.ui.login.SourceLoginType.RssSource,
+                                            sourceUrl,
+                                        )
+                                    },
+                                    onOpenSourceEdit = onNavigateToRssSourceEdit,
+                                    onOpenSourceManage = onNavigateToRssSourceManage,
+                                )
+                                MainDestination.My -> MyRouteScreen(
+                                    onOpenSettings = onOpenSettings,
+                                    onNavigateToChat = onNavigateToChat,
+                                    onNavigate = { event ->
+                                        when (event) {
+                                            PrefClickEvent.OpenBookCacheManage -> onNavigateToBookCacheManage()
+                                            PrefClickEvent.OpenBookSourceManage -> onNavigateToBookSourceManage()
+                                            PrefClickEvent.OpenReplaceRules -> onNavigateToReplaceRules()
+                                            PrefClickEvent.OpenReadRecord -> onNavigateToReadRecord()
+                                            else -> onIntent(MainUiIntent.HandlePreferenceClick(event))
+                                        }
+                                    }
+                                )
+                            }
+                            }
+                        }
+                    }
+
+                    if (useFloatingBottomBar && !isVideoPlaying) {
+                        var readAloudCapsuleShown by remember { mutableStateOf(false) }
+                        var playbackControlsExpanded by rememberSaveable { mutableStateOf(false) }
+                        val expansion by animateFloatAsState(
+                            targetValue = if (playbackControlsExpanded && readAloudCapsuleShown) 1f else 0f,
+                            animationSpec = spring(
+                                dampingRatio = 1f,
+                                stiffness = 260f,
+                                visibilityThreshold = 0.0001f
+                            ),
+                            label = "homePlaybackControls",
+                        )
+                        BoxWithConstraints(
+                            modifier = Modifier
+                                .align(Alignment.BottomCenter)
+                                .fillMaxWidth()
+                                .padding(horizontal = 16.dp)
+                                .padding(
+                                    bottom = 12.dp + WindowInsets.navigationBars.asPaddingValues()
+                                        .calculateBottomPadding()
+                                )
+                        ) {
+                            val gap = ReadAloudBarCapsuleEndPadding
+                            val capsuleReserve by animateDpAsState(
+                                targetValue = if (readAloudCapsuleShown) ReadAloudBarCapsuleSize + gap else 0.dp,
+                                animationSpec = if (readAloudCapsuleShown) snap() else spring(
+                                    dampingRatio = 1f,
+                                    stiffness = 260f
+                                ),
+                                label = "homePlaybackReserve",
+                            )
+                            val navigationAvailableWidth =
+                                (maxWidth - capsuleReserve).coerceAtLeast(0.dp)
+                            val normalNavigationWidth =
+                                (MainNavigationTabMinWidth * destinations.size + 8.dp)
+                                    .coerceAtMost(navigationAvailableWidth)
+                            val navigationStartInset =
+                                (navigationAvailableWidth - normalNavigationWidth) / 2
+                            val expandedCapsuleWidth = (maxWidth - ReadAloudBarCapsuleSize - gap)
+                                .coerceAtLeast(ReadAloudBarCapsuleSize)
+                            val capsuleWidth = ReadAloudBarCapsuleSize +
+                                    (expandedCapsuleWidth - ReadAloudBarCapsuleSize) * expansion
+                            val navigationWidth = normalNavigationWidth +
+                                    (ReadAloudBarCapsuleSize.coerceAtMost(maxWidth) - normalNavigationWidth) * expansion
+                            FloatingBottomBar(
+                                modifier = Modifier
+                                    .align(Alignment.BottomStart)
+                                    .offset(x = navigationStartInset * (1f - expansion))
+                                    .width(navigationWidth),
+                                compactProgress = expansion,
+                                expandedWidth = normalNavigationWidth,
+                                onRestoreNavigation = { playbackControlsExpanded = false },
+                                selectedIndex = { pagerState.targetPage },
+                                onSelected = { index ->
+                                    destinations.getOrNull(index)?.let { destination ->
+                                        handleMainDestinationClick(index, destination)
+                                    }
+                                },
+                                onReselected = { index ->
+                                    destinations.getOrNull(index)?.let { destination ->
+                                        handleMainDestinationClick(index, destination)
+                                    }
+                                },
+                                backdrop = floatingBarBackdrop,
+                                tabsCount = destinations.size,
+                                isBlurEnabled = useLiquidGlass,
+                                hasCustomIcons = destinations.any { dest ->
+                                    mainUiState.customIconPath(dest).isNotEmpty() ||
+                                            mainUiState.selectedCustomIconPath(dest).isNotEmpty()
+                                }
+                            ) {
+                                destinations.forEachIndexed { index, destination ->
+                                    val selected = pagerState.targetPage == index
+                                    val customIconPath = mainUiState.customIconPath(destination)
+                                    val selectedCustomIconPath =
+                                        mainUiState.selectedCustomIconPath(destination)
+                                    val destinationLabel = stringResource(destination.labelId)
+                                    FloatingBottomBarItem(
+                                        enabled = !playbackControlsExpanded && expansion <= 0.05f,
+                                        onClick = {
+                                            handleMainDestinationClick(index, destination)
+                                        },
+                                        modifier = Modifier
+                                            .defaultMinSize(
+                                                minWidth = MainNavigationTabMinWidth
+                                            )
+                                            .semantics(mergeDescendants = true) {
+                                                contentDescription = destinationLabel
+                                            }
+                                    ) {
+                                        NavigationIcon(
+                                            destination = destination,
+                                            customIconPath = if (selected) {
+                                                selectedCustomIconPath.ifEmpty { customIconPath }
+                                            } else customIconPath,
+                                            selected = selected
+                                        )
+                                        if (
+                                            showLabel && (alwaysShowLabel || selected)
+                                        ) {
+                                            AppText(
+                                                text = stringResource(destination.labelId),
+                                                style = LegadoTheme.typography.labelSmall,
+                                                maxLines = 1,
+                                                overflow = TextOverflow.Ellipsis
+                                            )
+                                        }
                                     }
                                 }
                             }
+                            ReadAloudBarCapsuleSlot(
+                                enabled = homePlaybackCapsuleEnabled,
+                                onOpenPlayer = { ReadAloudPlayerOverlayBus.request(it) },
+                                morph = readAloudMorph,
+                                anchorPreview = capsuleAnchorPreview,
+                                backdrop = floatingBarBackdrop,
+                                isBlurEnabled = useLiquidGlass,
+                                controlsExpanded = playbackControlsExpanded,
+                                expansion = expansion,
+                                width = capsuleWidth,
+                                expandedWidth = expandedCapsuleWidth,
+                                onControlsExpandedChange = { playbackControlsExpanded = it },
+                                onOccupiedWidthChanged = { readAloudCapsuleShown = it > 0 },
+                                modifier = Modifier.align(Alignment.BottomEnd),
+                            )
                         }
-                        ReadAloudBarCapsuleSlot(
-                            enabled = homePlaybackCapsuleEnabled,
-                            onOpenPlayer = { ReadAloudPlayerOverlayBus.request(it) },
-                            morph = readAloudMorph,
-                            anchorPreview = capsuleAnchorPreview,
-                            backdrop = floatingBarBackdrop,
-                            isBlurEnabled = useLiquidGlass,
-                            controlsExpanded = playbackControlsExpanded,
-                            expansion = expansion,
-                            width = capsuleWidth,
-                            expandedWidth = expandedCapsuleWidth,
-                            onControlsExpandedChange = { playbackControlsExpanded = it },
-                            onOccupiedWidthChanged = { readAloudCapsuleShown = it > 0 },
-                            modifier = Modifier.align(Alignment.BottomEnd),
-                        )
                     }
                 }
             }
+        }
+
+        // ================================
+        // 3. 全局播放器与加载遮罩
+        // ================================
+        
+        // 如果是直链还在加载，全屏黑屏挡住一切（包括底栏）
+        if (isVideoPlaying && videoUiState.playUrl == null && videoUiState.currentPlayFile != null) {
+            Box(modifier = Modifier.fillMaxSize().background(Color.Black), contentAlignment = Alignment.Center) {
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    androidx.compose.material3.CircularProgressIndicator(color = Color.White)
+                    Spacer(modifier = Modifier.height(16.dp))
+                    AnimatedLoadingDots(color = Color.White, fontSize = 16.sp, text = "正在获取播放地址")
+                }
+            }
+        }
+
+        // 直链有了，全局挂载全屏播放器
+        if (videoUiState.playUrl != null && videoUiState.currentSeries != null && videoUiState.currentPlayFile != null) {
+            InternalVideoPlayer(
+                url = videoUiState.playUrl!!,
+                title = videoUiState.playTitle ?: "播放中",
+                cookie = videoUiState.cookie,
+                series = videoUiState.currentSeries!!,
+                currentFile = videoUiState.currentPlayFile!!,
+                viewModel = videoViewModel,
+                downloadThreads = videoUiState.downloadThreads,
+                onBack = {
+                    (context as? ComponentActivity)?.requestedOrientation = android.content.pm.ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
+                    videoViewModel.stopPlaying()
+                }
+            )
         }
     }
 }
