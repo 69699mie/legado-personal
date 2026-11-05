@@ -44,7 +44,7 @@ data class MediaSeries(
     val year: Int?,
     val category: String,
     val posterUrl: String? = null,
-    val backdropUrl: String? = null, // 新增：横屏海报
+    val backdropUrl: String? = null,
     val overview: String? = null,
     val rating: String? = null,
     val videos: List<QuarkFile> = emptyList(),
@@ -62,7 +62,7 @@ data class TmdbSearchResult(
     val title: String,
     val year: String,
     val posterUrl: String?,
-    val backdropUrl: String?, // 新增：横屏海报
+    val backdropUrl: String?,
     val overview: String,
     val rating: String?,
     val mediaType: String = "tv",
@@ -73,7 +73,7 @@ data class ScrapeCacheItem(
     val title: String,
     val category: String,
     val posterUrl: String?,
-    val backdropUrl: String?, // 新增：横屏海报
+    val backdropUrl: String?,
     val overview: String?,
     val rating: String?,
     val seasonDetails: Map<Int, SeasonDetail> = emptyMap(),
@@ -890,16 +890,16 @@ class VideoScraperViewModel(
             val newList = mutableListOf<JSONObject>()
             for (i in 0 until jsonArray.length()) {
                 val obj = jsonArray.getJSONObject(i)
-                if (obj.optString("fid") != file.fid) {
+                // 去重：根据影视剧名剔除旧的历史记录
+                if (obj.optString("seriesTitle") != series.title) {
                     newList.add(obj)
                 }
             }
             val newObj = JSONObject().apply {
                 put("fid", file.fid)
-                put("title", titleText)
-                put("seriesTitle", series.title)
-                // 优先存横屏海报路径，供历史记录显示
-                put("coverPath", series.backdropUrl ?: series.posterUrl ?: "")
+                put("title", titleText) // 详细名称（狂飙 第2集）
+                put("seriesTitle", series.title) // 影视名称（狂飙）
+                put("coverPath", series.posterUrl ?: "") // 使用竖屏海报
                 put("timestamp", System.currentTimeMillis())
             }
             newList.add(0, newObj)
@@ -1102,6 +1102,23 @@ class VideoScraperViewModel(
     fun clearRecentWatched() {
         videoSettingsRepository.recentWatchedVideos = "[]"
         _uiState.update { it.copy() } 
+    }
+
+    fun removeRecentWatchedBatch(seriesTitles: Set<String>) {
+        try {
+            val jsonArray = JSONArray(videoSettingsRepository.recentWatchedVideos)
+            val newList = mutableListOf<JSONObject>()
+            for (i in 0 until jsonArray.length()) {
+                val obj = jsonArray.getJSONObject(i)
+                if (!seriesTitles.contains(obj.optString("seriesTitle"))) {
+                    newList.add(obj)
+                }
+            }
+            val resultArray = JSONArray()
+            newList.forEach { resultArray.put(it) }
+            videoSettingsRepository.recentWatchedVideos = resultArray.toString()
+            _uiState.update { it.copy() }
+        } catch (e: Exception) {}
     }
 
     fun fetchQuarkFiles(fid: String = "0", isBack: Boolean = false, folderName: String? = null) {
