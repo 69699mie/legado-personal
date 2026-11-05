@@ -313,7 +313,7 @@ fun VideoScraperScreen(
             }
         }
 
-        // 底部全局刷新/刮削悬浮提示（去掉背景色，加阴影）
+        // 底部全局刷新/刮削悬浮提示
         if (uiState.isLoading || uiState.isScraping) {
             val isVideoPlaying = uiState.playUrl != null || uiState.currentPlayFile != null || uiState.isDirectPlay
             if (!isVideoPlaying) {
@@ -321,7 +321,6 @@ fun VideoScraperScreen(
                     modifier = Modifier
                         .align(Alignment.BottomCenter)
                         .padding(bottom = 100.dp)
-                        .padding(horizontal = 24.dp, vertical = 12.dp)
                 ) {
                     AnimatedLoadingDots(
                         color = Color.White, 
@@ -682,6 +681,7 @@ fun InternalVideoPlayer(
     val view = LocalView.current
     val configuration = LocalConfiguration.current
     val isLandscape = configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
+    val videoSettingsRepository = koinInject<VideoSettingsRepository>()
 
     val isInPip = remember { mutableStateOf(false) }
     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
@@ -805,6 +805,9 @@ fun InternalVideoPlayer(
     var hasAutoSkippedIntro by remember { mutableStateOf(false) }
     val audioManager = remember { context.getSystemService(Context.AUDIO_SERVICE) as AudioManager }
     var hasRestoredProgress by remember { mutableStateOf(false) }
+    
+    // 【新增】记录本次播放的起始位置，用于精确计算观看时长
+    var initialPlaybackPosition by remember { mutableLongStateOf(0L) }
 
     var audioTracks by remember { mutableStateOf<List<Tracks.Group>>(emptyList()) }
     var textTracks by remember { mutableStateOf<List<Tracks.Group>>(emptyList()) }
@@ -894,6 +897,8 @@ fun InternalVideoPlayer(
                                 hasAutoSkippedIntro = true
                             }
                         }
+                        // 记录起始进度，用于计算观看时长
+                        initialPlaybackPosition = exoPlayer.currentPosition
                     }
                     
                     if (introSeconds > 0 && !hasAutoSkippedIntro && exoPlayer.currentPosition < introSeconds * 1000L) {
@@ -941,6 +946,11 @@ fun InternalVideoPlayer(
         exoPlayer.addListener(listener)
         onDispose {
             if (exoPlayer.currentPosition > 0) viewModel.saveVideoProgress(currentFile.fid, exoPlayer.currentPosition)
+            // 【新增】累加影视观看时长
+            val watchTime = exoPlayer.currentPosition - initialPlaybackPosition
+            if (watchTime > 0) {
+                videoSettingsRepository.totalVideoWatchTime += watchTime
+            }
             exoPlayer.removeListener(listener)
             exoPlayer.stop()
             exoPlayer.release()
@@ -954,6 +964,7 @@ fun InternalVideoPlayer(
                 bufferedPosition = exoPlayer.bufferedPosition
             }
 
+            // 修复：只有当片尾时长小于总时长时，才触发连播
             if (outroSeconds > 0 && duration > 0 && outroSeconds * 1000L < duration && currentPosition >= (duration - outroSeconds * 1000L)) {
                 if (!hasTriggeredAutoPlay) {
                     hasTriggeredAutoPlay = true
@@ -1088,7 +1099,7 @@ fun InternalVideoPlayer(
             factory = { ctx ->
                 PlayerView(ctx).apply {
                     player = exoPlayer
-                    useController = false // 强制关闭原生控制栏
+                    useController = false
                     layoutParams = FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
                 }
             },
@@ -1099,9 +1110,8 @@ fun InternalVideoPlayer(
         )
 
         if (isInPip.value) {
-            // 【新增】画中画状态下的极简控制层
+            // 画中画状态下的极简控制层
             Box(modifier = Modifier.fillMaxSize()) {
-                // 顶部状态栏
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -1113,7 +1123,6 @@ fun InternalVideoPlayer(
                     AppText(text = networkSpeed, color = Color.White, fontSize = 10.sp)
                 }
 
-                // 中间三个按钮
                 Row(
                     modifier = Modifier.align(Alignment.Center),
                     horizontalArrangement = Arrangement.spacedBy(24.dp),
@@ -1568,7 +1577,6 @@ fun InternalVideoPlayer(
 fun AnimatedLoadingDots(color: Color, fontSize: androidx.compose.ui.unit.TextUnit, text: String = "正在加载中") {
     val transition = rememberInfiniteTransition(label = "loadingDots")
     
-    // 添加阴影以去除背景框后依然清晰
     val textStyle = TextStyle(
         color = color,
         fontSize = fontSize,
