@@ -93,6 +93,9 @@ class VideoScraperViewModel(
     val uiState = _uiState.asStateFlow()
 
     private val pathHistory = mutableListOf<String>()
+    // 新增：浏览路径记录，用于加入影视库时带上完整路径
+    val browsePath = mutableListOf<String>()
+
     private var hasLoadedLibrary = false
     private val libraryNames = mutableMapOf<String, String>()
     
@@ -334,7 +337,8 @@ class VideoScraperViewModel(
                 withContext(Dispatchers.IO) {
                     for (fid in libs) {
                         val folderName = libraryNames[fid] ?: ""
-                        val initialPath = if (folderName.isNotBlank()) listOf(folderName) else emptyList()
+                        // 修改：支持带 "/" 的完整路径分割
+                        val initialPath = if (folderName.isNotBlank()) folderName.split("/") else emptyList()
                         fetchVideosRecursively(cookie, fid, initialPath, allVideos)
                     }
                 }
@@ -1032,13 +1036,23 @@ class VideoScraperViewModel(
         _uiState.update { it.copy(playUrl = null, playTitle = null, currentPlayFile = null, isDirectPlay = false) }
     }
 
-    fun fetchQuarkFiles(fid: String = "0", isBack: Boolean = false) {
+    fun fetchQuarkFiles(fid: String = "0", isBack: Boolean = false, folderName: String? = null) {
         val cookie = _uiState.value.cookie
         if (cookie.isBlank()) {
             _uiState.update { it.copy(errorMsg = "请先设置 Cookie 或扫码登录") }
             return
         }
-        if (fid == "0") pathHistory.clear() else if (!isBack && _uiState.value.currentFid != fid) pathHistory.add(_uiState.value.currentFid)
+        
+        if (fid == "0") {
+            pathHistory.clear()
+            browsePath.clear() // 清空浏览路径
+        } else if (!isBack && _uiState.value.currentFid != fid) {
+            pathHistory.add(_uiState.value.currentFid)
+            if (folderName != null) {
+                browsePath.add(folderName) // 记录路径
+            }
+        }
+        
         _uiState.update { it.copy(currentFid = fid, errorMsg = null) }
 
         viewModelScope.launch {
@@ -1078,7 +1092,14 @@ class VideoScraperViewModel(
     }
 
     fun goBack() {
-        if (pathHistory.isNotEmpty()) fetchQuarkFiles(pathHistory.removeAt(pathHistory.size - 1), isBack = true) else fetchQuarkFiles("0")
+        if (pathHistory.isNotEmpty()) {
+            if (browsePath.isNotEmpty()) {
+                browsePath.removeAt(browsePath.size - 1) // 回退时移除路径
+            }
+            fetchQuarkFiles(pathHistory.removeAt(pathHistory.size - 1), isBack = true) 
+        } else {
+            fetchQuarkFiles("0")
+        }
     }
 }
 
