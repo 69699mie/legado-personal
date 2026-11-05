@@ -54,4 +54,9 @@ class VideoSettingsRepository(context: Context) {
     var pendingPlayFid: String?
         get() = prefs.getString("pending_play_fid", null)
         set(value) { prefs.edit().putString("pending_play_fid", value).apply() }
+
+    // 【新增】首页轮播海报显示逻辑，默认“智能推荐”
+    var bannerLogic: String
+        get() = prefs.getString("banner_logic", "智能推荐") ?: "智能推荐"
+        set(value) { prefs.edit().putString("banner_logic", value).apply() }
 }
