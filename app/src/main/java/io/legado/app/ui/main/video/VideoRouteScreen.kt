@@ -76,7 +76,6 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material.icons.outlined.StarBorder
 import androidx.compose.material3.*
-import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -334,7 +333,7 @@ fun VideoScraperScreen(
                 }
             }
         } else if (showAllHistoryPage) {
-            // 【彻底修复布局冲突】全部历史记录全屏页面
+            // 全部历史记录全屏页面
             Column(modifier = Modifier.fillMaxSize().statusBarsPadding().background(Color.White)) {
                 Row(modifier = Modifier.fillMaxWidth().padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
                     if (isSelectionMode) {
@@ -354,7 +353,6 @@ fun VideoScraperScreen(
                     } else {
                         IconButton(onClick = { showAllHistoryPage = false }) { Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "返回", tint = Color.Black) }
                         AppText(text = "最近观看", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f).padding(start = 8.dp))
-                        // 选择模式按钮（三条横线），长按清空记录
                         Box(modifier = Modifier.combinedClickable(
                             onClick = { isSelectionMode = true },
                             onLongClick = { showClearHistoryConfirm = true }
@@ -373,7 +371,6 @@ fun VideoScraperScreen(
                 ) {
                     groupedHistory.forEach { (category, items) ->
                         if (items.isNotEmpty()) {
-                            // 分类标题横跨一整行
                             item(span = { GridItemSpan(maxLineSpan) }) {
                                 AppText(
                                     text = category,
@@ -382,7 +379,6 @@ fun VideoScraperScreen(
                                     modifier = Modifier.padding(top = 16.dp, bottom = 8.dp)
                                 )
                             }
-                            // 卡片数据，自然排列 3 列，高度自动撑开，绝不截断
                             items(items) { historyItem ->
                                 RecentWatchedGridCard(
                                     item = historyItem, 
@@ -430,6 +426,10 @@ fun VideoScraperScreen(
                         fontWeight = FontWeight.Bold,
                         modifier = Modifier.weight(1f).padding(start = 16.dp)
                     )
+                    // 【修改点】新增顶部刷新按钮，替代下拉刷新
+                    IconButton(onClick = { viewModel.loadLibraryVideos() }, enabled = !uiState.isLoading) {
+                        Icon(Icons.Default.Refresh, contentDescription = "刷新", tint = if (uiState.isLoading) Color.Gray else Color.Black)
+                    }
                     IconButton(onClick = { showSettingsDialog = true }) { Icon(Icons.Default.Settings, contentDescription = "设置") }
                 }
 
@@ -442,93 +442,87 @@ fun VideoScraperScreen(
                 if (uiState.isLoading && uiState.seriesList.isEmpty()) {
                     Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
                 } else {
-                    PullToRefreshBox(
-                        isRefreshing = uiState.isLoading, 
-                        onRefresh = { viewModel.loadLibraryVideos() }, 
-                        modifier = Modifier.fillMaxSize(),
-                        indicator = {}
-                    ) {
-                        if (uiState.selectedLibraryFids.isEmpty()) {
-                            Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { AppText("请先在资源库中勾选媒体文件夹") }
-                        } else if (uiState.seriesList.isEmpty() && !uiState.isLoading) {
-                            Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { AppText("没找到任何视频，下拉可刷新") }
-                        } else {
-                            LazyColumn(modifier = Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 16.dp)) {
-                                // === 顶部轮播海报 ===
+                    // 【修改点】移除 PullToRefreshBox，直接使用 LazyColumn
+                    if (uiState.selectedLibraryFids.isEmpty()) {
+                        Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { AppText("请先在资源库中勾选媒体文件夹") }
+                    } else if (uiState.seriesList.isEmpty() && !uiState.isLoading) {
+                        Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { AppText("没找到任何视频，点击右上角刷新") }
+                    } else {
+                        LazyColumn(modifier = Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 16.dp)) {
+                            // === 顶部轮播海报 ===
+                            item {
+                                val bannerList = remember(uiState.seriesList, uiState.bannerLogic) {
+                                    val list = uiState.seriesList.filter { !it.backdropUrl.isNullOrBlank() }
+                                    when (uiState.bannerLogic) {
+                                        "最近播放" -> list.sortedByDescending { s -> 
+                                            recentWatchedList.find { it.seriesTitle == s.title }?.timestamp ?: 0L 
+                                        }
+                                        "最近新增" -> list
+                                        else -> list.shuffled() 
+                                    }.take(10)
+                                }
+                                if (bannerList.isNotEmpty()) {
+                                    BannerCarousel(bannerList, onSelect = { viewModel.selectSeries(it) })
+                                }
+                            }
+
+                            // === 最近观看 (首页横排) ===
+                            if (recentWatchedList.isNotEmpty()) {
                                 item {
-                                    val bannerList = remember(uiState.seriesList, uiState.bannerLogic) {
-                                        val list = uiState.seriesList.filter { !it.backdropUrl.isNullOrBlank() }
-                                        when (uiState.bannerLogic) {
-                                            "最近播放" -> list.sortedByDescending { s -> 
-                                                recentWatchedList.find { it.seriesTitle == s.title }?.timestamp ?: 0L 
-                                            }
-                                            "最近新增" -> list
-                                            else -> list.shuffled() 
-                                        }.take(10)
-                                    }
-                                    if (bannerList.isNotEmpty()) {
-                                        BannerCarousel(bannerList, onSelect = { viewModel.selectSeries(it) })
+                                    Row(modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                                        AppText(text = "最近观看", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                                        AppText(text = "全部 ${recentWatchedList.size} >", style = MaterialTheme.typography.bodySmall, color = Color.Gray, modifier = Modifier.clickable { showAllHistoryPage = true })
                                     }
                                 }
+                                item {
+                                    LazyRow(contentPadding = PaddingValues(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                                        items(recentWatchedList.take(10)) { item ->
+                                            RecentWatchedCard(
+                                                item = item, 
+                                                onClick = {
+                                                    val series = uiState.seriesList.find { it.title == item.seriesTitle }
+                                                    val file = series?.videos?.find { it.fid == item.fid }
+                                                    if (series != null && file != null) {
+                                                        viewModel.playVideo(context, series, file)
+                                                    } else {
+                                                        val tempFile = QuarkFile(item.fid, item.title, false)
+                                                        val tempSeries = MediaSeries(
+                                                            id = "temp_${item.fid}",
+                                                            title = item.seriesTitle,
+                                                            originalParsedTitle = item.seriesTitle,
+                                                            year = null,
+                                                            category = "未分类",
+                                                            posterUrl = item.coverPath.ifBlank { null },
+                                                            videos = listOf(tempFile)
+                                                        )
+                                                        viewModel.playVideo(context, tempSeries, tempFile)
+                                                    }
+                                                }
+                                            )
+                                        }
+                                    }
+                                }
+                            }
 
-                                // === 最近观看 (首页横排) ===
-                                if (recentWatchedList.isNotEmpty()) {
+                            // === 分类列表 ===
+                            val grouped = uiState.seriesList.groupBy { it.category }
+                            grouped.forEach { (categoryName, seriesList) ->
+                                if (seriesList.isNotEmpty()) {
                                     item {
                                         Row(modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                                            AppText(text = "最近观看", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-                                            AppText(text = "全部 ${recentWatchedList.size} >", style = MaterialTheme.typography.bodySmall, color = Color.Gray, modifier = Modifier.clickable { showAllHistoryPage = true })
+                                            AppText(text = categoryName, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                                            AppText(text = "全部 ${seriesList.size} 部 >", style = MaterialTheme.typography.bodySmall, color = Color.Gray, modifier = Modifier.clickable { viewAllCategory = categoryName })
                                         }
                                     }
                                     item {
                                         LazyRow(contentPadding = PaddingValues(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                                            items(recentWatchedList.take(10)) { item ->
-                                                RecentWatchedCard(
-                                                    item = item, 
-                                                    onClick = {
-                                                        val series = uiState.seriesList.find { it.title == item.seriesTitle }
-                                                        val file = series?.videos?.find { it.fid == item.fid }
-                                                        if (series != null && file != null) {
-                                                            viewModel.playVideo(context, series, file)
-                                                        } else {
-                                                            val tempFile = QuarkFile(item.fid, item.title, false)
-                                                            val tempSeries = MediaSeries(
-                                                                id = "temp_${item.fid}",
-                                                                title = item.seriesTitle,
-                                                                originalParsedTitle = item.seriesTitle,
-                                                                year = null,
-                                                                category = "未分类",
-                                                                posterUrl = item.coverPath.ifBlank { null },
-                                                                videos = listOf(tempFile)
-                                                            )
-                                                            viewModel.playVideo(context, tempSeries, tempFile)
-                                                        }
-                                                    }
+                                            items(seriesList) { series ->
+                                                SeriesPosterCard(
+                                                    series = series, 
+                                                    isScraping = uiState.isScraping,
+                                                    onClick = { viewModel.selectSeries(series) }, 
+                                                    onLongClick = { manualScrapeSeries = series; showManualScrapeDialog = true }
                                                 )
-                                            }
-                                        }
-                                    }
-                                }
-
-                                // === 分类列表 ===
-                                val grouped = uiState.seriesList.groupBy { it.category }
-                                grouped.forEach { (categoryName, seriesList) ->
-                                    if (seriesList.isNotEmpty()) {
-                                        item {
-                                            Row(modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                                                AppText(text = categoryName, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-                                                AppText(text = "全部 ${seriesList.size} 部 >", style = MaterialTheme.typography.bodySmall, color = Color.Gray, modifier = Modifier.clickable { viewAllCategory = categoryName })
-                                            }
-                                        }
-                                        item {
-                                            LazyRow(contentPadding = PaddingValues(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                                                items(seriesList) { series ->
-                                                    SeriesPosterCard(
-                                                        series = series, 
-                                                        isScraping = uiState.isScraping,
-                                                        onClick = { viewModel.selectSeries(series) }, 
-                                                        onLongClick = { manualScrapeSeries = series; showManualScrapeDialog = true }
-                                                    )
-                                                }
                                             }
                                         }
                                     }
@@ -1336,6 +1330,7 @@ fun InternalVideoPlayer(
                     val prevAction = RemoteAction(Icon.createWithResource(context, android.R.drawable.ic_media_previous), "上一集", "上一集", prevPendingIntent)
 
                     val playPauseIntent = Intent("ACTION_PIP_PLAY_PAUSE").setPackage(context.packageName)
+                    // 使用不同的 requestCode，防止系统复用旧图标
                     val playPauseRequestCode = if (isPlaying) 2 else 3
                     val playPausePendingIntent = PendingIntent.getBroadcast(context, playPauseRequestCode, playPauseIntent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
                     val playPauseAction = RemoteAction(
