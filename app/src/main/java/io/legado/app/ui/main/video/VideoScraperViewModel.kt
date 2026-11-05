@@ -890,7 +890,7 @@ class VideoScraperViewModel(
             val newList = mutableListOf<JSONObject>()
             for (i in 0 until jsonArray.length()) {
                 val obj = jsonArray.getJSONObject(i)
-                // 去重：根据影视剧名剔除旧的历史记录
+                // 去重：根据影视剧名剔除旧的历史记录，保持同一部剧只出现一次
                 if (obj.optString("seriesTitle") != series.title) {
                     newList.add(obj)
                 }
