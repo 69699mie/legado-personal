@@ -98,6 +98,9 @@ class VideoScraperViewModel(
     
     private var lastQuarkError: String? = null
     private val scrapedCache = mutableMapOf<String, ScrapeCacheItem>()
+    
+    // 防止重复触发
+    private var isHandlingPendingRequest = false
 
     init {
         loadScrapedCache()
@@ -387,10 +390,8 @@ class VideoScraperViewModel(
                 } else {
                     hasLoadedLibrary = true
                     _uiState.update { it.copy(isLoading = false, isScraping = false) }
+                    handlePendingPlayRequest() // 无刮削任务，直接尝试消费首页请求
                 }
-
-                // 【新增】网盘加载完成后，检查是否有因为冷启动挂起的播放请求
-                handlePendingPlayRequest()
 
             } catch (e: Exception) {
                 _uiState.update { it.copy(isLoading = false, isScraping = false, errorMsg = "扫描异常: ${e.message}") }
@@ -865,13 +866,16 @@ class VideoScraperViewModel(
     }
 
     fun handlePendingPlayRequest() {
+        if (isHandlingPendingRequest) return
         val fid = videoSettingsRepository.pendingPlayFid ?: return
         
         val series = _uiState.value.seriesList.find { it.videos.any { v -> v.fid == fid } }
         val file = series?.videos?.find { it.fid == fid }
         
         if (series != null && file != null) {
-            videoSettingsRepository.pendingPlayFid = null // 找到了，消费掉
+            isHandlingPendingRequest = true
+            videoSettingsRepository.pendingPlayFid = null // 找到了，立刻消费掉
+            
             val epNum = file.parsedInfo?.episode
             val season = file.parsedInfo?.season ?: 1
             val titleText = if (epNum != null) {
@@ -889,6 +893,7 @@ class VideoScraperViewModel(
                 } else {
                     stopPlaying()
                 }
+                isHandlingPendingRequest = false
             }
         }
     }
@@ -1083,7 +1088,7 @@ data class VideoUiState(
     val tmdbBaseUrl: String = "https://tmdbimg.quarkalist.xyz",
     val currentFid: String = "0",
     val isLoading: Boolean = false,
-    val isScraping: Boolean = false, // 新增：是否正在刮削
+    val isScraping: Boolean = false, 
     val errorMsg: String? = null,
     val fileList: List<QuarkFile> = emptyList(),
     val isLibraryMode: Boolean = true,
@@ -1094,5 +1099,5 @@ data class VideoUiState(
     val playTitle: String? = null,
     val currentPlayFile: QuarkFile? = null,
     val downloadThreads: Int = 6,
-    val isDirectPlay: Boolean = false // 新增：是否是从首页直接发起的播放
+    val isDirectPlay: Boolean = false 
 )
