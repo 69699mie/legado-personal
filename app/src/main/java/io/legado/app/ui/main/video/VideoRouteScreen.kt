@@ -59,6 +59,7 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.items
@@ -257,19 +258,25 @@ fun VideoScraperScreen(
 
     val recentWatchedList = remember(uiState.seriesList, videoSettingsRepository.recentWatchedVideos) {
         val list = mutableListOf<RecentWatchedItem>()
+        val seenSeries = mutableSetOf<String>()
         try {
             val jsonArray = JSONArray(videoSettingsRepository.recentWatchedVideos)
             for (i in 0 until jsonArray.length()) {
                 val obj = jsonArray.getJSONObject(i)
-                list.add(
-                    RecentWatchedItem(
-                        fid = obj.optString("fid"),
-                        title = obj.optString("title"),
-                        seriesTitle = obj.optString("seriesTitle"),
-                        coverPath = obj.optString("coverPath"),
-                        timestamp = obj.optLong("timestamp")
+                val sTitle = obj.optString("seriesTitle")
+                // UI层强制去重
+                if (sTitle.isNotBlank() && !seenSeries.contains(sTitle)) {
+                    seenSeries.add(sTitle)
+                    list.add(
+                        RecentWatchedItem(
+                            fid = obj.optString("fid"),
+                            title = obj.optString("title"),
+                            seriesTitle = sTitle,
+                            coverPath = obj.optString("coverPath"),
+                            timestamp = obj.optLong("timestamp")
+                        )
                     )
-                )
+                }
             }
         } catch (e: Exception) {}
         list
@@ -279,7 +286,7 @@ fun VideoScraperScreen(
     val groupedHistory = remember(recentWatchedList, uiState.seriesList) {
         val groups = mutableMapOf<String, MutableList<RecentWatchedItem>>()
         recentWatchedList.forEach { item ->
-            val series = uiState.seriesList.find { it.videos.any { v -> v.fid == item.fid } }
+            val series = uiState.seriesList.find { it.title == item.seriesTitle }
             val category = series?.category ?: "其他"
             if (!groups.containsKey(category)) groups[category] = mutableListOf()
             groups[category]?.add(item)
@@ -327,7 +334,7 @@ fun VideoScraperScreen(
                 }
             }
         } else if (showAllHistoryPage) {
-            // 全部历史记录全屏页面
+            // 【修复布局冲突】全部历史记录全屏页面，直接使用单一的 LazyVerticalGrid
             Column(modifier = Modifier.fillMaxSize().statusBarsPadding().background(Color.White)) {
                 Row(modifier = Modifier.fillMaxWidth().padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
                     if (isSelectionMode) {
@@ -357,62 +364,58 @@ fun VideoScraperScreen(
                     }
                 }
                 
-                LazyColumn(modifier = Modifier.fillMaxSize()) {
+                LazyVerticalGrid(
+                    columns = GridCells.Fixed(3),
+                    modifier = Modifier.fillMaxSize(),
+                    contentPadding = PaddingValues(horizontal = 16.dp, bottom = 16.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalArrangement = Arrangement.spacedBy(16.dp)
+                ) {
                     groupedHistory.forEach { (category, items) ->
                         if (items.isNotEmpty()) {
-                            item {
+                            // 插入分类标题，独占一整行
+                            item(span = { GridItemSpan(maxLineSpan) }) {
                                 AppText(
                                     text = category,
                                     style = MaterialTheme.typography.titleMedium,
                                     fontWeight = FontWeight.Bold,
-                                    modifier = Modifier.padding(start = 16.dp, top = 16.dp, bottom = 8.dp)
+                                    modifier = Modifier.padding(top = 16.dp, bottom = 8.dp)
                                 )
                             }
-                            item {
-                                LazyVerticalGrid(
-                                    columns = GridCells.Fixed(3),
-                                    // 修复编译问题：Dp * Int
-                                    modifier = Modifier.heightIn(max = 180.dp * (items.size / 3 + 1)),
-                                    contentPadding = PaddingValues(horizontal = 16.dp),
-                                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                                    verticalArrangement = Arrangement.spacedBy(12.dp)
-                                ) {
-                                    items(items) { historyItem ->
-                                        RecentWatchedGridCard(
-                                            item = historyItem, 
-                                            isSelectionMode = isSelectionMode,
-                                            isSelected = selectedTitles.contains(historyItem.seriesTitle),
-                                            onClick = {
-                                                if (isSelectionMode) {
-                                                    if (selectedTitles.contains(historyItem.seriesTitle)) {
-                                                        selectedTitles.remove(historyItem.seriesTitle)
-                                                    } else {
-                                                        selectedTitles.add(historyItem.seriesTitle)
-                                                    }
-                                                } else {
-                                                    val series = uiState.seriesList.find { s -> s.videos.any { it.fid == historyItem.fid } }
-                                                    val file = series?.videos?.find { it.fid == historyItem.fid }
-                                                    if (series != null && file != null) {
-                                                        viewModel.playVideo(context, series, file)
-                                                    } else {
-                                                        val tempFile = QuarkFile(historyItem.fid, historyItem.title, false)
-                                                        val tempSeries = MediaSeries(
-                                                            id = "temp_${historyItem.fid}",
-                                                            title = historyItem.seriesTitle,
-                                                            originalParsedTitle = historyItem.seriesTitle,
-                                                            year = null,
-                                                            category = category,
-                                                            posterUrl = historyItem.coverPath.ifBlank { null },
-                                                            backdropUrl = historyItem.coverPath.ifBlank { null },
-                                                            videos = listOf(tempFile)
-                                                        )
-                                                        viewModel.playVideo(context, tempSeries, tempFile)
-                                                    }
-                                                }
+                            // 插入该类别的卡片
+                            items(items) { historyItem ->
+                                RecentWatchedGridCard(
+                                    item = historyItem, 
+                                    isSelectionMode = isSelectionMode,
+                                    isSelected = selectedTitles.contains(historyItem.seriesTitle),
+                                    onClick = {
+                                        if (isSelectionMode) {
+                                            if (selectedTitles.contains(historyItem.seriesTitle)) {
+                                                selectedTitles.remove(historyItem.seriesTitle)
+                                            } else {
+                                                selectedTitles.add(historyItem.seriesTitle)
                                             }
-                                        )
+                                        } else {
+                                            val series = uiState.seriesList.find { it.title == historyItem.seriesTitle }
+                                            val file = series?.videos?.find { it.fid == historyItem.fid }
+                                            if (series != null && file != null) {
+                                                viewModel.playVideo(context, series, file)
+                                            } else {
+                                                val tempFile = QuarkFile(historyItem.fid, historyItem.title, false)
+                                                val tempSeries = MediaSeries(
+                                                    id = "temp_${historyItem.fid}",
+                                                    title = historyItem.seriesTitle,
+                                                    originalParsedTitle = historyItem.seriesTitle,
+                                                    year = null,
+                                                    category = category,
+                                                    posterUrl = historyItem.coverPath.ifBlank { null },
+                                                    videos = listOf(tempFile)
+                                                )
+                                                viewModel.playVideo(context, tempSeries, tempFile)
+                                            }
+                                        }
                                     }
-                                }
+                                )
                             }
                         }
                     }
@@ -482,7 +485,7 @@ fun VideoScraperScreen(
                                                 RecentWatchedCard(
                                                     item = item, 
                                                     onClick = {
-                                                        val series = uiState.seriesList.find { s -> s.videos.any { it.fid == item.fid } }
+                                                        val series = uiState.seriesList.find { it.title == item.seriesTitle }
                                                         val file = series?.videos?.find { it.fid == item.fid }
                                                         if (series != null && file != null) {
                                                             viewModel.playVideo(context, series, file)
@@ -1251,13 +1254,10 @@ fun InternalVideoPlayer(
             }
     }
 
-    // ==========================================
-    // 关键修复：更暴力的生命周期拦截，解决小窗关闭后台有声
-    // ==========================================
+    // 监听生命周期，处理小窗关闭和后台播放问题
     DisposableEffect(lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event ->
             if (event == Lifecycle.Event.ON_PAUSE || event == Lifecycle.Event.ON_STOP) {
-                // 只要不是系统的画中画悬浮窗模式，一律暂停。无论是不是点 X 还是切后台，绝对静音。
                 if (activity?.isInPictureInPictureMode != true) {
                     exoPlayer.pause()
                 }
@@ -1334,7 +1334,8 @@ fun InternalVideoPlayer(
                     val prevAction = RemoteAction(Icon.createWithResource(context, android.R.drawable.ic_media_previous), "上一集", "上一集", prevPendingIntent)
 
                     val playPauseIntent = Intent("ACTION_PIP_PLAY_PAUSE").setPackage(context.packageName)
-                    val playPausePendingIntent = PendingIntent.getBroadcast(context, 2, playPauseIntent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
+                    val playPauseRequestCode = if (isPlaying) 2 else 3
+                    val playPausePendingIntent = PendingIntent.getBroadcast(context, playPauseRequestCode, playPauseIntent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
                     val playPauseAction = RemoteAction(
                         Icon.createWithResource(context, if (isPlaying) android.R.drawable.ic_media_pause else android.R.drawable.ic_media_play),
                         if (isPlaying) "暂停" else "播放",
@@ -1343,7 +1344,7 @@ fun InternalVideoPlayer(
                     )
 
                     val nextIntent = Intent("ACTION_PIP_NEXT").setPackage(context.packageName)
-                    val nextPendingIntent = PendingIntent.getBroadcast(context, 3, nextIntent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
+                    val nextPendingIntent = PendingIntent.getBroadcast(context, 4, nextIntent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
                     val nextAction = RemoteAction(Icon.createWithResource(context, android.R.drawable.ic_media_next), "下一集", "下一集", nextPendingIntent)
 
                     val params = PictureInPictureParams.Builder()
@@ -1390,7 +1391,6 @@ fun InternalVideoPlayer(
         val listener = object : Player.Listener {
             override fun onIsPlayingChanged(playing: Boolean) { 
                 isPlaying = playing
-                // 强制触发重组刷新 PiP UI
                 if (isInPip.value) {
                     isInPip.value = activity?.isInPictureInPictureMode == true
                 }
@@ -1698,7 +1698,8 @@ fun InternalVideoPlayer(
                                     val prevAction = RemoteAction(Icon.createWithResource(context, android.R.drawable.ic_media_previous), "上一集", "上一集", prevPendingIntent)
 
                                     val playPauseIntent = Intent("ACTION_PIP_PLAY_PAUSE").setPackage(context.packageName)
-                                    val playPausePendingIntent = PendingIntent.getBroadcast(context, 2, playPauseIntent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
+                                    val playPauseRequestCode = if (isPlaying) 2 else 3
+                                    val playPausePendingIntent = PendingIntent.getBroadcast(context, playPauseRequestCode, playPauseIntent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
                                     val playPauseAction = RemoteAction(
                                         Icon.createWithResource(context, if (isPlaying) android.R.drawable.ic_media_pause else android.R.drawable.ic_media_play),
                                         if (isPlaying) "暂停" else "播放",
@@ -1707,7 +1708,7 @@ fun InternalVideoPlayer(
                                     )
 
                                     val nextIntent = Intent("ACTION_PIP_NEXT").setPackage(context.packageName)
-                                    val nextPendingIntent = PendingIntent.getBroadcast(context, 3, nextIntent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
+                                    val nextPendingIntent = PendingIntent.getBroadcast(context, 4, nextIntent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
                                     val nextAction = RemoteAction(Icon.createWithResource(context, android.R.drawable.ic_media_next), "下一集", "下一集", nextPendingIntent)
 
                                     val params = PictureInPictureParams.Builder()
