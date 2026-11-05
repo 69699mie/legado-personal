@@ -197,7 +197,7 @@ fun VideoLibraryScreen(
 
 
 // ==========================================
-// 2. 影视库独立页面 (已去除播放器)
+// 2. 影视库独立页面
 // ==========================================
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
@@ -271,7 +271,6 @@ fun VideoScraperScreen(
                 if (uiState.isLoading && uiState.seriesList.isEmpty()) {
                     Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
                 } else {
-                    // 隐藏默认的丑陋下拉刷新转圈
                     PullToRefreshBox(
                         isRefreshing = uiState.isLoading, 
                         onRefresh = { viewModel.loadLibraryVideos() }, 
@@ -314,7 +313,7 @@ fun VideoScraperScreen(
             }
         }
 
-        // 底部全局刷新/刮削悬浮提示
+        // 底部全局刷新/刮削悬浮提示（去掉背景色，加阴影）
         if (uiState.isLoading || uiState.isScraping) {
             val isVideoPlaying = uiState.playUrl != null || uiState.currentPlayFile != null || uiState.isDirectPlay
             if (!isVideoPlaying) {
@@ -322,7 +321,6 @@ fun VideoScraperScreen(
                     modifier = Modifier
                         .align(Alignment.BottomCenter)
                         .padding(bottom = 100.dp)
-                        .background(Color(0xCC000000), RoundedCornerShape(24.dp))
                         .padding(horizontal = 24.dp, vertical = 12.dp)
                 ) {
                     AnimatedLoadingDots(
@@ -585,7 +583,7 @@ private fun ManualScrapeDialog(
 
 
 // ==========================================
-// 播放器与登录页面 (播放器被抽取到全局)
+// 播放器与登录页面
 // ==========================================
 @SuppressLint("SetJavaScriptEnabled")
 @Composable
@@ -956,7 +954,6 @@ fun InternalVideoPlayer(
                 bufferedPosition = exoPlayer.bufferedPosition
             }
 
-            // 修复：只有当片尾时长小于总时长时，才触发连播
             if (outroSeconds > 0 && duration > 0 && outroSeconds * 1000L < duration && currentPosition >= (duration - outroSeconds * 1000L)) {
                 if (!hasTriggeredAutoPlay) {
                     hasTriggeredAutoPlay = true
@@ -1091,17 +1088,56 @@ fun InternalVideoPlayer(
             factory = { ctx ->
                 PlayerView(ctx).apply {
                     player = exoPlayer
-                    useController = isInPip.value
+                    useController = false // 强制关闭原生控制栏
                     layoutParams = FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
                 }
             },
             modifier = Modifier.fillMaxSize(),
             update = { view ->
-                view.useController = isInPip.value
+                view.useController = false
             }
         )
 
         if (isInPip.value) {
+            // 【新增】画中画状态下的极简控制层
+            Box(modifier = Modifier.fillMaxSize()) {
+                // 顶部状态栏
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .background(Brush.verticalGradient(listOf(Color(0x88000000), Color.Transparent)))
+                        .padding(horizontal = 8.dp, vertical = 4.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    AppText(text = networkSpeed, color = Color.White, fontSize = 10.sp)
+                }
+
+                // 中间三个按钮
+                Row(
+                    modifier = Modifier.align(Alignment.Center),
+                    horizontalArrangement = Arrangement.spacedBy(24.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    IconButton(onClick = {
+                        val idx = series.videos.indexOfFirst { it.fid == currentFile.fid }
+                        if (idx > 0) viewModel.playVideo(context, series, series.videos[idx - 1])
+                    }) { 
+                        Icon(Icons.Default.SkipPrevious, null, tint = Color.White, modifier = Modifier.size(32.dp)) 
+                    }
+
+                    IconButton(onClick = { if (isPlaying) exoPlayer.pause() else exoPlayer.play() }) {
+                        Icon(if (isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow, null, tint = Color.White, modifier = Modifier.size(40.dp))
+                    }
+
+                    IconButton(onClick = {
+                        val idx = series.videos.indexOfFirst { it.fid == currentFile.fid }
+                        if (idx != -1 && idx < series.videos.size - 1) viewModel.playVideo(context, series, series.videos[idx + 1])
+                    }) { 
+                        Icon(Icons.Default.SkipNext, null, tint = Color.White, modifier = Modifier.size(32.dp)) 
+                    }
+                }
+            }
             return@Box
         }
 
@@ -1532,6 +1568,17 @@ fun InternalVideoPlayer(
 fun AnimatedLoadingDots(color: Color, fontSize: androidx.compose.ui.unit.TextUnit, text: String = "正在加载中") {
     val transition = rememberInfiniteTransition(label = "loadingDots")
     
+    // 添加阴影以去除背景框后依然清晰
+    val textStyle = TextStyle(
+        color = color,
+        fontSize = fontSize,
+        shadow = Shadow(
+            color = Color.Black.copy(alpha = 0.8f),
+            offset = Offset(1f, 1f),
+            blurRadius = 4f
+        )
+    )
+
     val dot1Y by transition.animateFloat(
         initialValue = 0f, targetValue = 1f,
         animationSpec = infiniteRepeatable(
@@ -1572,12 +1619,12 @@ fun AnimatedLoadingDots(color: Color, fontSize: androidx.compose.ui.unit.TextUni
     )
 
     Row(verticalAlignment = Alignment.CenterVertically) {
-        AppText(text, color = color, fontSize = fontSize)
+        AppText(text, color = color, fontSize = fontSize, style = textStyle)
         Box(modifier = Modifier.width(20.dp).padding(start = 2.dp)) {
             Row {
-                AppText(".", color = color, fontSize = fontSize, modifier = Modifier.offset(y = (-4 * dot1Y).dp))
-                AppText(".", color = color, fontSize = fontSize, modifier = Modifier.offset(y = (-4 * dot2Y).dp))
-                AppText(".", color = color, fontSize = fontSize, modifier = Modifier.offset(y = (-4 * dot3Y).dp))
+                AppText(".", color = color, fontSize = fontSize, style = textStyle, modifier = Modifier.offset(y = (-4 * dot1Y).dp))
+                AppText(".", color = color, fontSize = fontSize, style = textStyle, modifier = Modifier.offset(y = (-4 * dot2Y).dp))
+                AppText(".", color = color, fontSize = fontSize, style = textStyle, modifier = Modifier.offset(y = (-4 * dot3Y).dp))
             }
         }
     }
