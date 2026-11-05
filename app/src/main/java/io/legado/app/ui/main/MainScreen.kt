@@ -68,6 +68,7 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp // 【关键修复】补充了 sp 的导入
 import androidx.core.net.toUri
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
@@ -186,7 +187,7 @@ fun MainScreen(
     val videoViewModel: VideoScraperViewModel = koinViewModel()
     val videoSettingsRepository = koinInject<VideoSettingsRepository>()
     
-    // 【新增】监听播放状态
+    // 监听播放状态，用于控制底部导航栏的显示/隐藏
     val videoUiState by videoViewModel.uiState.collectAsStateWithLifecycle()
     val isVideoPlaying = videoUiState.playUrl != null || videoUiState.currentPlayFile != null || videoUiState.isDirectPlay
 
@@ -540,7 +541,7 @@ fun MainScreen(
                                         if (this != null) Modifier.skipToLookaheadSize() else Modifier
                                     }
                                 ),
-                            userScrollEnabled = !isVideoPlaying, // 播放时禁止滑动
+                            userScrollEnabled = !isVideoPlaying,
                             beyondViewportPageCount = 4
                         ) { page ->
                             val destination = destinations.getOrNull(page) ?: return@HorizontalPager
@@ -554,7 +555,7 @@ fun MainScreen(
                                         if (book.bookUrl.startsWith("hiker://video")) {
                                             val fid = book.bookUrl.substringAfter("fid=").substringBefore("&")
                                             videoSettingsRepository.pendingPlayFid = fid
-                                            // 【修改】直接调用，不切Tab
+                                            // 直接调用，不切Tab
                                             videoViewModel.handlePendingPlayRequest()
                                         } else {
                                             context.startActivityForBook(book)
