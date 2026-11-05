@@ -44,6 +44,7 @@ data class MediaSeries(
     val year: Int?,
     val category: String,
     val posterUrl: String? = null,
+    val backdropUrl: String? = null, // 新增：横屏海报
     val overview: String? = null,
     val rating: String? = null,
     val videos: List<QuarkFile> = emptyList(),
@@ -53,7 +54,7 @@ data class MediaSeries(
     val seasonEpisodeTitles: Map<String, String> = emptyMap(),
     val seasonEpisodeStills: Map<String, String> = emptyMap(),
     val groupName: String? = null,
-    val isManuallyEdited: Boolean = false // 新增：手动修改标记
+    val isManuallyEdited: Boolean = false 
 )
 
 data class TmdbSearchResult(
@@ -61,6 +62,7 @@ data class TmdbSearchResult(
     val title: String,
     val year: String,
     val posterUrl: String?,
+    val backdropUrl: String?, // 新增：横屏海报
     val overview: String,
     val rating: String?,
     val mediaType: String = "tv",
@@ -71,6 +73,7 @@ data class ScrapeCacheItem(
     val title: String,
     val category: String,
     val posterUrl: String?,
+    val backdropUrl: String?, // 新增：横屏海报
     val overview: String?,
     val rating: String?,
     val seasonDetails: Map<Int, SeasonDetail> = emptyMap(),
@@ -79,7 +82,7 @@ data class ScrapeCacheItem(
     val seasonEpisodeTitles: Map<String, String> = emptyMap(),
     val seasonEpisodeStills: Map<String, String> = emptyMap(),
     val groupName: String? = null,
-    val isManuallyEdited: Boolean = false // 新增：手动修改标记
+    val isManuallyEdited: Boolean = false
 )
 
 class VideoScraperViewModel(
@@ -126,7 +129,7 @@ class VideoScraperViewModel(
                 selectedLibraryFids = fids,
                 isLibraryMode = true,
                 downloadThreads = videoSettingsRepository.proxyThreads,
-                bannerLogic = videoSettingsRepository.bannerLogic // 读取轮播图逻辑设置
+                bannerLogic = videoSettingsRepository.bannerLogic
             )
         }
 
@@ -138,6 +141,7 @@ class VideoScraperViewModel(
                 year = null,
                 category = cached.category,
                 posterUrl = cached.posterUrl,
+                backdropUrl = cached.backdropUrl,
                 overview = cached.overview,
                 rating = cached.rating,
                 seasonDetails = cached.seasonDetails,
@@ -203,6 +207,7 @@ class VideoScraperViewModel(
                             title = itemObj.optString("title"),
                             category = itemObj.optString("category"),
                             posterUrl = itemObj.optString("posterUrl").takeIf { it.isNotBlank() && it != "null" },
+                            backdropUrl = itemObj.optString("backdropUrl").takeIf { it.isNotBlank() && it != "null" },
                             overview = itemObj.optString("overview").takeIf { it.isNotBlank() && it != "null" },
                             rating = itemObj.optString("rating").takeIf { it.isNotBlank() && it != "null" },
                             seasonDetails = seasonDetails,
@@ -231,6 +236,7 @@ class VideoScraperViewModel(
                 itemObj.put("title", item.title)
                 itemObj.put("category", item.category)
                 itemObj.put("posterUrl", item.posterUrl ?: "")
+                itemObj.put("backdropUrl", item.backdropUrl ?: "")
                 itemObj.put("overview", item.overview ?: "")
                 itemObj.put("rating", item.rating ?: "")
                 itemObj.put("groupName", item.groupName ?: "")
@@ -356,12 +362,12 @@ class VideoScraperViewModel(
                 val finalSeriesList = groupedSeries.map { series ->
                     val cached = scrapedCache[series.id]
                     if (cached != null) {
-                        // 核心修复：如果是手动修改过的，直接使用缓存，绝不重新刮削覆盖
                         if (cached.isManuallyEdited) {
                             return@map series.copy(
                                 title = cached.title,
                                 category = cached.category,
                                 posterUrl = cached.posterUrl,
+                                backdropUrl = cached.backdropUrl,
                                 overview = cached.overview,
                                 rating = cached.rating,
                                 seasonDetails = cached.seasonDetails,
@@ -383,6 +389,7 @@ class VideoScraperViewModel(
                                 title = cached.title,
                                 category = cached.category,
                                 posterUrl = cached.posterUrl,
+                                backdropUrl = cached.backdropUrl,
                                 overview = cached.overview,
                                 rating = cached.rating,
                                 seasonDetails = cached.seasonDetails,
@@ -397,6 +404,7 @@ class VideoScraperViewModel(
                                 title = cached.title,
                                 category = cached.category,
                                 posterUrl = cached.posterUrl,
+                                backdropUrl = cached.backdropUrl,
                                 overview = cached.overview,
                                 rating = cached.rating,
                                 seasonDetails = cached.seasonDetails,
@@ -620,7 +628,7 @@ class VideoScraperViewModel(
                     }
 
                     val newSeries = series.copy(
-                        title = finalTitle, category = finalCategory, posterUrl = match.posterUrl,
+                        title = finalTitle, category = finalCategory, posterUrl = match.posterUrl, backdropUrl = match.backdropUrl,
                         overview = match.overview, rating = match.rating, 
                         seasonDetails = seasonDetails,
                         episodeTitles = epTitles, episodeStills = epStills,
@@ -631,6 +639,7 @@ class VideoScraperViewModel(
                         title = newSeries.title,
                         category = newSeries.category,
                         posterUrl = newSeries.posterUrl,
+                        backdropUrl = newSeries.backdropUrl,
                         overview = newSeries.overview,
                         rating = newSeries.rating,
                         seasonDetails = newSeries.seasonDetails,
@@ -639,7 +648,7 @@ class VideoScraperViewModel(
                         seasonEpisodeTitles = newSeries.seasonEpisodeTitles,
                         seasonEpisodeStills = newSeries.seasonEpisodeStills,
                         groupName = newSeries.groupName,
-                        isManuallyEdited = false // 自动刮削的
+                        isManuallyEdited = false
                     )
                     newSeries
                 } else {
@@ -695,7 +704,9 @@ class VideoScraperViewModel(
                             if (score > topScore && score > 0) { topScore = score; bestItem = item }
                         }
                         if (bestItem == null) bestItem = results.getJSONObject(0)
+                        
                         val posterPath = bestItem.optString("poster_path")
+                        val backdropPath = bestItem.optString("backdrop_path")
                         val officialName = bestItem.optString("title").ifBlank { bestItem.optString("name") }
                         val voteAverage = bestItem.optDouble("vote_average", 0.0)
                         val ratingStr = if (voteAverage > 0) String.format("%.1f", voteAverage) else null
@@ -705,14 +716,22 @@ class VideoScraperViewModel(
                         if (genreIdsArray != null) {
                             for (j in 0 until genreIdsArray.length()) genreIdsList.add(genreIdsArray.getInt(j))
                         }
+                        
                         val posterUrl = if (posterPath.isNotBlank() && posterPath != "null") {
                             if (isProxy) "$baseUrl/img/t/p/w500$posterPath" else "https://image.tmdb.org/t/p/w500$posterPath"
                         } else null
+                        
+                        val backdropUrl = if (backdropPath.isNotBlank() && backdropPath != "null") {
+                            if (isProxy) "$baseUrl/img/t/p/w780$backdropPath" else "https://image.tmdb.org/t/p/w780$backdropPath"
+                        } else null
+
                         return TmdbSearchResult(
                             id = bestItem.optInt("id"),
                             title = officialName,
                             year = (bestItem.optString("release_date").take(4).ifBlank { bestItem.optString("first_air_date").take(4) }),
-                            posterUrl = posterUrl, overview = bestItem.optString("overview"), rating = ratingStr,
+                            posterUrl = posterUrl, 
+                            backdropUrl = backdropUrl, 
+                            overview = bestItem.optString("overview"), rating = ratingStr,
                             mediaType = mediaType, genreIds = genreIdsList
                         )
                     }
@@ -786,15 +805,24 @@ class VideoScraperViewModel(
                                 val item = results.getJSONObject(i)
                                 val title = item.optString("title").ifBlank { item.optString("name") }
                                 val posterPath = item.optString("poster_path")
+                                val backdropPath = item.optString("backdrop_path")
                                 val voteAverage = item.optDouble("vote_average", 0.0)
+                                
                                 val posterUrl = if (posterPath.isNotBlank() && posterPath != "null") {
                                     if (isProxy) "$baseUrl/img/t/p/w300$posterPath" else "https://image.tmdb.org/t/p/w300$posterPath"
                                 } else null
+                                
+                                val backdropUrl = if (backdropPath.isNotBlank() && backdropPath != "null") {
+                                    if (isProxy) "$baseUrl/img/t/p/w780$backdropPath" else "https://image.tmdb.org/t/p/w780$backdropPath"
+                                } else null
+
                                 list.add(
                                     TmdbSearchResult(
                                         id = item.optInt("id"), title = title,
                                         year = item.optString("release_date").take(4).ifBlank { item.optString("first_air_date").take(4) },
-                                        posterUrl = posterUrl, overview = item.optString("overview"),
+                                        posterUrl = posterUrl, 
+                                        backdropUrl = backdropUrl,
+                                        overview = item.optString("overview"),
                                         rating = if (voteAverage > 0) String.format("%.1f", voteAverage) else null
                                     )
                                 )
@@ -813,10 +841,11 @@ class VideoScraperViewModel(
                 it.copy(
                     title = result?.title ?: newTitle, 
                     posterUrl = result?.posterUrl ?: it.posterUrl,
+                    backdropUrl = result?.backdropUrl ?: it.backdropUrl,
                     overview = result?.overview ?: it.overview, 
                     rating = result?.rating ?: it.rating, 
                     category = newCategory,
-                    isManuallyEdited = true // 标记为手动修改
+                    isManuallyEdited = true
                 )
             } else it
         }
@@ -831,6 +860,7 @@ class VideoScraperViewModel(
                 title = updatedSeries.title,
                 category = updatedSeries.category,
                 posterUrl = updatedSeries.posterUrl,
+                backdropUrl = updatedSeries.backdropUrl,
                 overview = updatedSeries.overview,
                 rating = updatedSeries.rating,
                 seasonDetails = updatedSeries.seasonDetails,
@@ -839,7 +869,7 @@ class VideoScraperViewModel(
                 seasonEpisodeTitles = updatedSeries.seasonEpisodeTitles,
                 seasonEpisodeStills = updatedSeries.seasonEpisodeStills,
                 groupName = updatedSeries.groupName,
-                isManuallyEdited = true // 存入缓存
+                isManuallyEdited = true
             )
             saveScrapedCache()
         }
@@ -868,13 +898,14 @@ class VideoScraperViewModel(
                 put("fid", file.fid)
                 put("title", titleText)
                 put("seriesTitle", series.title)
-                put("coverPath", series.posterUrl ?: "")
+                // 优先存横屏海报路径，供历史记录显示
+                put("coverPath", series.backdropUrl ?: series.posterUrl ?: "")
                 put("timestamp", System.currentTimeMillis())
             }
             newList.add(0, newObj)
             
             val resultArray = JSONArray()
-            newList.take(50).forEach { resultArray.put(it) } // 扩大到50条，供“全部”查看
+            newList.take(50).forEach { resultArray.put(it) }
             videoSettingsRepository.recentWatchedVideos = resultArray.toString()
         } catch (e: Exception) { e.printStackTrace() }
 
@@ -1070,7 +1101,7 @@ class VideoScraperViewModel(
 
     fun clearRecentWatched() {
         videoSettingsRepository.recentWatchedVideos = "[]"
-        _uiState.update { it.copy() } // 强制刷新 UI
+        _uiState.update { it.copy() } 
     }
 
     fun fetchQuarkFiles(fid: String = "0", isBack: Boolean = false, folderName: String? = null) {
