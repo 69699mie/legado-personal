@@ -313,7 +313,7 @@ fun VideoScraperScreen(
             }
         }
 
-        // 底部全局刷新/刮削悬浮提示（去背景色，带阴影）
+        // 底部全局刷新/刮削悬浮提示（位置不变，仅增加毛玻璃背景）
         if (uiState.isLoading || uiState.isScraping) {
             val isVideoPlaying = uiState.playUrl != null || uiState.currentPlayFile != null || uiState.isDirectPlay
             if (!isVideoPlaying) {
@@ -321,6 +321,16 @@ fun VideoScraperScreen(
                     modifier = Modifier
                         .align(Alignment.BottomCenter)
                         .padding(bottom = 100.dp)
+                        .background(
+                            color = Color(0xE61A1A1A),
+                            shape = RoundedCornerShape(24.dp)
+                        )
+                        .border(
+                            width = 1.dp,
+                            color = Color.White.copy(alpha = 0.1f),
+                            shape = RoundedCornerShape(24.dp)
+                        )
+                        .padding(horizontal = 20.dp, vertical = 10.dp)
                 ) {
                     AnimatedLoadingDots(
                         color = Color.White, 
@@ -806,7 +816,7 @@ fun InternalVideoPlayer(
     val audioManager = remember { context.getSystemService(Context.AUDIO_SERVICE) as AudioManager }
     var hasRestoredProgress by remember { mutableStateOf(false) }
     
-    // 【新增】记录进入播放器时的系统时间
+    // 记录进入播放器时的系统时间
     var entryTime by remember { mutableLongStateOf(0L) }
 
     var audioTracks by remember { mutableStateOf<List<Tracks.Group>>(emptyList()) }
@@ -860,7 +870,7 @@ fun InternalVideoPlayer(
             }
     }
 
-    // 【极简计时逻辑】利用 DisposableEffect 在每次 URL 变化（切集）时结算上一集的时间
+    // 极简计时逻辑：利用 DisposableEffect 在每次 URL 变化（切集）时结算上一集的时间
     DisposableEffect(url) {
         entryTime = System.currentTimeMillis()
         onDispose {
@@ -956,8 +966,6 @@ fun InternalVideoPlayer(
         exoPlayer.addListener(listener)
         onDispose {
             if (exoPlayer.currentPosition > 0) viewModel.saveVideoProgress(currentFile.fid, exoPlayer.currentPosition)
-            
-            // 【修复】彻底去掉累加逻辑，全权交由上面的 DisposableEffect(url) 负责
             
             exoPlayer.removeListener(listener)
             exoPlayer.stop()
@@ -1118,17 +1126,7 @@ fun InternalVideoPlayer(
 
         if (isInPip.value) {
             Box(modifier = Modifier.fillMaxSize()) {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .background(Brush.verticalGradient(listOf(Color(0x88000000), Color.Transparent)))
-                        .padding(horizontal = 8.dp, vertical = 4.dp),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    AppText(text = networkSpeed, color = Color.White, fontSize = 10.sp)
-                }
-
+                // 移除了网速显示，只保留居中的播放控制按钮
                 Row(
                     modifier = Modifier.align(Alignment.Center),
                     horizontalArrangement = Arrangement.spacedBy(24.dp),
