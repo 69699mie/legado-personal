@@ -334,7 +334,7 @@ fun VideoScraperScreen(
                 }
             }
         } else if (showAllHistoryPage) {
-            // 【修复布局冲突】全部历史记录全屏页面，直接使用单一的 LazyVerticalGrid
+            // 【彻底修复布局冲突】全部历史记录全屏页面
             Column(modifier = Modifier.fillMaxSize().statusBarsPadding().background(Color.White)) {
                 Row(modifier = Modifier.fillMaxWidth().padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
                     if (isSelectionMode) {
@@ -373,7 +373,7 @@ fun VideoScraperScreen(
                 ) {
                     groupedHistory.forEach { (category, items) ->
                         if (items.isNotEmpty()) {
-                            // 插入分类标题，独占一整行
+                            // 分类标题横跨一整行
                             item(span = { GridItemSpan(maxLineSpan) }) {
                                 AppText(
                                     text = category,
@@ -382,7 +382,7 @@ fun VideoScraperScreen(
                                     modifier = Modifier.padding(top = 16.dp, bottom = 8.dp)
                                 )
                             }
-                            // 插入该类别的卡片
+                            // 卡片数据，自然排列 3 列，高度自动撑开，绝不截断
                             items(items) { historyItem ->
                                 RecentWatchedGridCard(
                                     item = historyItem, 
@@ -471,7 +471,7 @@ fun VideoScraperScreen(
                                     }
                                 }
 
-                                // === 最近观看 (竖屏显示，去重后) ===
+                                // === 最近观看 (首页横排) ===
                                 if (recentWatchedList.isNotEmpty()) {
                                     item {
                                         Row(modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
@@ -699,7 +699,7 @@ fun BannerCarousel(seriesList: List<MediaSeries>, onSelect: (MediaSeries) -> Uni
     }
 }
 
-// 竖屏卡片，显示影视名
+// 竖屏卡片，首页最近观看横排使用
 @Composable
 fun RecentWatchedCard(item: RecentWatchedItem, onClick: () -> Unit) {
     Column(modifier = Modifier.width(110.dp).clickable { onClick() }) {
@@ -714,6 +714,7 @@ fun RecentWatchedCard(item: RecentWatchedItem, onClick: () -> Unit) {
     }
 }
 
+// 竖屏卡片，全部历史记录网格使用
 @Composable
 fun RecentWatchedGridCard(
     item: RecentWatchedItem, 
@@ -1258,6 +1259,7 @@ fun InternalVideoPlayer(
     DisposableEffect(lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event ->
             if (event == Lifecycle.Event.ON_PAUSE || event == Lifecycle.Event.ON_STOP) {
+                // 只要不是系统画中画，直接暂停
                 if (activity?.isInPictureInPictureMode != true) {
                     exoPlayer.pause()
                 }
