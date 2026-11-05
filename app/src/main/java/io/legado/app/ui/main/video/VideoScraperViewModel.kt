@@ -52,7 +52,8 @@ data class MediaSeries(
     val episodeStills: Map<Int, String> = emptyMap(),
     val seasonEpisodeTitles: Map<String, String> = emptyMap(),
     val seasonEpisodeStills: Map<String, String> = emptyMap(),
-    val groupName: String? = null 
+    val groupName: String? = null,
+    val isManuallyEdited: Boolean = false // 新增：手动修改标记
 )
 
 data class TmdbSearchResult(
@@ -77,7 +78,8 @@ data class ScrapeCacheItem(
     val episodeStills: Map<Int, String> = emptyMap(),
     val seasonEpisodeTitles: Map<String, String> = emptyMap(),
     val seasonEpisodeStills: Map<String, String> = emptyMap(),
-    val groupName: String? = null
+    val groupName: String? = null,
+    val isManuallyEdited: Boolean = false // 新增：手动修改标记
 )
 
 class VideoScraperViewModel(
@@ -93,7 +95,6 @@ class VideoScraperViewModel(
     val uiState = _uiState.asStateFlow()
 
     private val pathHistory = mutableListOf<String>()
-    // 新增：浏览路径记录，用于加入影视库时带上完整路径
     val browsePath = mutableListOf<String>()
 
     private var hasLoadedLibrary = false
@@ -102,7 +103,6 @@ class VideoScraperViewModel(
     private var lastQuarkError: String? = null
     private val scrapedCache = mutableMapOf<String, ScrapeCacheItem>()
     
-    // 防止重复触发
     private var isHandlingPendingRequest = false
 
     init {
@@ -125,7 +125,8 @@ class VideoScraperViewModel(
                 tmdbBaseUrl = videoSettingsRepository.tmdbBaseUrl.ifBlank { "https://tmdbimg.quarkalist.xyz" },
                 selectedLibraryFids = fids,
                 isLibraryMode = true,
-                downloadThreads = videoSettingsRepository.proxyThreads
+                downloadThreads = videoSettingsRepository.proxyThreads,
+                bannerLogic = videoSettingsRepository.bannerLogic // 读取轮播图逻辑设置
             )
         }
 
@@ -145,6 +146,7 @@ class VideoScraperViewModel(
                 seasonEpisodeTitles = cached.seasonEpisodeTitles,
                 seasonEpisodeStills = cached.seasonEpisodeStills,
                 groupName = cached.groupName,
+                isManuallyEdited = cached.isManuallyEdited,
                 videos = emptyList()
             )
         }
@@ -208,7 +210,8 @@ class VideoScraperViewModel(
                             episodeStills = epStills,
                             seasonEpisodeTitles = sEpTitles,
                             seasonEpisodeStills = sEpStills,
-                            groupName = itemObj.optString("groupName").takeIf { it.isNotBlank() && it != "null" }
+                            groupName = itemObj.optString("groupName").takeIf { it.isNotBlank() && it != "null" },
+                            isManuallyEdited = itemObj.optBoolean("isManuallyEdited", false)
                         )
                     } catch (e: Exception) {
                         e.printStackTrace()
@@ -231,6 +234,7 @@ class VideoScraperViewModel(
                 itemObj.put("overview", item.overview ?: "")
                 itemObj.put("rating", item.rating ?: "")
                 itemObj.put("groupName", item.groupName ?: "")
+                itemObj.put("isManuallyEdited", item.isManuallyEdited)
                 
                 val epTitlesObj = JSONObject()
                 item.episodeTitles.forEach { (k, v) -> epTitlesObj.put(k.toString(), v) }
@@ -273,6 +277,11 @@ class VideoScraperViewModel(
         fetchQuarkFiles("0")
         hasLoadedLibrary = false
         loadLibraryVideos()
+    }
+
+    fun saveBannerLogic(logic: String) {
+        videoSettingsRepository.bannerLogic = logic
+        _uiState.update { it.copy(bannerLogic = logic) }
     }
 
     fun saveDownloadThreads(count: Int) {
@@ -337,7 +346,6 @@ class VideoScraperViewModel(
                 withContext(Dispatchers.IO) {
                     for (fid in libs) {
                         val folderName = libraryNames[fid] ?: ""
-                        // 修改：支持带 "/" 的完整路径分割
                         val initialPath = if (folderName.isNotBlank()) folderName.split("/") else emptyList()
                         fetchVideosRecursively(cookie, fid, initialPath, allVideos)
                     }
@@ -348,6 +356,24 @@ class VideoScraperViewModel(
                 val finalSeriesList = groupedSeries.map { series ->
                     val cached = scrapedCache[series.id]
                     if (cached != null) {
+                        // 核心修复：如果是手动修改过的，直接使用缓存，绝不重新刮削覆盖
+                        if (cached.isManuallyEdited) {
+                            return@map series.copy(
+                                title = cached.title,
+                                category = cached.category,
+                                posterUrl = cached.posterUrl,
+                                overview = cached.overview,
+                                rating = cached.rating,
+                                seasonDetails = cached.seasonDetails,
+                                episodeTitles = cached.episodeTitles,
+                                episodeStills = cached.episodeStills,
+                                seasonEpisodeTitles = cached.seasonEpisodeTitles,
+                                seasonEpisodeStills = cached.seasonEpisodeStills,
+                                groupName = cached.groupName,
+                                isManuallyEdited = true
+                            )
+                        }
+
                         val cachedMaxEp = cached.episodeTitles.keys.maxOrNull() ?: 0
                         val currentMaxEp = series.videos.maxOfOrNull { it.parsedInfo?.episode ?: 0 } ?: 0
 
@@ -394,7 +420,7 @@ class VideoScraperViewModel(
                 } else {
                     hasLoadedLibrary = true
                     _uiState.update { it.copy(isLoading = false, isScraping = false) }
-                    handlePendingPlayRequest() // 无刮削任务，直接尝试消费首页请求
+                    handlePendingPlayRequest()
                 }
 
             } catch (e: Exception) {
@@ -612,7 +638,8 @@ class VideoScraperViewModel(
                         episodeStills = newSeries.episodeStills,
                         seasonEpisodeTitles = newSeries.seasonEpisodeTitles,
                         seasonEpisodeStills = newSeries.seasonEpisodeStills,
-                        groupName = newSeries.groupName
+                        groupName = newSeries.groupName,
+                        isManuallyEdited = false // 自动刮削的
                     )
                     newSeries
                 } else {
@@ -784,8 +811,12 @@ class VideoScraperViewModel(
         val currentList = _uiState.value.seriesList.map {
             if (it.id == seriesId) {
                 it.copy(
-                    title = result?.title ?: newTitle, posterUrl = result?.posterUrl ?: it.posterUrl,
-                    overview = result?.overview ?: it.overview, rating = result?.rating ?: it.rating, category = newCategory
+                    title = result?.title ?: newTitle, 
+                    posterUrl = result?.posterUrl ?: it.posterUrl,
+                    overview = result?.overview ?: it.overview, 
+                    rating = result?.rating ?: it.rating, 
+                    category = newCategory,
+                    isManuallyEdited = true // 标记为手动修改
                 )
             } else it
         }
@@ -807,7 +838,8 @@ class VideoScraperViewModel(
                 episodeStills = updatedSeries.episodeStills,
                 seasonEpisodeTitles = updatedSeries.seasonEpisodeTitles,
                 seasonEpisodeStills = updatedSeries.seasonEpisodeStills,
-                groupName = updatedSeries.groupName
+                groupName = updatedSeries.groupName,
+                isManuallyEdited = true // 存入缓存
             )
             saveScrapedCache()
         }
@@ -817,11 +849,11 @@ class VideoScraperViewModel(
         val cookie = _uiState.value.cookie
         val epNum = file.parsedInfo?.episode
         val season = file.parsedInfo?.season ?: 1
-        val titleText = if (epNum != null) {
+        val titleText = if (epNum != null && series.category != "电影" && series.videos.size > 1) {
             val tmdbEpTitle = series.seasonEpisodeTitles["${season}_${epNum}"] ?: series.episodeTitles[epNum]
             if (!tmdbEpTitle.isNullOrBlank()) "${series.title} 第${epNum}集 $tmdbEpTitle"
             else "${series.title} 第${epNum}集"
-        } else { file.name }
+        } else { series.title }
 
         try {
             val jsonArray = JSONArray(videoSettingsRepository.recentWatchedVideos)
@@ -842,7 +874,7 @@ class VideoScraperViewModel(
             newList.add(0, newObj)
             
             val resultArray = JSONArray()
-            newList.take(10).forEach { resultArray.put(it) }
+            newList.take(50).forEach { resultArray.put(it) } // 扩大到50条，供“全部”查看
             videoSettingsRepository.recentWatchedVideos = resultArray.toString()
         } catch (e: Exception) { e.printStackTrace() }
 
@@ -878,15 +910,15 @@ class VideoScraperViewModel(
         
         if (series != null && file != null) {
             isHandlingPendingRequest = true
-            videoSettingsRepository.pendingPlayFid = null // 找到了，立刻消费掉
+            videoSettingsRepository.pendingPlayFid = null
             
             val epNum = file.parsedInfo?.episode
             val season = file.parsedInfo?.season ?: 1
-            val titleText = if (epNum != null) {
+            val titleText = if (epNum != null && series.category != "电影" && series.videos.size > 1) {
                 val tmdbEpTitle = series.seasonEpisodeTitles["${season}_${epNum}"] ?: series.episodeTitles[epNum]
                 if (!tmdbEpTitle.isNullOrBlank()) "${series.title} 第${epNum}集 $tmdbEpTitle"
                 else "${series.title} 第${epNum}集"
-            } else { file.name }
+            } else { series.title }
 
             _uiState.update { it.copy(playUrl = null, playTitle = titleText, currentSeries = series, currentPlayFile = file, isDirectPlay = true) }
             
@@ -1045,11 +1077,11 @@ class VideoScraperViewModel(
         
         if (fid == "0") {
             pathHistory.clear()
-            browsePath.clear() // 清空浏览路径
+            browsePath.clear()
         } else if (!isBack && _uiState.value.currentFid != fid) {
             pathHistory.add(_uiState.value.currentFid)
             if (folderName != null) {
-                browsePath.add(folderName) // 记录路径
+                browsePath.add(folderName)
             }
         }
         
@@ -1094,7 +1126,7 @@ class VideoScraperViewModel(
     fun goBack() {
         if (pathHistory.isNotEmpty()) {
             if (browsePath.isNotEmpty()) {
-                browsePath.removeAt(browsePath.size - 1) // 回退时移除路径
+                browsePath.removeAt(browsePath.size - 1)
             }
             fetchQuarkFiles(pathHistory.removeAt(pathHistory.size - 1), isBack = true) 
         } else {
@@ -1120,5 +1152,6 @@ data class VideoUiState(
     val playTitle: String? = null,
     val currentPlayFile: QuarkFile? = null,
     val downloadThreads: Int = 6,
-    val isDirectPlay: Boolean = false 
+    val isDirectPlay: Boolean = false,
+    val bannerLogic: String = "智能推荐"
 )
