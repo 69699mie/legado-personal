@@ -2,6 +2,7 @@ package io.legado.app.ui.main.video
 
 import android.annotation.SuppressLint
 import android.app.Activity
+import android.app.PictureInPictureParams
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
@@ -9,7 +10,9 @@ import android.content.pm.ActivityInfo
 import android.content.res.Configuration
 import android.media.AudioManager
 import android.net.TrafficStats
+import android.os.Build
 import android.os.Process
+import android.util.Rational
 import android.view.OrientationEventListener
 import android.view.ViewGroup
 import android.view.WindowManager
@@ -95,6 +98,9 @@ import androidx.media3.common.MediaItem
 import androidx.media3.common.MediaMetadata
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
+import androidx.media3.common.TrackGroup
+import androidx.media3.common.TrackSelectionOverride
+import androidx.media3.common.Tracks
 import androidx.media3.common.VideoSize
 import androidx.media3.datasource.HttpDataSource
 import androidx.media3.exoplayer.DefaultLoadControl
@@ -184,7 +190,6 @@ fun VideoLibraryScreen(
             viewModel = viewModel,
             onDismiss = { showSettingsDialog = false },
             onWebLoginClick = { 
-                // 在资源库页面也支持点击登录，拉起确认框逻辑
             }
         )
     }
@@ -208,7 +213,7 @@ fun VideoScraperScreen(
 
     var showSettingsDialog by remember { mutableStateOf(false) }
     var showWebLoginDialog by remember { mutableStateOf(false) }
-    var showLoginConfirmDialog by remember { mutableStateOf(false) } // 新增：登录确认弹窗
+    var showLoginConfirmDialog by remember { mutableStateOf(false) }
     var showManualScrapeDialog by remember { mutableStateOf(false) }
     var manualScrapeSeries by remember { mutableStateOf<MediaSeries?>(null) }
     var viewAllCategory by remember { mutableStateOf<String?>(null) }
@@ -295,7 +300,12 @@ fun VideoScraperScreen(
                                         item {
                                             LazyRow(contentPadding = PaddingValues(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                                                 items(seriesList) { series ->
-                                                    SeriesPosterCard(series = series, onClick = { viewModel.selectSeries(series) }, onLongClick = { manualScrapeSeries = series; showManualScrapeDialog = true })
+                                                    SeriesPosterCard(
+                                                        series = series, 
+                                                        isScraping = uiState.isScraping,
+                                                        onClick = { viewModel.selectSeries(series) }, 
+                                                        onLongClick = { manualScrapeSeries = series; showManualScrapeDialog = true }
+                                                    )
                                                 }
                                             }
                                         }
@@ -308,29 +318,32 @@ fun VideoScraperScreen(
             }
         }
 
-        // 2. 全屏播放器 (有直链时弹出，**去掉了前置的加载框，直接弹**)
+        // 2. 拦截：如果是首页发起的播放（isDirectPlay），直链没返回前直接黑屏挡住详情页
+        if (isActive && uiState.isDirectPlay && uiState.playUrl == null && uiState.currentPlayFile != null) {
+            Box(modifier = Modifier.fillMaxSize().background(Color.Black), contentAlignment = Alignment.Center) {
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    CircularProgressIndicator(color = Color.White)
+                    Spacer(modifier = Modifier.height(16.dp))
+                    AnimatedLoadingDots(color = Color.White, fontSize = 16.sp, text = "正在获取播放地址")
+                }
+            }
+        }
+
+        // 3. 全屏播放器 (有直链时弹出)
         if (isActive && uiState.playUrl != null && uiState.currentSeries != null && uiState.currentPlayFile != null) {
-            Dialog(
-                onDismissRequest = {
+            InternalVideoPlayer(
+                url = uiState.playUrl!!,
+                title = uiState.playTitle ?: "播放中",
+                cookie = uiState.cookie,
+                series = uiState.currentSeries!!,
+                currentFile = uiState.currentPlayFile!!,
+                viewModel = viewModel,
+                downloadThreads = uiState.downloadThreads,
+                onBack = {
                     activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
                     viewModel.stopPlaying()
-                },
-                properties = DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false)
-            ) {
-                InternalVideoPlayer(
-                    url = uiState.playUrl!!,
-                    title = uiState.playTitle ?: "播放中",
-                    cookie = uiState.cookie,
-                    series = uiState.currentSeries!!,
-                    currentFile = uiState.currentPlayFile!!,
-                    viewModel = viewModel,
-                    downloadThreads = uiState.downloadThreads,
-                    onBack = {
-                        activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
-                        viewModel.stopPlaying()
-                    }
-                )
-            }
+                }
+            )
         }
     }
 
@@ -339,11 +352,10 @@ fun VideoScraperScreen(
             uiState = uiState, 
             viewModel = viewModel, 
             onDismiss = { showSettingsDialog = false }, 
-            onWebLoginClick = { showLoginConfirmDialog = true } // 点击登录，弹出确认框
+            onWebLoginClick = { showLoginConfirmDialog = true }
         )
     }
 
-    // 登录确认弹窗
     if (showLoginConfirmDialog) {
         val isLoggedIn = uiState.cookie.isNotBlank()
         AlertDialog(
@@ -354,10 +366,8 @@ fun VideoScraperScreen(
                 TextButton(onClick = {
                     showLoginConfirmDialog = false
                     if (isLoggedIn) {
-                        // 如果已登录，先清除缓存
                         viewModel.loginWithCapturedCookie("")
                     }
-                    // 无论怎样，都弹出扫码界面
                     showWebLoginDialog = true
                 }) {
                     AppText("登录")
@@ -377,7 +387,6 @@ fun VideoScraperScreen(
                 WebLoginView(
                     onLoginSuccess = { cookie ->
                         viewModel.loginWithCapturedCookie(cookie)
-                        // 直接关闭弹窗，静默保存，不弹 Toast
                         showWebLoginDialog = false
                         showSettingsDialog = false
                     },
@@ -491,7 +500,6 @@ private fun SettingsDialog(
                     }
                 }
 
-                // 改为 OutlinedButton，文本改为“确认”
                 OutlinedButton(
                     onClick = {
                         viewModel.saveSettings(inputCookie, inputTmdbKey, inputTmdbUrl)
@@ -637,7 +645,7 @@ fun WebLoginView(onLoginSuccess: (String) -> Unit, onCancel: () -> Unit) {
                     builtInZoomControls = true
                     displayZoomControls = false
                     userAgentString = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-                    if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.LOLLIPOP) {
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
                         mixedContentMode = WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
                     }
                 }
@@ -689,10 +697,22 @@ fun InternalVideoPlayer(
     val configuration = LocalConfiguration.current
     val isLandscape = configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
 
+    val isInPip = remember { mutableStateOf(false) }
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+        val lifecycleOwner = androidx.lifecycle.compose.LocalLifecycleOwner.current
+        DisposableEffect(lifecycleOwner) {
+            val observer = androidx.lifecycle.LifecycleEventObserver { _, event ->
+                if (event == androidx.lifecycle.Lifecycle.Event.ON_RESUME) {
+                    isInPip.value = activity?.isInPictureInPictureMode == true
+                }
+            }
+            lifecycleOwner.lifecycle.addObserver(observer)
+            onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+        }
+    }
+
     var errorDialogMsg by remember { mutableStateOf<String?>(null) }
-    
     val lastManualSwitchTime = remember { longArrayOf(0L) }
-    
     var isLocked by remember { mutableStateOf(false) }
     val currentIsLocked by rememberUpdatedState(isLocked)
 
@@ -704,7 +724,7 @@ fun InternalVideoPlayer(
         val orientationListener = object : OrientationEventListener(context) {
             override fun onOrientationChanged(orientation: Int) {
                 if (orientation == ORIENTATION_UNKNOWN) return
-                if (currentIsLocked) return
+                if (currentIsLocked || isInPip.value) return
                 if (System.currentTimeMillis() - lastManualSwitchTime[0] < 2000) return
 
                 when (orientation) {
@@ -731,8 +751,8 @@ fun InternalVideoPlayer(
         onDispose { orientationListener.disable() }
     }
 
-    LaunchedEffect(isLandscape) {
-        if (view.isInEditMode) return@LaunchedEffect
+    LaunchedEffect(isLandscape, isInPip.value) {
+        if (view.isInEditMode || isInPip.value) return@LaunchedEffect
         val window = (view.parent as? DialogWindowProvider)?.window ?: activity?.window
         if (window != null) {
             val controller = WindowCompat.getInsetsController(window, window.decorView)
@@ -751,7 +771,6 @@ fun InternalVideoPlayer(
     DisposableEffect(Unit) {
         onDispose {
             activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
-            
             val window = (view.parent as? DialogWindowProvider)?.window ?: activity?.window
             window?.let {
                 WindowCompat.setDecorFitsSystemWindows(it, true)
@@ -784,7 +803,6 @@ fun InternalVideoPlayer(
     var isLongPressing by remember { mutableStateOf(false) }
     var gestureType by remember { mutableStateOf("") }
     var gestureValue by remember { mutableFloatStateOf(0f) }
-    
     var isDraggingSeekBar by remember { mutableStateOf(false) }
 
     val season = currentFile.parsedInfo?.season ?: 1
@@ -797,12 +815,12 @@ fun InternalVideoPlayer(
         outroSeconds = pair.second
     }
 
-    var showSkipIntro by remember { mutableStateOf(false) }
-    var showSkipOutro by remember { mutableStateOf(false) }
-
+    var hasTriggeredAutoPlay by remember { mutableStateOf(false) }
     val audioManager = remember { context.getSystemService(Context.AUDIO_SERVICE) as AudioManager }
-
     var hasRestoredProgress by remember { mutableStateOf(false) }
+
+    var audioTracks by remember { mutableStateOf<List<Tracks.Group>>(emptyList()) }
+    var textTracks by remember { mutableStateOf<List<Tracks.Group>>(emptyList()) }
 
     LaunchedEffect(Unit) {
         var lastRxBytes = TrafficStats.getUidRxBytes(Process.myUid())
@@ -831,21 +849,15 @@ fun InternalVideoPlayer(
             .build()
 
         val dataSourceFactory = ParallelDownloadDataSource.Factory(okHttpClient, headers, downloadThreads)
-
-        val renderersFactory = DefaultRenderersFactory(context)
-            .setEnableAudioFloatOutput(true)
+        val renderersFactory = DefaultRenderersFactory(context).setEnableAudioFloatOutput(true)
 
         val mediaItem = MediaItem.Builder()
             .setUri(url)
             .setMediaMetadata(MediaMetadata.Builder().setTitle(title).build())
             .build()
 
-        val mediaSource = ProgressiveMediaSource.Factory(dataSourceFactory)
-            .createMediaSource(mediaItem)
-
-        val loadControl = DefaultLoadControl.Builder()
-            .setBufferDurationsMs(30000, 120000, 1500, 3000)
-            .build()
+        val mediaSource = ProgressiveMediaSource.Factory(dataSourceFactory).createMediaSource(mediaItem)
+        val loadControl = DefaultLoadControl.Builder().setBufferDurationsMs(30000, 120000, 1500, 3000).build()
 
         ExoPlayer.Builder(context, renderersFactory)
             .setLoadControl(loadControl)
@@ -860,26 +872,17 @@ fun InternalVideoPlayer(
 
     LaunchedEffect(url) {
         hasRestoredProgress = false
+        hasTriggeredAutoPlay = false
         exoPlayer.stop()
         exoPlayer.clearMediaItems()
 
-        val headers = mapOf(
-            "Cookie" to cookie,
-            "Referer" to "https://drive.quark.cn/"
-        )
-        val okHttpClient = OkHttpClient.Builder()
-            .connectTimeout(60, TimeUnit.SECONDS)
-            .readTimeout(60, TimeUnit.SECONDS)
-            .build()
-
+        val headers = mapOf("Cookie" to cookie, "Referer" to "https://drive.quark.cn/")
+        val okHttpClient = OkHttpClient.Builder().connectTimeout(60, TimeUnit.SECONDS).readTimeout(60, TimeUnit.SECONDS).build()
         val dataSourceFactory = ParallelDownloadDataSource.Factory(okHttpClient, headers, downloadThreads)
 
-        val mediaItem = MediaItem.Builder()
-            .setUri(url)
-            .setMediaMetadata(MediaMetadata.Builder().setTitle(title).build())
-            .build()
-
+        val mediaItem = MediaItem.Builder().setUri(url).setMediaMetadata(MediaMetadata.Builder().setTitle(title).build()).build()
         val mediaSource = ProgressiveMediaSource.Factory(dataSourceFactory).createMediaSource(mediaItem)
+        
         exoPlayer.setMediaSource(mediaSource)
         exoPlayer.prepare()
         exoPlayer.playWhenReady = true
@@ -905,13 +908,21 @@ fun InternalVideoPlayer(
                     if (idx != -1 && idx < series.videos.size - 1) viewModel.playVideo(context, series, series.videos[idx + 1])
                 }
             }
+            override fun onTracksChanged(tracks: Tracks) {
+                val audioList = mutableListOf<Tracks.Group>()
+                val textList = mutableListOf<Tracks.Group>()
+                for (group in tracks.groups) {
+                    if (group.type == androidx.media3.common.C.TRACK_TYPE_AUDIO) audioList.add(group)
+                    if (group.type == androidx.media3.common.C.TRACK_TYPE_TEXT) textList.add(group)
+                }
+                audioTracks = audioList
+                textTracks = textList
+            }
             override fun onVideoSizeChanged(videoSize: VideoSize) {
                 if (videoSize.width > 0 && videoSize.height > 0) resolution = "${videoSize.width}×${videoSize.height}"
             }
             override fun onPlayerError(error: PlaybackException) {
-                val sb = StringBuilder()
-                sb.append("错误码: ${error.errorCodeName}\n")
-                
+                val sb = StringBuilder().append("错误码: ${error.errorCodeName}\n")
                 var cause: Throwable? = error
                 var depth = 0
                 while (cause != null) {
@@ -943,18 +954,26 @@ fun InternalVideoPlayer(
                 bufferedPosition = exoPlayer.bufferedPosition
             }
 
-            if (introSeconds > 0 && currentPosition in (introSeconds * 1000L)..(introSeconds * 1000L + 1000L)) showSkipIntro = true
-            else if (currentPosition > introSeconds * 1000L) showSkipIntro = false
+            if (introSeconds > 0 && currentPosition in (introSeconds * 1000L)..(introSeconds * 1000L + 1000L)) {
+            }
 
-            if (outroSeconds > 0 && duration > 0 && currentPosition >= (duration - outroSeconds * 1000L)) showSkipOutro = true
-            else if (duration == 0L || currentPosition < (duration - outroSeconds * 1000L)) showSkipOutro = false
+            // 自动连播：到达片尾（剩余时间等于片尾设置时间时触发）
+            if (outroSeconds > 0 && duration > 0 && currentPosition >= (duration - outroSeconds * 1000L)) {
+                if (!hasTriggeredAutoPlay) {
+                    hasTriggeredAutoPlay = true
+                    val idx = series.videos.indexOfFirst { it.fid == currentFile.fid }
+                    if (idx != -1 && idx < series.videos.size - 1) {
+                        viewModel.playVideo(context, series, series.videos[idx + 1])
+                    }
+                }
+            }
 
             delay(1000)
         }
     }
 
     LaunchedEffect(showControls, isPlaying, gestureType, showSettingsPanel, showEpisodeDrawer) {
-        if (showControls && isPlaying && !isLocked && gestureType.isEmpty() && !showSettingsPanel && !showEpisodeDrawer) {
+        if (showControls && isPlaying && !isLocked && gestureType.isEmpty() && !showSettingsPanel && !showEpisodeDrawer && !isInPip.value) {
             delay(3000); showControls = false
         }
     }
@@ -983,9 +1002,7 @@ fun InternalVideoPlayer(
                     SelectionContainer {
                         Text(
                             text = errorDialogMsg ?: "",
-                            modifier = Modifier
-                                .heightIn(max = 400.dp)
-                                .verticalScroll(rememberScrollState()),
+                            modifier = Modifier.heightIn(max = 400.dp).verticalScroll(rememberScrollState()),
                             fontSize = 12.sp,
                             color = Color.DarkGray
                         )
@@ -998,12 +1015,8 @@ fun InternalVideoPlayer(
                         val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
                         clipboard.setPrimaryClip(ClipData.newPlainText("播放错误", errorDialogMsg))
                         Toast.makeText(context, "已复制到剪贴板", Toast.LENGTH_SHORT).show()
-                    }) {
-                        AppText("复制全部", color = MaterialTheme.colorScheme.primary)
-                    }
-                    TextButton(onClick = { errorDialogMsg = null }) {
-                        AppText("关闭")
-                    }
+                    }) { AppText("复制全部", color = MaterialTheme.colorScheme.primary) }
+                    TextButton(onClick = { errorDialogMsg = null }) { AppText("关闭") }
                 }
             }
         )
@@ -1013,9 +1026,11 @@ fun InternalVideoPlayer(
         modifier = Modifier
             .fillMaxSize()
             .background(Color.Black)
-            .pointerInput(isLocked) {
-                if (isLocked) {
-                    detectTapGestures(onTap = { showUnlockIcon = true })
+            .pointerInput(isLocked, isInPip.value) {
+                if (isLocked || isInPip.value) {
+                    if (isLocked && !isInPip.value) {
+                        detectTapGestures(onTap = { showUnlockIcon = true })
+                    }
                     return@pointerInput
                 }
                 detectDragGestures(
@@ -1044,8 +1059,8 @@ fun InternalVideoPlayer(
                     onDragCancel = { gestureType = "" }
                 )
             }
-            .pointerInput(isLocked, showControls, showSettingsPanel, showEpisodeDrawer) {
-                if (isLocked || showSettingsPanel || showEpisodeDrawer) return@pointerInput
+            .pointerInput(isLocked, showControls, showSettingsPanel, showEpisodeDrawer, isInPip.value) {
+                if (isLocked || showSettingsPanel || showEpisodeDrawer || isInPip.value) return@pointerInput
                 detectTapGestures(
                     onTap = { showControls = !showControls },
                     onDoubleTap = { offset ->
@@ -1076,12 +1091,20 @@ fun InternalVideoPlayer(
         AndroidView(
             factory = { ctx ->
                 PlayerView(ctx).apply {
-                    player = exoPlayer; useController = false
+                    player = exoPlayer
+                    useController = isInPip.value // 画中画时启用系统自带的控制栏
                     layoutParams = FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
                 }
             },
-            modifier = Modifier.fillMaxSize()
+            modifier = Modifier.fillMaxSize(),
+            update = { view ->
+                view.useController = isInPip.value
+            }
         )
+
+        if (isInPip.value) {
+            return@Box
+        }
 
         if (isBuffering || duration == 0L) {
             Box(
@@ -1129,6 +1152,7 @@ fun InternalVideoPlayer(
         AnimatedVisibility(visible = showControls, enter = fadeIn(), exit = fadeOut(), modifier = Modifier.fillMaxSize()) {
             Box(modifier = Modifier.fillMaxSize()) {
 
+                // 左侧栏：只留旋转按钮
                 Column(modifier = Modifier.align(Alignment.CenterStart).padding(start = 16.dp), verticalArrangement = Arrangement.spacedBy(30.dp)) {
                     Surface(color = Color.White.copy(alpha = 0.1f), shape = CircleShape, border = BorderStroke(1.dp, Color.White.copy(alpha = 0.2f))) {
                         IconButton(onClick = {
@@ -1139,31 +1163,29 @@ fun InternalVideoPlayer(
                             Icon(Icons.Default.ScreenRotation, null, tint = Color.White)
                         }
                     }
-
-                    if (isLandscape) {
-                        Surface(color = Color.White.copy(alpha = 0.1f), shape = CircleShape, border = BorderStroke(1.dp, Color.White.copy(alpha = 0.2f))) {
-                            IconButton(onClick = { showEpisodeDrawer = true }) {
-                                Icon(Icons.Default.FormatListBulleted, null, tint = Color.White)
-                            }
-                        }
-                    }
                 }
 
+                // 右侧栏：画中画，锁屏
                 Column(modifier = Modifier.align(Alignment.CenterEnd).padding(end = 16.dp), verticalArrangement = Arrangement.spacedBy(30.dp)) {
-                    if (isLandscape) {
-                        Surface(color = Color.White.copy(alpha = 0.1f), shape = CircleShape, border = BorderStroke(1.dp, Color.White.copy(alpha = 0.2f))) {
-                            IconButton(onClick = { Toast.makeText(context, "暂无音频轨道", Toast.LENGTH_SHORT).show() }) { Icon(Icons.Default.Headset, null, tint = Color.White) }
-                        }
+                    Surface(color = Color.White.copy(alpha = 0.1f), shape = CircleShape, border = BorderStroke(1.dp, Color.White.copy(alpha = 0.2f))) {
+                        IconButton(onClick = {
+                            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                                try {
+                                    val params = PictureInPictureParams.Builder()
+                                        .setAspectRatio(Rational(16, 9))
+                                        .build()
+                                    activity?.enterPictureInPictureMode(params)
+                                } catch (e: Exception) {
+                                    Toast.makeText(context, "设备不支持画中画", Toast.LENGTH_SHORT).show()
+                                }
+                            } else {
+                                Toast.makeText(context, "Android 8.0 及以上才支持画中画", Toast.LENGTH_SHORT).show()
+                            }
+                        }) { Icon(Icons.Default.PictureInPicture, null, tint = Color.White) }
                     }
 
                     Surface(color = Color.White.copy(alpha = 0.1f), shape = CircleShape, border = BorderStroke(1.dp, Color.White.copy(alpha = 0.2f))) {
                         IconButton(onClick = { isLocked = true; showControls = false; showUnlockIcon = true }) { Icon(Icons.Default.Lock, null, tint = Color.White) }
-                    }
-
-                    if (isLandscape) {
-                        Surface(color = Color.White.copy(alpha = 0.1f), shape = CircleShape, border = BorderStroke(1.dp, Color.White.copy(alpha = 0.2f))) {
-                            IconButton(onClick = { Toast.makeText(context, "暂无字幕", Toast.LENGTH_SHORT).show() }) { Icon(Icons.Default.Subtitles, null, tint = Color.White) }
-                        }
                     }
                 }
 
@@ -1181,10 +1203,7 @@ fun InternalVideoPlayer(
                         text = title,
                         color = Color.White,
                         maxLines = 1,
-                        modifier = Modifier
-                            .weight(1f)
-                            .padding(start = 8.dp, end = 16.dp)
-                            .basicMarquee()
+                        modifier = Modifier.weight(1f).padding(start = 8.dp, end = 16.dp).basicMarquee()
                     )
 
                     if (isLandscape) {
@@ -1197,6 +1216,7 @@ fun InternalVideoPlayer(
                     IconButton(onClick = { showSettingsPanel = true }) { Icon(Icons.Default.Settings, contentDescription = "设置", tint = Color.White) }
                 }
 
+                // 底部控制栏
                 Box(
                     modifier = Modifier
                         .align(Alignment.BottomCenter)
@@ -1255,9 +1275,7 @@ fun InternalVideoPlayer(
                                                 exoPlayer.seekTo(currentPosition)
                                                 if (isPlaying) exoPlayer.play()
                                             },
-                                            onDragCancel = {
-                                                isDraggingSeekBar = false
-                                            }
+                                            onDragCancel = { isDraggingSeekBar = false }
                                         )
                                     },
                                 contentAlignment = Alignment.Center
@@ -1268,37 +1286,15 @@ fun InternalVideoPlayer(
                                     val thumbRadius = 6.dp.toPx()
                                     val maxWidth = size.width - thumbRadius * 2
                                     
-                                    drawLine(
-                                        color = Color.White.copy(alpha = 0.2f),
-                                        start = Offset(thumbRadius, progressY),
-                                        end = Offset(size.width - thumbRadius, progressY),
-                                        strokeWidth = trackHeight,
-                                        cap = androidx.compose.ui.graphics.StrokeCap.Round
-                                    )
+                                    drawLine(color = Color.White.copy(alpha = 0.2f), start = Offset(thumbRadius, progressY), end = Offset(size.width - thumbRadius, progressY), strokeWidth = trackHeight, cap = androidx.compose.ui.graphics.StrokeCap.Round)
                                     if (bufferedFraction > 0) {
-                                        drawLine(
-                                            color = Color.White.copy(alpha = 0.5f),
-                                            start = Offset(thumbRadius, progressY),
-                                            end = Offset(thumbRadius + maxWidth * bufferedFraction.coerceIn(0f, 1f), progressY),
-                                            strokeWidth = trackHeight,
-                                            cap = androidx.compose.ui.graphics.StrokeCap.Round
-                                        )
+                                        drawLine(color = Color.White.copy(alpha = 0.5f), start = Offset(thumbRadius, progressY), end = Offset(thumbRadius + maxWidth * bufferedFraction.coerceIn(0f, 1f), progressY), strokeWidth = trackHeight, cap = androidx.compose.ui.graphics.StrokeCap.Round)
                                     }
                                     if (currentFraction > 0) {
-                                        drawLine(
-                                            color = Color.White,
-                                            start = Offset(thumbRadius, progressY),
-                                            end = Offset(thumbRadius + maxWidth * currentFraction.coerceIn(0f, 1f), progressY),
-                                            strokeWidth = trackHeight,
-                                            cap = androidx.compose.ui.graphics.StrokeCap.Round
-                                        )
+                                        drawLine(color = Color.White, start = Offset(thumbRadius, progressY), end = Offset(thumbRadius + maxWidth * currentFraction.coerceIn(0f, 1f), progressY), strokeWidth = trackHeight, cap = androidx.compose.ui.graphics.StrokeCap.Round)
                                     }
                                     val circleX = thumbRadius + maxWidth * currentFraction.coerceIn(0f, 1f)
-                                    drawCircle(
-                                        color = Color.White,
-                                        radius = thumbRadius,
-                                        center = Offset(circleX, progressY)
-                                    )
+                                    drawCircle(color = Color.White, radius = thumbRadius, center = Offset(circleX, progressY))
                                 }
                             }
                             
@@ -1323,13 +1319,13 @@ fun InternalVideoPlayer(
 
                                 if (isLandscape) {
                                     AppText(
-                                        text = if (introSeconds > 0) formatTime(introSeconds * 1000L) else "片头",
+                                        text = if (introSeconds > 0) formatIntroOutro(introSeconds) else "片头",
                                         color = Color.White, fontSize = 12.sp,
                                         modifier = Modifier.combinedClickable(
                                             onClick = {
                                                 introSeconds = (currentPosition / 1000).toInt()
                                                 viewModel.saveIntroOutro(series.title, season, introSeconds, outroSeconds)
-                                                Toast.makeText(context, "片头已设为 ${formatTime(currentPosition)}", Toast.LENGTH_SHORT).show()
+                                                Toast.makeText(context, "片头已设为 ${formatIntroOutro(introSeconds)}", Toast.LENGTH_SHORT).show()
                                             },
                                             onLongClick = {
                                                 introSeconds = 0
@@ -1356,7 +1352,7 @@ fun InternalVideoPlayer(
 
                                 if (isLandscape) {
                                     AppText(
-                                        text = if (outroSeconds > 0) formatTime(outroSeconds * 1000L) else "片尾",
+                                        text = if (outroSeconds > 0) formatIntroOutro(outroSeconds) else "片尾",
                                         color = Color.White, fontSize = 12.sp,
                                         modifier = Modifier.combinedClickable(
                                             onClick = {
@@ -1364,7 +1360,7 @@ fun InternalVideoPlayer(
                                                 if (remain > 0) {
                                                     outroSeconds = (remain / 1000).toInt()
                                                     viewModel.saveIntroOutro(series.title, season, introSeconds, outroSeconds)
-                                                    Toast.makeText(context, "片尾已设为剩余 ${formatTime(remain)}", Toast.LENGTH_SHORT).show()
+                                                    Toast.makeText(context, "片尾已设为剩余 ${formatIntroOutro(outroSeconds)}", Toast.LENGTH_SHORT).show()
                                                 }
                                             },
                                             onLongClick = {
@@ -1385,39 +1381,19 @@ fun InternalVideoPlayer(
                         }
                     }
                 }
-
-                if (showSkipIntro) {
-                    Button(onClick = { exoPlayer.seekTo(introSeconds * 1000L); showSkipIntro = false }, modifier = Modifier.align(Alignment.BottomEnd).padding(bottom = 100.dp, end = 16.dp)) { AppText("跳过片头") }
-                }
-                if (showSkipOutro) {
-                    Button(onClick = {
-                        val idx = series.videos.indexOfFirst { it.fid == currentFile.fid }
-                        if (idx != -1 && idx < series.videos.size - 1) viewModel.playVideo(context, series, series.videos[idx + 1])
-                    }, modifier = Modifier.align(Alignment.BottomEnd).padding(bottom = 100.dp, end = 16.dp)) { AppText("下一集") }
-                }
             }
         }
 
         if (isLongPressing) {
             Box(
-                modifier = Modifier
-                    .align(Alignment.TopCenter)
-                    .padding(top = if (isLandscape) 80.dp else 120.dp)
-                    .background(Color.Black.copy(alpha = 0.6f), RoundedCornerShape(8.dp))
-                    .padding(horizontal = 16.dp, vertical = 8.dp)
-            ) {
-                AppText(text = "2.0x快进中", color = Color.White, fontSize = 16.sp)
-            }
+                modifier = Modifier.align(Alignment.TopCenter).padding(top = if (isLandscape) 80.dp else 120.dp)
+                    .background(Color.Black.copy(alpha = 0.6f), RoundedCornerShape(8.dp)).padding(horizontal = 16.dp, vertical = 8.dp)
+            ) { AppText(text = "2.0x快进中", color = Color.White, fontSize = 16.sp) }
         } else if (seekMessage != null) {
             Box(
-                modifier = Modifier
-                    .align(Alignment.TopCenter)
-                    .padding(top = if (isLandscape) 80.dp else 120.dp)
-                    .background(Color.Black.copy(alpha = 0.6f), RoundedCornerShape(8.dp))
-                    .padding(horizontal = 16.dp, vertical = 8.dp)
-            ) {
-                AppText(text = seekMessage!!, color = Color.White, fontSize = 16.sp)
-            }
+                modifier = Modifier.align(Alignment.TopCenter).padding(top = if (isLandscape) 80.dp else 120.dp)
+                    .background(Color.Black.copy(alpha = 0.6f), RoundedCornerShape(8.dp)).padding(horizontal = 16.dp, vertical = 8.dp)
+            ) { AppText(text = seekMessage!!, color = Color.White, fontSize = 16.sp) }
         }
 
         if (showEpisodeDrawer) {
@@ -1468,7 +1444,7 @@ fun InternalVideoPlayer(
                 modifier = Modifier.align(Alignment.CenterEnd).fillMaxHeight().width(280.dp)
             ) {
                 Surface(color = Color(0xEE1A1A1A), modifier = Modifier.fillMaxSize()) {
-                    Column(modifier = Modifier.fillMaxSize().padding(16.dp)) {
+                    Column(modifier = Modifier.fillMaxSize().padding(16.dp).verticalScroll(rememberScrollState())) {
                         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                             AppText("播放设置", color = Color.White, fontSize = 18.sp, fontWeight = FontWeight.Bold)
                             IconButton(onClick = { showSettingsPanel = false }) { Icon(Icons.Default.Close, null, tint = Color.White) }
@@ -1482,9 +1458,43 @@ fun InternalVideoPlayer(
                             Column {
                                 AppText("设置片头片尾", color = Color.White, fontSize = 16.sp, fontWeight = FontWeight.Bold)
                                 Spacer(modifier = Modifier.height(4.dp))
-                                AppText("片头: ${formatTime(introSeconds * 1000L)}  片尾: ${formatTime(outroSeconds * 1000L)}", color = Color.Gray, fontSize = 12.sp)
+                                AppText("片头: ${formatIntroOutro(introSeconds)}  片尾: ${formatIntroOutro(outroSeconds)}", color = Color.Gray, fontSize = 12.sp)
                             }
                             Icon(Icons.Default.KeyboardArrowRight, null, tint = Color.Gray)
+                        }
+
+                        Spacer(modifier = Modifier.height(16.dp))
+                        AppText("音频轨道", color = Color.Gray, fontSize = 14.sp)
+                        audioTracks.forEachIndexed { index, trackGroup ->
+                            val format = trackGroup.getTrackFormat(0)
+                            val label = format.label ?: format.language ?: "音轨 ${index + 1}"
+                            Row(
+                                modifier = Modifier.fillMaxWidth().clickable {
+                                    exoPlayer.trackSelectionParameters = exoPlayer.trackSelectionParameters.buildUpon()
+                                        .setOverrideForType(TrackSelectionOverride(trackGroup.mediaTrackGroup, 0)).build()
+                                    Toast.makeText(context, "已切换至 $label", Toast.LENGTH_SHORT).show()
+                                }.padding(vertical = 12.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                AppText(label, color = Color.White, fontSize = 15.sp, modifier = Modifier.weight(1f))
+                            }
+                        }
+
+                        Spacer(modifier = Modifier.height(16.dp))
+                        AppText("字幕轨道", color = Color.Gray, fontSize = 14.sp)
+                        textTracks.forEachIndexed { index, trackGroup ->
+                            val format = trackGroup.getTrackFormat(0)
+                            val label = format.label ?: format.language ?: "字幕 ${index + 1}"
+                            Row(
+                                modifier = Modifier.fillMaxWidth().clickable {
+                                    exoPlayer.trackSelectionParameters = exoPlayer.trackSelectionParameters.buildUpon()
+                                        .setOverrideForType(TrackSelectionOverride(trackGroup.mediaTrackGroup, 0)).build()
+                                    Toast.makeText(context, "已切换至 $label", Toast.LENGTH_SHORT).show()
+                                }.padding(vertical = 12.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                AppText(label, color = Color.White, fontSize = 15.sp, modifier = Modifier.weight(1f))
+                            }
                         }
                     }
                 }
@@ -1499,10 +1509,10 @@ fun InternalVideoPlayer(
             Column(modifier = Modifier.background(Color(0xFF222222), RoundedCornerShape(8.dp)).padding(16.dp).fillMaxWidth()) {
                 AppText("设置片头片尾", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 18.sp)
                 Spacer(modifier = Modifier.height(16.dp))
-                AppText("片头时长: ${inputIntro.toInt()} 秒", color = Color.White)
+                AppText("片头时长: ${formatIntroOutro(inputIntro.toInt())}", color = Color.White)
                 Slider(value = inputIntro, onValueChange = { inputIntro = it }, valueRange = 0f..300f)
                 Spacer(modifier = Modifier.height(8.dp))
-                AppText("片尾时长: ${inputOutro.toInt()} 秒", color = Color.White)
+                AppText("片尾时长: ${formatIntroOutro(inputOutro.toInt())}", color = Color.White)
                 Slider(value = inputOutro, onValueChange = { inputOutro = it }, valueRange = 0f..300f)
                 Spacer(modifier = Modifier.height(16.dp))
                 Button(
@@ -1586,6 +1596,19 @@ private fun formatTime(ms: Long): String {
     return String.format("%02d:%02d:%02d", hours, minutes, seconds)
 }
 
+// 新的中文时间格式化（X分Y秒）
+private fun formatIntroOutro(seconds: Int): String {
+    if (seconds <= 0) return "0秒"
+    val h = seconds / 3600
+    val m = (seconds % 3600) / 60
+    val s = seconds % 60
+    return buildString {
+        if (h > 0) append("${h}小时")
+        if (m > 0) append("${m}分")
+        if (s > 0 || (h == 0 && m == 0)) append("${s}秒")
+    }
+}
+
 private fun Context.findActivity(): Activity? {
     var context = this
     while (context is android.content.ContextWrapper) {
@@ -1597,11 +1620,26 @@ private fun Context.findActivity(): Activity? {
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-fun SeriesPosterCard(series: MediaSeries, onClick: () -> Unit, onLongClick: () -> Unit) {
+fun SeriesPosterCard(
+    series: MediaSeries, 
+    isScraping: Boolean = false, // 新增：是否正在刮削
+    onClick: () -> Unit, 
+    onLongClick: () -> Unit
+) {
     Column(modifier = Modifier.width(110.dp).combinedClickable(onClick = onClick, onLongClick = onLongClick)) {
         Box(modifier = Modifier.fillMaxWidth().aspectRatio(2f / 3f).clip(RoundedCornerShape(8.dp)).background(Color(0xFFE0E0E0)), contentAlignment = Alignment.Center) {
-            if (series.posterUrl != null) AsyncImage(model = series.posterUrl, contentDescription = null, modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
-            else AppText("长按修正", color = Color.Gray, style = MaterialTheme.typography.bodySmall)
+            if (series.posterUrl != null) {
+                AsyncImage(model = series.posterUrl, contentDescription = null, modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
+            } else {
+                if (isScraping) {
+                    // 新增：刮削中显示加载占位图
+                    Box(modifier = Modifier.fillMaxSize().background(Color(0xFFE0E0E0)), contentAlignment = Alignment.Center) {
+                        CircularProgressIndicator(color = Color.Gray, modifier = Modifier.size(24.dp), strokeWidth = 2.dp)
+                    }
+                } else {
+                    AppText("长按修正", color = Color.Gray, style = MaterialTheme.typography.bodySmall)
+                }
+            }
             if (series.rating != null) {
                 AppText(text = series.rating, color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.ExtraBold, style = TextStyle(shadow = Shadow(color = Color.Black, offset = Offset(1f, 1f), blurRadius = 3f)), modifier = Modifier.align(Alignment.BottomEnd).padding(6.dp))
             }
@@ -1610,9 +1648,7 @@ fun SeriesPosterCard(series: MediaSeries, onClick: () -> Unit, onLongClick: () -
         AppText(
             text = series.title,
             maxLines = 1,
-            modifier = Modifier
-                .padding(top = 4.dp)
-                .basicMarquee(),
+            modifier = Modifier.padding(top = 4.dp).basicMarquee(),
             style = MaterialTheme.typography.bodyMedium
         )
 
