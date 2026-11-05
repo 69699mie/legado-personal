@@ -342,7 +342,8 @@ fun VideoScraperScreen(
                             item {
                                 LazyVerticalGrid(
                                     columns = GridCells.Fixed(3),
-                                    modifier = Modifier.heightIn(max = (items.size / 3 + 1) * 140.dp),
+                                    // 【修复编译报错】Dp * Int
+                                    modifier = Modifier.heightIn(max = 140.dp * (items.size / 3 + 1)),
                                     contentPadding = PaddingValues(horizontal = 16.dp),
                                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                                     verticalArrangement = Arrangement.spacedBy(12.dp)
