@@ -209,8 +209,8 @@ dependencies {
     // ===== 播放器模块 =====
     implementation(libs.media3.exoplayer)
     implementation(libs.media3.datasource.okhttp)
-    implementation("androidx.media3:media3-ui:1.2.1")
-    implementation("androidx.media3:media3-exoplayer-hls:1.2.1")
+    implementation("androidx.media3:media3-ui:1.11.0")
+    implementation("androidx.media3:media3-exoplayer-hls:1.11.0")
     // FFmpeg 扩展已移除（Maven 无可用制品，且许可证合规性待定）
     // =====================
 
