@@ -166,13 +166,18 @@ fun VideoLibraryScreen(
                 LazyColumn(modifier = Modifier.fillMaxSize(), contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     items(uiState.fileList) { file ->
                         Row(
-                            modifier = Modifier.fillMaxWidth().clickable(enabled = file.isFolder) { if (file.isFolder) viewModel.fetchQuarkFiles(file.fid) }.padding(vertical = 12.dp),
+                            modifier = Modifier.fillMaxWidth().clickable(enabled = file.isFolder) { 
+                                if (file.isFolder) viewModel.fetchQuarkFiles(file.fid, folderName = file.name) 
+                            }.padding(vertical = 12.dp),
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             Icon(if (file.isFolder) Icons.Default.Folder else Icons.Default.Movie, null, tint = if (file.isFolder) Color(0xFFFFB300) else Color.Gray)
                             Column(modifier = Modifier.padding(start = 12.dp).weight(1f)) { AppText(text = file.name, maxLines = 1, overflow = TextOverflow.Ellipsis) }
                             if (file.isFolder) {
-                                IconButton(onClick = { viewModel.toggleLibrary(file.fid, file.name) }) {
+                                IconButton(onClick = { 
+                                    val fullPath = (viewModel.browsePath + file.name).joinToString("/")
+                                    viewModel.toggleLibrary(file.fid, fullPath) 
+                                }) {
                                     Icon(if (uiState.selectedLibraryFids.contains(file.fid)) Icons.Default.Star else Icons.Outlined.StarBorder, "加入影视库",
                                         tint = if (uiState.selectedLibraryFids.contains(file.fid)) Color(0xFFFFB300) else Color.Gray)
                                 }
@@ -1850,7 +1855,7 @@ fun MediaDetailScreen(
                 AppText(text = "文件信息", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
                 series.videos.firstOrNull()?.let { firstFile ->
                     AppText(text = firstFile.name, style = MaterialTheme.typography.bodySmall, color = Color.Gray, modifier = Modifier.padding(top = 8.dp))
-                    val pathStr = firstFile.folderPath.joinToString(" / ")
+                    val pathStr = firstFile.folderPath.joinToString("/")
                     AppText(text = "夸克网盘: /$pathStr", style = MaterialTheme.typography.bodySmall, color = Color.Gray, modifier = Modifier.padding(top = 4.dp))
                     val sizeMb = firstFile.size / (1024 * 1024)
                     AppText(text = "共 ${series.videos.size} 集 | ${sizeMb}MB (单集)", style = MaterialTheme.typography.bodySmall, color = Color.Gray, modifier = Modifier.padding(top = 4.dp))
