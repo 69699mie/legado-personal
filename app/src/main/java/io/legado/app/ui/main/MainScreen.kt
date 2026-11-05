@@ -68,7 +68,7 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp // 【关键修复】补充了 sp 的导入
+import androidx.compose.ui.unit.sp // 【已修复】补充了 sp 的导入
 import androidx.core.net.toUri
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
@@ -187,7 +187,6 @@ fun MainScreen(
     val videoViewModel: VideoScraperViewModel = koinViewModel()
     val videoSettingsRepository = koinInject<VideoSettingsRepository>()
     
-    // 监听播放状态，用于控制底部导航栏的显示/隐藏
     val videoUiState by videoViewModel.uiState.collectAsStateWithLifecycle()
     val isVideoPlaying = videoUiState.playUrl != null || videoUiState.currentPlayFile != null || videoUiState.isDirectPlay
 
@@ -294,7 +293,6 @@ fun MainScreen(
             WideNavigationRailValue.Collapsed
     )
 
-    // 最外层包裹一个 Box，用于放置全局播放器和黑屏
     Box(modifier = Modifier.fillMaxSize()) {
         Row(modifier = Modifier.fillMaxSize()) {
             if (useRail && mainUiState.showBottomView && !isVideoPlaying) {
@@ -555,7 +553,6 @@ fun MainScreen(
                                         if (book.bookUrl.startsWith("hiker://video")) {
                                             val fid = book.bookUrl.substringAfter("fid=").substringBefore("&")
                                             videoSettingsRepository.pendingPlayFid = fid
-                                            // 直接调用，不切Tab
                                             videoViewModel.handlePendingPlayRequest()
                                         } else {
                                             context.startActivityForBook(book)
@@ -608,10 +605,8 @@ fun MainScreen(
                                     animatedVisibilityScope = animatedVisibilityScope,
                                 )
 
-                                    // 资源库
                                     MainDestination.Explore -> VideoLibraryScreen()
 
-                                    // 影视库 (去掉内部播放器逻辑，只负责列表)
                                     MainDestination.Video -> VideoScraperScreen(
                                         isActive = page == pagerState.currentPage
                                     )
@@ -783,11 +778,7 @@ fun MainScreen(
             }
         }
 
-        // ================================
-        // 3. 全局播放器与加载遮罩
-        // ================================
-        
-        // 如果是直链还在加载，全屏黑屏挡住一切（包括底栏）
+        // 全局播放器与加载遮罩
         if (isVideoPlaying && videoUiState.playUrl == null && videoUiState.currentPlayFile != null) {
             Box(modifier = Modifier.fillMaxSize().background(Color.Black), contentAlignment = Alignment.Center) {
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
@@ -798,7 +789,6 @@ fun MainScreen(
             }
         }
 
-        // 直链有了，全局挂载全屏播放器
         if (videoUiState.playUrl != null && videoUiState.currentSeries != null && videoUiState.currentPlayFile != null) {
             InternalVideoPlayer(
                 url = videoUiState.playUrl!!,
