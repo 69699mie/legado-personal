@@ -365,7 +365,7 @@ fun VideoScraperScreen(
                 LazyVerticalGrid(
                     columns = GridCells.Fixed(3),
                     modifier = Modifier.fillMaxSize(),
-                    contentPadding = PaddingValues(horizontal = 16.dp, bottom = 16.dp),
+                    contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = 16.dp), // 【修复编译报错】
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                     verticalArrangement = Arrangement.spacedBy(16.dp)
                 ) {
@@ -426,8 +426,9 @@ fun VideoScraperScreen(
                         fontWeight = FontWeight.Bold,
                         modifier = Modifier.weight(1f).padding(start = 16.dp)
                     )
+                    // 设置按钮
                     IconButton(onClick = { showSettingsDialog = true }) { Icon(Icons.Default.Settings, contentDescription = "设置") }
-                    // 将刷新按钮放在设置的右侧
+                    // 刷新按钮（放在了设置的右侧）
                     IconButton(onClick = { viewModel.loadLibraryVideos() }, enabled = !uiState.isLoading) {
                         Icon(Icons.Default.Refresh, contentDescription = "刷新", tint = if (uiState.isLoading) Color.Gray else Color.Black)
                     }
