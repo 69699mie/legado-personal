@@ -129,7 +129,8 @@ class VideoScraperViewModel(
                 selectedLibraryFids = fids,
                 isLibraryMode = true,
                 downloadThreads = videoSettingsRepository.proxyThreads,
-                bannerLogic = videoSettingsRepository.bannerLogic
+                bannerLogic = videoSettingsRepository.bannerLogic,
+                categoryOrder = videoSettingsRepository.categoryOrder // 读取分类顺序
             )
         }
 
@@ -288,6 +289,12 @@ class VideoScraperViewModel(
     fun saveBannerLogic(logic: String) {
         videoSettingsRepository.bannerLogic = logic
         _uiState.update { it.copy(bannerLogic = logic) }
+    }
+
+    // 保存分类顺序
+    fun saveCategoryOrder(order: String) {
+        videoSettingsRepository.categoryOrder = order
+        _uiState.update { it.copy(categoryOrder = order) }
     }
 
     fun saveDownloadThreads(count: Int) {
@@ -890,16 +897,16 @@ class VideoScraperViewModel(
             val newList = mutableListOf<JSONObject>()
             for (i in 0 until jsonArray.length()) {
                 val obj = jsonArray.getJSONObject(i)
-                // 去重：根据影视剧名剔除旧的历史记录，保持同一部剧只出现一次
+                // 去重：根据影视剧名剔除旧的历史记录
                 if (obj.optString("seriesTitle") != series.title) {
                     newList.add(obj)
                 }
             }
             val newObj = JSONObject().apply {
                 put("fid", file.fid)
-                put("title", titleText) // 详细名称（狂飙 第2集）
-                put("seriesTitle", series.title) // 影视名称（狂飙）
-                put("coverPath", series.posterUrl ?: "") // 使用竖屏海报
+                put("title", titleText)
+                put("seriesTitle", series.title)
+                put("coverPath", series.posterUrl ?: "")
                 put("timestamp", System.currentTimeMillis())
             }
             newList.add(0, newObj)
@@ -1206,5 +1213,6 @@ data class VideoUiState(
     val currentPlayFile: QuarkFile? = null,
     val downloadThreads: Int = 6,
     val isDirectPlay: Boolean = false,
-    val bannerLogic: String = "智能推荐"
+    val bannerLogic: String = "智能推荐",
+    val categoryOrder: String = "最近观看,剧集,电影,动漫"
 )
