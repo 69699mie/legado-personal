@@ -60,6 +60,8 @@ import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.pager.HorizontalPager
+import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -122,11 +124,21 @@ import io.legado.app.data.repository.VideoSettingsRepository
 import io.legado.app.ui.widget.components.text.AppText
 import kotlinx.coroutines.delay
 import okhttp3.OkHttpClient
+import org.json.JSONArray
 import org.koin.androidx.compose.koinViewModel
 import org.koin.compose.koinInject
 import java.util.Locale
 import java.util.concurrent.TimeUnit
 import kotlin.math.roundToInt
+
+// 用于解析最近观看的历史记录
+data class RecentWatchedItem(
+    val fid: String,
+    val title: String,
+    val seriesTitle: String,
+    val coverPath: String,
+    val timestamp: Long
+)
 
 // ==========================================
 // 1. 资源库独立页面
@@ -229,8 +241,30 @@ fun VideoScraperScreen(
     var showWebLoginDialog by remember { mutableStateOf(false) }
     var showLoginConfirmDialog by remember { mutableStateOf(false) }
     var showManualScrapeDialog by remember { mutableStateOf(false) }
+    var showAllRecentDialog by remember { mutableStateOf(false) }
     var manualScrapeSeries by remember { mutableStateOf<MediaSeries?>(null) }
     var viewAllCategory by remember { mutableStateOf<String?>(null) }
+
+    // 解析最近观看数据
+    val recentWatchedList = remember(uiState.seriesList, videoSettingsRepository.recentWatchedVideos) {
+        val list = mutableListOf<RecentWatchedItem>()
+        try {
+            val jsonArray = JSONArray(videoSettingsRepository.recentWatchedVideos)
+            for (i in 0 until jsonArray.length()) {
+                val obj = jsonArray.getJSONObject(i)
+                list.add(
+                    RecentWatchedItem(
+                        fid = obj.optString("fid"),
+                        title = obj.optString("title"),
+                        seriesTitle = obj.optString("seriesTitle"),
+                        coverPath = obj.optString("coverPath"),
+                        timestamp = obj.optLong("timestamp")
+                    )
+                )
+            }
+        } catch (e: Exception) {}
+        list
+    }
 
     BackHandler(enabled = uiState.currentSeries != null || viewAllCategory != null) {
         if (uiState.currentSeries != null) viewModel.selectSeries(null)
@@ -238,7 +272,6 @@ fun VideoScraperScreen(
     }
 
     Box(modifier = Modifier.fillMaxSize()) {
-        // 正常内容渲染
         if (uiState.currentSeries != null) {
             MediaDetailScreen(
                 series = uiState.currentSeries!!,
@@ -296,8 +329,52 @@ fun VideoScraperScreen(
                         } else if (uiState.seriesList.isEmpty() && !uiState.isLoading) {
                             Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { AppText("没找到任何视频，下拉可刷新") }
                         } else {
-                            val grouped = uiState.seriesList.groupBy { it.category }
                             LazyColumn(modifier = Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 16.dp)) {
+                                // === 顶部轮播海报 ===
+                                item {
+                                    val bannerList = remember(uiState.seriesList, uiState.bannerLogic) {
+                                        val list = uiState.seriesList.filter { it.posterUrl != null }
+                                        when (uiState.bannerLogic) {
+                                            "最近播放" -> list.sortedByDescending { s -> 
+                                                recentWatchedList.find { it.fid == s.videos.firstOrNull()?.fid }?.timestamp ?: 0L 
+                                            }
+                                            "最近新增" -> list // 默认加载顺序就是扫描到的顺序
+                                            else -> list.shuffled() // 智能推荐
+                                        }.take(10)
+                                    }
+                                    if (bannerList.isNotEmpty()) {
+                                        BannerCarousel(bannerList, onSelect = { viewModel.selectSeries(it) })
+                                    }
+                                }
+
+                                // === 最近观看 ===
+                                if (recentWatchedList.isNotEmpty()) {
+                                    item {
+                                        Row(modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                                            AppText(text = "最近观看", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                                            AppText(text = "全部 ${recentWatchedList.size} >", style = MaterialTheme.typography.bodySmall, color = Color.Gray, modifier = Modifier.clickable { showAllRecentDialog = true })
+                                        }
+                                    }
+                                    item {
+                                        LazyRow(contentPadding = PaddingValues(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                                            items(recentWatchedList.take(10)) { item ->
+                                                RecentWatchedCard(item = item, onClick = {
+                                                    // 尝试在已加载的 seriesList 中找到对应的 series 和 file
+                                                    val series = uiState.seriesList.find { s -> s.videos.any { it.fid == item.fid } }
+                                                    val file = series?.videos?.find { it.fid == item.fid }
+                                                    if (series != null && file != null) {
+                                                        viewModel.playVideo(context, series, file)
+                                                    } else {
+                                                        Toast.makeText(context, "数据加载中或文件已失效，请进入详情页", Toast.LENGTH_SHORT).show()
+                                                    }
+                                                })
+                                            }
+                                        }
+                                    }
+                                }
+
+                                // === 分类列表 ===
+                                val grouped = uiState.seriesList.groupBy { it.category }
                                 grouped.forEach { (categoryName, seriesList) ->
                                     if (seriesList.isNotEmpty()) {
                                         item {
@@ -327,7 +404,7 @@ fun VideoScraperScreen(
             }
         }
 
-        // 底部全局刷新/刮削悬浮提示（修改为白底黑字，透明背景）
+        // 底部全局刷新/刮削悬浮提示（纯白半透明，无绿色图标）
         if (uiState.isLoading || uiState.isScraping) {
             val isVideoPlaying = uiState.playUrl != null || uiState.currentPlayFile != null || uiState.isDirectPlay
             if (!isVideoPlaying) {
@@ -336,7 +413,7 @@ fun VideoScraperScreen(
                         .align(Alignment.BottomCenter)
                         .padding(bottom = 100.dp)
                         .background(
-                            color = Color.White.copy(alpha = 0.92f),
+                            color = Color.White.copy(alpha = 0.95f),
                             shape = RoundedCornerShape(24.dp)
                         )
                         .border(
@@ -344,7 +421,7 @@ fun VideoScraperScreen(
                             color = Color.Gray.copy(alpha = 0.2f),
                             shape = RoundedCornerShape(24.dp)
                         )
-                        .padding(horizontal = 20.dp, vertical = 10.dp)
+                        .padding(horizontal = 24.dp, vertical = 12.dp)
                 ) {
                     AnimatedLoadingDots(
                         color = Color.Black, 
@@ -408,6 +485,121 @@ fun VideoScraperScreen(
     if (showManualScrapeDialog && manualScrapeSeries != null) {
         ManualScrapeDialog(series = manualScrapeSeries!!, viewModel = viewModel, onDismiss = { showManualScrapeDialog = false })
     }
+
+    // 全部历史记录弹窗
+    if (showAllRecentDialog) {
+        Dialog(onDismissRequest = { showAllRecentDialog = false }) {
+            Surface(shape = RoundedCornerShape(16.dp), color = Color.White, modifier = Modifier.fillMaxWidth().heightIn(max = 600.dp)) {
+                Column(modifier = Modifier.padding(16.dp)) {
+                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                        AppText("全部历史记录", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+                        IconButton(onClick = { showAllRecentDialog = false }) { Icon(Icons.Default.Close, null) }
+                    }
+                    Spacer(modifier = Modifier.height(12.dp))
+                    LazyVerticalGrid(columns = GridCells.Fixed(3), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                        items(recentWatchedList) { item ->
+                            RecentWatchedCard(item = item, isGrid = true, onClick = {
+                                val series = uiState.seriesList.find { s -> s.videos.any { it.fid == item.fid } }
+                                val file = series?.videos?.find { it.fid == item.fid }
+                                if (series != null && file != null) {
+                                    viewModel.playVideo(context, series, file)
+                                    showAllRecentDialog = false
+                                } else {
+                                    Toast.makeText(context, "数据加载中或文件已失效", Toast.LENGTH_SHORT).show()
+                                }
+                            })
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+fun BannerCarousel(seriesList: List<MediaSeries>, onSelect: (MediaSeries) -> Unit) {
+    val pagerState = rememberPagerState(pageCount = { seriesList.size })
+    
+    // 自动轮播效果
+    LaunchedEffect(pagerState) {
+        while (true) {
+            delay(4000)
+            val nextPage = (pagerState.currentPage + 1) % seriesList.size
+            pagerState.animateScrollToPage(nextPage)
+        }
+    }
+
+    Box(modifier = Modifier.fillMaxWidth().height(200.dp).padding(bottom = 12.dp)) {
+        HorizontalPager(state = pagerState, contentPadding = PaddingValues(horizontal = 16.dp), pageSpacing = 8.dp) { page ->
+            val series = seriesList[page]
+            Box(modifier = Modifier.fillMaxSize().clip(RoundedCornerShape(12.dp)).clickable { onSelect(series) }) {
+                AsyncImage(
+                    model = series.posterUrl,
+                    contentDescription = null,
+                    modifier = Modifier.fillMaxSize(),
+                    contentScale = ContentScale.Crop
+                )
+                // 底部渐变遮罩
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .background(Brush.verticalGradient(listOf(Color.Transparent, Color.Black.copy(alpha = 0.8f)), startY = 200f, endY = 600f))
+                )
+                Column(modifier = Modifier.align(Alignment.BottomStart).padding(16.dp)) {
+                    AppText(text = series.title, color = Color.White, fontSize = 20.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    val infoText = listOfNotNull(series.year?.toString(), series.category, series.rating?.let { "⭐$it" }).joinToString(" | ")
+                    if (infoText.isNotBlank()) {
+                        AppText(text = infoText, color = Color.LightGray, fontSize = 12.sp, modifier = Modifier.padding(top = 4.dp))
+                    }
+                }
+            }
+        }
+        
+        // 指示器
+        Row(
+            Modifier.align(Alignment.BottomCenter).padding(bottom = 16.dp),
+            horizontalArrangement = Arrangement.Center
+        ) {
+            repeat(seriesList.size) { iteration ->
+                val color = if (pagerState.currentPage == iteration) Color.White else Color.White.copy(alpha = 0.5f)
+                Box(
+                    modifier = Modifier
+                        .padding(2.dp)
+                        .clip(CircleShape)
+                        .background(color)
+                        .size(6.dp)
+                )
+            }
+        }
+    }
+}
+
+@Composable
+fun RecentWatchedCard(item: RecentWatchedItem, isGrid: Boolean = false, onClick: () -> Unit) {
+    Column(modifier = if (isGrid) Modifier.fillMaxWidth() else Modifier.width(120.dp).clickable { onClick() }) {
+        if (isGrid) {
+            Box(modifier = Modifier.fillMaxWidth().clickable { onClick() }) {
+                Box(modifier = Modifier.fillMaxWidth().aspectRatio(16f / 9f).clip(RoundedCornerShape(8.dp)).background(Color.DarkGray), contentAlignment = Alignment.Center) {
+                    if (item.coverPath.isNotEmpty()) {
+                        AsyncImage(model = item.coverPath, contentDescription = null, modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
+                    } else {
+                        Icon(Icons.Default.Movie, null, tint = Color.LightGray)
+                    }
+                }
+                AppText(text = item.title, style = MaterialTheme.typography.bodySmall, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.align(Alignment.BottomStart).background(Color.Black.copy(alpha = 0.6f), RoundedCornerShape(4.dp)).padding(horizontal = 4.dp, vertical = 2.dp), color = Color.White, fontSize = 10.sp)
+            }
+        } else {
+            Box(modifier = Modifier.fillMaxWidth().aspectRatio(16f / 9f).clip(RoundedCornerShape(8.dp)).background(Color.DarkGray), contentAlignment = Alignment.Center) {
+                if (item.coverPath.isNotEmpty()) {
+                    AsyncImage(model = item.coverPath, contentDescription = null, modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
+                } else {
+                    Icon(Icons.Default.Movie, null, tint = Color.LightGray)
+                }
+            }
+            AppText(text = item.title, style = MaterialTheme.typography.bodySmall, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 4.dp))
+        }
+    }
 }
 
 // ==========================================
@@ -428,6 +620,7 @@ private fun SettingsDialog(
     var isTmdbKeyVisible by remember { mutableStateOf(false) }
     
     var showThreadSelection by remember { mutableStateOf(false) }
+    var showBannerLogicSelection by remember { mutableStateOf(false) }
 
     Dialog(onDismissRequest = onDismiss) {
         Surface(
@@ -509,6 +702,18 @@ private fun SettingsDialog(
                     }
                 }
 
+                Row(
+                    modifier = Modifier.fillMaxWidth().clickable { showBannerLogicSelection = true }.padding(vertical = 8.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    AppText("首页轮播海报显示逻辑")
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        AppText(uiState.bannerLogic, color = Color.Gray)
+                        Icon(Icons.Default.KeyboardArrowRight, null, tint = Color.Gray)
+                    }
+                }
+
                 OutlinedButton(
                     onClick = {
                         viewModel.saveSettings(inputCookie, inputTmdbKey, inputTmdbUrl)
@@ -550,6 +755,35 @@ private fun SettingsDialog(
             },
             confirmButton = {
                 TextButton(onClick = { showThreadSelection = false }) { AppText("取消") }
+            }
+        )
+    }
+
+    if (showBannerLogicSelection) {
+        AlertDialog(
+            onDismissRequest = { showBannerLogicSelection = false },
+            title = { AppText("首页轮播海报显示逻辑", fontWeight = FontWeight.Bold) },
+            text = {
+                Column {
+                    val options = listOf("智能推荐", "最近新增", "最近播放")
+                    options.forEach { logic ->
+                        Row(
+                            modifier = Modifier.fillMaxWidth().clickable {
+                                viewModel.saveBannerLogic(logic)
+                                showBannerLogicSelection = false
+                            }.padding(vertical = 12.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            AppText(logic, modifier = Modifier.weight(1f))
+                            if (uiState.bannerLogic == logic) {
+                                Icon(Icons.Default.Check, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+                            }
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { showBannerLogicSelection = false }) { AppText("取消") }
             }
         )
     }
@@ -872,13 +1106,10 @@ fun InternalVideoPlayer(
             }
     }
 
-    // ==========================================
-    // 【修复 1】监听生命周期，处理小窗关闭和后台播放问题
-    // ==========================================
+    // 监听生命周期，处理小窗关闭和后台播放问题
     DisposableEffect(lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event ->
             if (event == Lifecycle.Event.ON_STOP) {
-                // 如果退到后台，并且当前不在画中画模式，则强制暂停
                 if (activity?.isInPictureInPictureMode != true) {
                     exoPlayer.pause()
                 }
@@ -899,9 +1130,7 @@ fun InternalVideoPlayer(
         onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
     }
 
-    // ==========================================
-    // 【修复 2】动态注册广播接收器，处理小窗原生按钮点击
-    // ==========================================
+    // 动态注册广播接收器，处理小窗原生按钮点击
     val pipActionReceiver = remember {
         object : BroadcastReceiver() {
             override fun onReceive(ctx: Context?, intent: Intent?) {
@@ -1191,8 +1420,7 @@ fun InternalVideoPlayer(
 
         if (isInPip.value) {
             Box(modifier = Modifier.fillMaxSize()) {
-                // 为了保持代码整洁，移除了此处无效的 Compose UI 控制面板。
-                // 实际的控制按钮已通过系统级 RemoteAction 注册，在系统层显示。
+                // 移除了网速显示，系统级按钮已在进入时注入
             }
             return@Box
         }
@@ -1260,9 +1488,7 @@ fun InternalVideoPlayer(
                         IconButton(onClick = {
                             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                                 try {
-                                    // ==========================================
-                                    // 【修复 3】进入画中画前注册系统级 RemoteAction 按钮
-                                    // ==========================================
+                                    // 注入系统级 PiP 按钮
                                     val prevIntent = Intent("ACTION_PIP_PREV").setPackage(context.packageName)
                                     val prevPendingIntent = PendingIntent.getBroadcast(context, 1, prevIntent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
                                     val prevAction = RemoteAction(
@@ -1531,7 +1757,13 @@ fun InternalVideoPlayer(
                                 val e = file.parsedInfo?.episode
                                 val s = file.parsedInfo?.season ?: 1
                                 val tmdbTitle = if (e != null) series.seasonEpisodeTitles["${s}_${e}"] ?: series.episodeTitles[e] else null
-                                val label = if (e != null) "第${e}集" + if (!tmdbTitle.isNullOrBlank()) " $tmdbTitle" else "" else (file.folderPath.lastOrNull() ?: file.name.substringBeforeLast("."))
+                                // 修复电影不显示集数
+                                val label = if (e != null && series.category != "电影" && series.videos.size > 1) {
+                                    "第${e}集" + if (!tmdbTitle.isNullOrBlank()) " $tmdbTitle" else ""
+                                } else {
+                                    if (series.videos.size == 1) series.title else (file.folderPath.lastOrNull() ?: file.name.substringBeforeLast("."))
+                                }
+                                
                                 val isCurrent = file.fid == currentFile.fid
                                 AppText(
                                     text = label,
@@ -1777,8 +2009,13 @@ fun SeriesPosterCard(
         )
 
         val seasons = series.videos.mapNotNull { it.parsedInfo?.season }.distinct().size
-        if (seasons > 1) AppText(text = "共 $seasons 季", color = Color.Gray, style = MaterialTheme.typography.bodySmall)
-        else AppText(text = "共 1 季", color = Color.Gray, style = MaterialTheme.typography.bodySmall)
+        if (series.videos.size == 1 || series.category == "电影") {
+            AppText(text = series.year?.toString() ?: "电影", color = Color.Gray, style = MaterialTheme.typography.bodySmall)
+        } else if (seasons > 1) {
+            AppText(text = "共 $seasons 季", color = Color.Gray, style = MaterialTheme.typography.bodySmall)
+        } else {
+            AppText(text = "共 1 季", color = Color.Gray, style = MaterialTheme.typography.bodySmall)
+        }
     }
 }
 
@@ -1814,7 +2051,7 @@ fun MediaDetailScreen(
 
     val playBtnText = if (targetPlayFile != null && viewModel.getVideoProgress(targetPlayFile.fid) > 0) {
         val ep = targetPlayFile.parsedInfo?.episode
-        if (ep != null) "继续播放 第${ep}集" else "继续播放"
+        if (ep != null && series.category != "电影" && series.videos.size > 1) "继续播放 第${ep}集" else "继续播放"
     } else {
         "播放"
     }
@@ -1875,7 +2112,12 @@ fun MediaDetailScreen(
                     val tmdbTitle = if (e != null) series.seasonEpisodeTitles["${s}_${e}"] ?: series.episodeTitles[e] else null
                     val stillUrl = if (e != null) series.seasonEpisodeStills["${s}_${e}"] ?: series.episodeStills[e] else null
                     
-                    val label = if (e != null) "第${e}集" + if (!tmdbTitle.isNullOrBlank()) " $tmdbTitle" else "" else (file.folderPath.lastOrNull() ?: file.name.substringBeforeLast("."))
+                    // 修复电影不显示集数
+                    val label = if (e != null && series.category != "电影" && series.videos.size > 1) {
+                        "第${e}集" + if (!tmdbTitle.isNullOrBlank()) " $tmdbTitle" else ""
+                    } else {
+                        if (series.videos.size == 1) series.title else (file.folderPath.lastOrNull() ?: file.name.substringBeforeLast("."))
+                    }
                     
                     Column(modifier = Modifier.width(160.dp).clickable { onPlay(series, file) }) {
                         Box(modifier = Modifier.fillMaxWidth().aspectRatio(16f / 9f).clip(RoundedCornerShape(8.dp)).background(Color.DarkGray), contentAlignment = Alignment.Center) {
