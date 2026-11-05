@@ -100,7 +100,6 @@ class VideoScraperViewModel(
     private val scrapedCache = mutableMapOf<String, ScrapeCacheItem>()
 
     init {
-        // 1. 优先加载缓存，实现秒开
         loadScrapedCache()
         val savedLibs = videoSettingsRepository.libraryFids.split(",").filter { it.isNotBlank() }
         val fids = mutableSetOf<String>()
@@ -113,7 +112,6 @@ class VideoScraperViewModel(
             }
         }
         
-        // 初始化基础状态
         _uiState.update {
             it.copy(
                 cookie = videoSettingsRepository.quarkCookie,
@@ -125,7 +123,6 @@ class VideoScraperViewModel(
             )
         }
 
-        // 2. 立即用缓存数据渲染界面（如果缓存里有的话）
         val cachedSeries = scrapedCache.map { (id, cached) ->
             MediaSeries(
                 id = id,
@@ -142,14 +139,13 @@ class VideoScraperViewModel(
                 seasonEpisodeTitles = cached.seasonEpisodeTitles,
                 seasonEpisodeStills = cached.seasonEpisodeStills,
                 groupName = cached.groupName,
-                videos = emptyList() // 暂时没有文件列表，等网络请求回来再补充
+                videos = emptyList()
             )
         }
         if (cachedSeries.isNotEmpty()) {
             _uiState.update { it.copy(seriesList = cachedSeries) }
         }
 
-        // 3. 后台静默扫描网盘
         fetchQuarkFiles("0")
         if (fids.isNotEmpty()) loadLibraryVideos()
     }
@@ -160,7 +156,6 @@ class VideoScraperViewModel(
             if (jsonStr.isNotBlank()) {
                 val jsonObj = JSONObject(jsonStr)
                 for (key in jsonObj.keys()) {
-                    // 【关键修复】将 try-catch 放入循环内，防止一条数据损坏导致整个缓存作废
                     try {
                         val itemObj = jsonObj.getJSONObject(key)
                         
@@ -210,7 +205,7 @@ class VideoScraperViewModel(
                             groupName = itemObj.optString("groupName").takeIf { it.isNotBlank() && it != "null" }
                         )
                     } catch (e: Exception) {
-                        e.printStackTrace() // 忽略损坏的单条数据，继续加载下一条
+                        e.printStackTrace()
                     }
                 }
             }
@@ -351,7 +346,6 @@ class VideoScraperViewModel(
 
                         if (currentMaxEp > cachedMaxEp) {
                             needScrapeList.add(series)
-                            // 结合新旧数据
                             series.copy(
                                 title = cached.title,
                                 category = cached.category,
@@ -394,6 +388,10 @@ class VideoScraperViewModel(
                     hasLoadedLibrary = true
                     _uiState.update { it.copy(isLoading = false, isScraping = false) }
                 }
+
+                // 【新增】网盘加载完成后，检查是否有因为冷启动挂起的播放请求
+                handlePendingPlayRequest()
+
             } catch (e: Exception) {
                 _uiState.update { it.copy(isLoading = false, isScraping = false, errorMsg = "扫描异常: ${e.message}") }
             }
@@ -625,6 +623,8 @@ class VideoScraperViewModel(
                 }
                 hasLoadedLibrary = true
                 _uiState.update { it.copy(isLoading = false, isScraping = false, seriesList = currentList) }
+                
+                handlePendingPlayRequest()
             }
         }
     }
@@ -866,11 +866,12 @@ class VideoScraperViewModel(
 
     fun handlePendingPlayRequest() {
         val fid = videoSettingsRepository.pendingPlayFid ?: return
-        videoSettingsRepository.pendingPlayFid = null
         
         val series = _uiState.value.seriesList.find { it.videos.any { v -> v.fid == fid } }
         val file = series?.videos?.find { it.fid == fid }
+        
         if (series != null && file != null) {
+            videoSettingsRepository.pendingPlayFid = null // 找到了，消费掉
             val epNum = file.parsedInfo?.episode
             val season = file.parsedInfo?.season ?: 1
             val titleText = if (epNum != null) {
@@ -879,7 +880,6 @@ class VideoScraperViewModel(
                 else "${series.title} 第${epNum}集"
             } else { file.name }
 
-            // 【关键修复】设置 isDirectPlay = true，直接阻断 UI 渲染详情页
             _uiState.update { it.copy(playUrl = null, playTitle = titleText, currentSeries = series, currentPlayFile = file, isDirectPlay = true) }
             
             viewModelScope.launch {
