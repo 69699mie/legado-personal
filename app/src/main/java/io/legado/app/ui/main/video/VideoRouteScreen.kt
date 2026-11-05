@@ -60,6 +60,7 @@ import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.rememberScrollState
@@ -244,6 +245,9 @@ fun VideoScraperScreen(
     var showAllRecentDialog by remember { mutableStateOf(false) }
     var manualScrapeSeries by remember { mutableStateOf<MediaSeries?>(null) }
     var viewAllCategory by remember { mutableStateOf<String?>(null) }
+    
+    // 用于清空历史记录确认
+    var showClearHistoryConfirm by remember { mutableStateOf(false) }
 
     // 解析最近观看数据
     val recentWatchedList = remember(uiState.seriesList, videoSettingsRepository.recentWatchedVideos) {
@@ -338,8 +342,8 @@ fun VideoScraperScreen(
                                             "最近播放" -> list.sortedByDescending { s -> 
                                                 recentWatchedList.find { it.fid == s.videos.firstOrNull()?.fid }?.timestamp ?: 0L 
                                             }
-                                            "最近新增" -> list // 默认加载顺序就是扫描到的顺序
-                                            else -> list.shuffled() // 智能推荐
+                                            "最近新增" -> list
+                                            else -> list.shuffled() 
                                         }.take(10)
                                     }
                                     if (bannerList.isNotEmpty()) {
@@ -359,13 +363,24 @@ fun VideoScraperScreen(
                                         LazyRow(contentPadding = PaddingValues(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                                             items(recentWatchedList.take(10)) { item ->
                                                 RecentWatchedCard(item = item, onClick = {
-                                                    // 尝试在已加载的 seriesList 中找到对应的 series 和 file
+                                                    // 【优化】秒播逻辑：优先找匹配的，找不到造个临时的直接播
                                                     val series = uiState.seriesList.find { s -> s.videos.any { it.fid == item.fid } }
                                                     val file = series?.videos?.find { it.fid == item.fid }
                                                     if (series != null && file != null) {
                                                         viewModel.playVideo(context, series, file)
                                                     } else {
-                                                        Toast.makeText(context, "数据加载中或文件已失效，请进入详情页", Toast.LENGTH_SHORT).show()
+                                                        // 构造临时数据秒播
+                                                        val tempFile = QuarkFile(item.fid, item.title, false)
+                                                        val tempSeries = MediaSeries(
+                                                            id = "temp_${item.fid}",
+                                                            title = item.seriesTitle,
+                                                            originalParsedTitle = item.seriesTitle,
+                                                            year = null,
+                                                            category = "未分类",
+                                                            posterUrl = item.coverPath.ifBlank { null },
+                                                            videos = listOf(tempFile)
+                                                        )
+                                                        viewModel.playVideo(context, tempSeries, tempFile)
                                                     }
                                                 })
                                             }
@@ -404,7 +419,7 @@ fun VideoScraperScreen(
             }
         }
 
-        // 底部全局刷新/刮削悬浮提示（纯白半透明，无绿色图标）
+        // 底部全局刷新/刮削悬浮提示
         if (uiState.isLoading || uiState.isScraping) {
             val isVideoPlaying = uiState.playUrl != null || uiState.currentPlayFile != null || uiState.isDirectPlay
             if (!isVideoPlaying) {
@@ -493,7 +508,12 @@ fun VideoScraperScreen(
                 Column(modifier = Modifier.padding(16.dp)) {
                     Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                         AppText("全部历史记录", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
-                        IconButton(onClick = { showAllRecentDialog = false }) { Icon(Icons.Default.Close, null) }
+                        Row {
+                            IconButton(onClick = { showClearHistoryConfirm = true }) {
+                                Icon(Icons.Default.Delete, contentDescription = "清空", tint = Color.Red)
+                            }
+                            IconButton(onClick = { showAllRecentDialog = false }) { Icon(Icons.Default.Close, null) }
+                        }
                     }
                     Spacer(modifier = Modifier.height(12.dp))
                     LazyVerticalGrid(columns = GridCells.Fixed(3), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -505,7 +525,18 @@ fun VideoScraperScreen(
                                     viewModel.playVideo(context, series, file)
                                     showAllRecentDialog = false
                                 } else {
-                                    Toast.makeText(context, "数据加载中或文件已失效", Toast.LENGTH_SHORT).show()
+                                    val tempFile = QuarkFile(item.fid, item.title, false)
+                                    val tempSeries = MediaSeries(
+                                        id = "temp_${item.fid}",
+                                        title = item.seriesTitle,
+                                        originalParsedTitle = item.seriesTitle,
+                                        year = null,
+                                        category = "未分类",
+                                        posterUrl = item.coverPath.ifBlank { null },
+                                        videos = listOf(tempFile)
+                                    )
+                                    viewModel.playVideo(context, tempSeries, tempFile)
+                                    showAllRecentDialog = false
                                 }
                             })
                         }
@@ -514,6 +545,24 @@ fun VideoScraperScreen(
             }
         }
     }
+
+    // 清空历史确认框
+    if (showClearHistoryConfirm) {
+        AlertDialog(
+            onDismissRequest = { showClearHistoryConfirm = false },
+            title = { AppText("清空历史记录", fontWeight = FontWeight.Bold) },
+            text = { AppText("确定要清空所有历史观看记录吗？此操作不可恢复。") },
+            confirmButton = {
+                TextButton(onClick = {
+                    viewModel.clearRecentWatched()
+                    showClearHistoryConfirm = false
+                }) { AppText("清空", color = Color.Red) }
+            },
+            dismissButton = {
+                TextButton(onClick = { showClearHistoryConfirm = false }) { AppText("取消", color = Color.Gray) }
+            }
+        )
+    }
 }
 
 @OptIn(ExperimentalFoundationApi::class)
@@ -521,12 +570,14 @@ fun VideoScraperScreen(
 fun BannerCarousel(seriesList: List<MediaSeries>, onSelect: (MediaSeries) -> Unit) {
     val pagerState = rememberPagerState(pageCount = { seriesList.size })
     
-    // 自动轮播效果
-    LaunchedEffect(pagerState) {
-        while (true) {
-            delay(4000)
-            val nextPage = (pagerState.currentPage + 1) % seriesList.size
-            pagerState.animateScrollToPage(nextPage)
+    // 自动轮播效果（防除零崩溃保护）
+    LaunchedEffect(pagerState, seriesList.size) {
+        if (seriesList.size > 1) {
+            while (true) {
+                delay(4000)
+                val nextPage = (pagerState.currentPage + 1) % seriesList.size
+                pagerState.animateScrollToPage(nextPage)
+            }
         }
     }
 
@@ -577,9 +628,9 @@ fun BannerCarousel(seriesList: List<MediaSeries>, onSelect: (MediaSeries) -> Uni
 
 @Composable
 fun RecentWatchedCard(item: RecentWatchedItem, isGrid: Boolean = false, onClick: () -> Unit) {
-    Column(modifier = if (isGrid) Modifier.fillMaxWidth() else Modifier.width(120.dp).clickable { onClick() }) {
+    Column(modifier = (if (isGrid) Modifier.fillMaxWidth() else Modifier.width(120.dp)).clickable { onClick() }) {
         if (isGrid) {
-            Box(modifier = Modifier.fillMaxWidth().clickable { onClick() }) {
+            Box(modifier = Modifier.fillMaxWidth()) {
                 Box(modifier = Modifier.fillMaxWidth().aspectRatio(16f / 9f).clip(RoundedCornerShape(8.dp)).background(Color.DarkGray), contentAlignment = Alignment.Center) {
                     if (item.coverPath.isNotEmpty()) {
                         AsyncImage(model = item.coverPath, contentDescription = null, modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
@@ -1058,6 +1109,9 @@ fun InternalVideoPlayer(
     var audioTracks by remember { mutableStateOf<List<Tracks.Group>>(emptyList()) }
     var textTracks by remember { mutableStateOf<List<Tracks.Group>>(emptyList()) }
 
+    // 选集列表状态（用于自动定位）
+    val episodeListState = rememberLazyListState()
+
     LaunchedEffect(Unit) {
         var lastRxBytes = TrafficStats.getUidRxBytes(Process.myUid())
         while (true) {
@@ -1137,11 +1191,19 @@ fun InternalVideoPlayer(
                 when (intent?.action) {
                     "ACTION_PIP_PREV" -> {
                         val idx = series.videos.indexOfFirst { it.fid == currentFile.fid }
-                        if (idx > 0) viewModel.playVideo(context, series, series.videos[idx - 1])
+                        if (idx > 0) {
+                            viewModel.playVideo(context, series, series.videos[idx - 1])
+                        } else {
+                            Toast.makeText(context, "已经是第一集了", Toast.LENGTH_SHORT).show()
+                        }
                     }
                     "ACTION_PIP_NEXT" -> {
                         val idx = series.videos.indexOfFirst { it.fid == currentFile.fid }
-                        if (idx != -1 && idx < series.videos.size - 1) viewModel.playVideo(context, series, series.videos[idx + 1])
+                        if (idx != -1 && idx < series.videos.size - 1) {
+                            viewModel.playVideo(context, series, series.videos[idx + 1])
+                        } else {
+                            Toast.makeText(context, "已经是最后一集了", Toast.LENGTH_SHORT).show()
+                        }
                     }
                     "ACTION_PIP_PLAY_PAUSE" -> {
                         if (exoPlayer.isPlaying) exoPlayer.pause() else exoPlayer.play()
@@ -1164,6 +1226,36 @@ fun InternalVideoPlayer(
         }
         onDispose {
             context.unregisterReceiver(pipActionReceiver)
+        }
+    }
+
+    // 优化：PiP 状态同步（当播放状态改变时，刷新系统控制面板）
+    LaunchedEffect(isPlaying, isInPip.value) {
+        if (isInPip.value && Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            try {
+                val prevIntent = Intent("ACTION_PIP_PREV").setPackage(context.packageName)
+                val prevPendingIntent = PendingIntent.getBroadcast(context, 1, prevIntent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
+                val prevAction = RemoteAction(Icon.createWithResource(context, android.R.drawable.ic_media_previous), "上一集", "上一集", prevPendingIntent)
+
+                val playPauseIntent = Intent("ACTION_PIP_PLAY_PAUSE").setPackage(context.packageName)
+                val playPausePendingIntent = PendingIntent.getBroadcast(context, 2, playPauseIntent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
+                val playPauseAction = RemoteAction(
+                    Icon.createWithResource(context, if (isPlaying) android.R.drawable.ic_media_pause else android.R.drawable.ic_media_play),
+                    if (isPlaying) "暂停" else "播放",
+                    if (isPlaying) "暂停" else "播放",
+                    playPausePendingIntent
+                )
+
+                val nextIntent = Intent("ACTION_PIP_NEXT").setPackage(context.packageName)
+                val nextPendingIntent = PendingIntent.getBroadcast(context, 3, nextIntent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
+                val nextAction = RemoteAction(Icon.createWithResource(context, android.R.drawable.ic_media_next), "下一集", "下一集", nextPendingIntent)
+
+                val params = PictureInPictureParams.Builder()
+                    .setAspectRatio(Rational(16, 9))
+                    .setActions(listOf(prevAction, playPauseAction, nextAction))
+                    .build()
+                activity?.setPictureInPictureParams(params)
+            } catch (e: Exception) {}
         }
     }
 
@@ -1285,6 +1377,16 @@ fun InternalVideoPlayer(
                 }
             }
             delay(1000)
+        }
+    }
+
+    // 打开选集侧边栏时，自动定位到当前集
+    LaunchedEffect(showEpisodeDrawer) {
+        if (showEpisodeDrawer) {
+            val idx = series.videos.indexOfFirst { it.fid == currentFile.fid }
+            if (idx != -1) {
+                episodeListState.animateScrollToItem(idx)
+            }
         }
     }
 
@@ -1488,13 +1590,9 @@ fun InternalVideoPlayer(
                         IconButton(onClick = {
                             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                                 try {
-                                    // 注入系统级 PiP 按钮
                                     val prevIntent = Intent("ACTION_PIP_PREV").setPackage(context.packageName)
                                     val prevPendingIntent = PendingIntent.getBroadcast(context, 1, prevIntent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
-                                    val prevAction = RemoteAction(
-                                        Icon.createWithResource(context, android.R.drawable.ic_media_previous),
-                                        "上一集", "上一集", prevPendingIntent
-                                    )
+                                    val prevAction = RemoteAction(Icon.createWithResource(context, android.R.drawable.ic_media_previous), "上一集", "上一集", prevPendingIntent)
 
                                     val playPauseIntent = Intent("ACTION_PIP_PLAY_PAUSE").setPackage(context.packageName)
                                     val playPausePendingIntent = PendingIntent.getBroadcast(context, 2, playPauseIntent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
@@ -1507,10 +1605,7 @@ fun InternalVideoPlayer(
 
                                     val nextIntent = Intent("ACTION_PIP_NEXT").setPackage(context.packageName)
                                     val nextPendingIntent = PendingIntent.getBroadcast(context, 3, nextIntent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
-                                    val nextAction = RemoteAction(
-                                        Icon.createWithResource(context, android.R.drawable.ic_media_next),
-                                        "下一集", "下一集", nextPendingIntent
-                                    )
+                                    val nextAction = RemoteAction(Icon.createWithResource(context, android.R.drawable.ic_media_next), "下一集", "下一集", nextPendingIntent)
 
                                     val params = PictureInPictureParams.Builder()
                                         .setAspectRatio(Rational(16, 9))
@@ -1752,12 +1847,12 @@ fun InternalVideoPlayer(
                             IconButton(onClick = { showEpisodeDrawer = false }) { Icon(Icons.Default.Close, null, tint = Color.White) }
                         }
                         Spacer(modifier = Modifier.height(16.dp))
-                        LazyColumn {
+                        LazyColumn(state = episodeListState) {
                             items(series.videos) { file ->
                                 val e = file.parsedInfo?.episode
                                 val s = file.parsedInfo?.season ?: 1
                                 val tmdbTitle = if (e != null) series.seasonEpisodeTitles["${s}_${e}"] ?: series.episodeTitles[e] else null
-                                // 修复电影不显示集数
+                                
                                 val label = if (e != null && series.category != "电影" && series.videos.size > 1) {
                                     "第${e}集" + if (!tmdbTitle.isNullOrBlank()) " $tmdbTitle" else ""
                                 } else {
@@ -1883,7 +1978,6 @@ fun InternalVideoPlayer(
 fun AnimatedLoadingDots(color: Color, fontSize: androidx.compose.ui.unit.TextUnit, text: String = "正在加载中") {
     val transition = rememberInfiniteTransition(label = "loadingDots")
     
-    // 如果文字是黑色的，就不需要黑色阴影了，否则在白色背景上会糊成一团
     val textStyle = TextStyle(
         color = color,
         fontSize = fontSize,
@@ -2112,7 +2206,6 @@ fun MediaDetailScreen(
                     val tmdbTitle = if (e != null) series.seasonEpisodeTitles["${s}_${e}"] ?: series.episodeTitles[e] else null
                     val stillUrl = if (e != null) series.seasonEpisodeStills["${s}_${e}"] ?: series.episodeStills[e] else null
                     
-                    // 修复电影不显示集数
                     val label = if (e != null && series.category != "电影" && series.videos.size > 1) {
                         "第${e}集" + if (!tmdbTitle.isNullOrBlank()) " $tmdbTitle" else ""
                     } else {
