@@ -197,7 +197,7 @@ fun VideoLibraryScreen(
 
 
 // ==========================================
-// 2. 影视库独立页面
+// 2. 影视库独立页面 (已去除播放器)
 // ==========================================
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
@@ -218,23 +218,13 @@ fun VideoScraperScreen(
     var manualScrapeSeries by remember { mutableStateOf<MediaSeries?>(null) }
     var viewAllCategory by remember { mutableStateOf<String?>(null) }
 
-    LaunchedEffect(Unit) {
-        val pendingFid = videoSettingsRepository.pendingPlayFid
-        if (isActive && !pendingFid.isNullOrBlank()) {
-            viewModel.handlePendingPlayRequest()
-        }
-    }
-
-    BackHandler(enabled = uiState.playUrl != null || uiState.currentPlayFile != null || uiState.currentSeries != null || viewAllCategory != null) {
-        if (uiState.playUrl != null || uiState.currentPlayFile != null) {
-            activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
-            viewModel.stopPlaying()
-        } else if (uiState.currentSeries != null) viewModel.selectSeries(null)
+    BackHandler(enabled = uiState.currentSeries != null || viewAllCategory != null) {
+        if (uiState.currentSeries != null) viewModel.selectSeries(null)
         else if (viewAllCategory != null) viewAllCategory = null
     }
 
     Box(modifier = Modifier.fillMaxSize()) {
-        // 1. 正常内容渲染
+        // 正常内容渲染
         if (uiState.currentSeries != null) {
             MediaDetailScreen(
                 series = uiState.currentSeries!!,
@@ -281,7 +271,13 @@ fun VideoScraperScreen(
                 if (uiState.isLoading && uiState.seriesList.isEmpty()) {
                     Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
                 } else {
-                    PullToRefreshBox(isRefreshing = uiState.isLoading, onRefresh = { viewModel.loadLibraryVideos() }, modifier = Modifier.fillMaxSize()) {
+                    // 【修改】隐藏默认的丑陋下拉刷新转圈 (indicator = {})
+                    PullToRefreshBox(
+                        isRefreshing = uiState.isLoading, 
+                        onRefresh = { viewModel.loadLibraryVideos() }, 
+                        modifier = Modifier.fillMaxSize(),
+                        indicator = {}
+                    ) {
                         if (uiState.selectedLibraryFids.isEmpty()) {
                             Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { AppText("请先在资源库中勾选媒体文件夹") }
                         } else if (uiState.seriesList.isEmpty() && !uiState.isLoading) {
@@ -318,32 +314,25 @@ fun VideoScraperScreen(
             }
         }
 
-        // 2. 拦截：如果是首页发起的播放（isDirectPlay），直链没返回前直接黑屏挡住详情页
-        if (isActive && uiState.isDirectPlay && uiState.playUrl == null && uiState.currentPlayFile != null) {
-            Box(modifier = Modifier.fillMaxSize().background(Color.Black), contentAlignment = Alignment.Center) {
-                Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    CircularProgressIndicator(color = Color.White)
-                    Spacer(modifier = Modifier.height(16.dp))
-                    AnimatedLoadingDots(color = Color.White, fontSize = 16.sp, text = "正在获取播放地址")
+        // 【新增】底部全局刷新/刮削悬浮提示
+        if (uiState.isLoading || uiState.isScraping) {
+            // 确保处于播放状态时不显示提示
+            val isVideoPlaying = uiState.playUrl != null || uiState.currentPlayFile != null || uiState.isDirectPlay
+            if (!isVideoPlaying) {
+                Box(
+                    modifier = Modifier
+                        .align(Alignment.BottomCenter)
+                        .padding(bottom = 100.dp) // 避开底栏
+                        .background(Color(0xCC000000), RoundedCornerShape(24.dp))
+                        .padding(horizontal = 24.dp, vertical = 12.dp)
+                ) {
+                    AnimatedLoadingDots(
+                        color = Color.White, 
+                        fontSize = 14.sp, 
+                        text = if (uiState.isScraping) "正在刮削数据" else "正在刷新列表"
+                    )
                 }
             }
-        }
-
-        // 3. 全屏播放器 (有直链时弹出)
-        if (isActive && uiState.playUrl != null && uiState.currentSeries != null && uiState.currentPlayFile != null) {
-            InternalVideoPlayer(
-                url = uiState.playUrl!!,
-                title = uiState.playTitle ?: "播放中",
-                cookie = uiState.cookie,
-                series = uiState.currentSeries!!,
-                currentFile = uiState.currentPlayFile!!,
-                viewModel = viewModel,
-                downloadThreads = uiState.downloadThreads,
-                onBack = {
-                    activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
-                    viewModel.stopPlaying()
-                }
-            )
         }
     }
 
@@ -597,7 +586,7 @@ private fun ManualScrapeDialog(
 
 
 // ==========================================
-// 播放器与登录页面
+// 播放器与登录页面 (播放器被抽取到全局)
 // ==========================================
 @SuppressLint("SetJavaScriptEnabled")
 @Composable
@@ -898,21 +887,18 @@ fun InternalVideoPlayer(
                 if (state == Player.STATE_READY) {
                     duration = exoPlayer.duration.coerceAtLeast(0L)
                     
-                    // 1. 恢复播放进度
                     if (!hasRestoredProgress) {
                         hasRestoredProgress = true
                         val savedPos = viewModel.getVideoProgress(currentFile.fid)
                         if (savedPos > 0L && savedPos < duration) {
                             exoPlayer.seekTo(savedPos)
                             currentPosition = savedPos
-                            // 如果历史进度已经超过了片头，就不需要自动跳了
                             if (savedPos >= introSeconds * 1000L) {
                                 hasAutoSkippedIntro = true
                             }
                         }
                     }
                     
-                    // 2. 自动跳过片头
                     if (introSeconds > 0 && !hasAutoSkippedIntro && exoPlayer.currentPosition < introSeconds * 1000L) {
                         exoPlayer.seekTo(introSeconds * 1000L)
                         currentPosition = introSeconds * 1000L
@@ -971,7 +957,6 @@ fun InternalVideoPlayer(
                 bufferedPosition = exoPlayer.bufferedPosition
             }
 
-            // 自动连播：到达片尾（剩余时间等于片尾设置时间时触发）
             if (outroSeconds > 0 && duration > 0 && currentPosition >= (duration - outroSeconds * 1000L)) {
                 if (!hasTriggeredAutoPlay) {
                     hasTriggeredAutoPlay = true
@@ -1106,7 +1091,7 @@ fun InternalVideoPlayer(
             factory = { ctx ->
                 PlayerView(ctx).apply {
                     player = exoPlayer
-                    useController = isInPip.value // 画中画时启用系统自带的控制栏
+                    useController = isInPip.value
                     layoutParams = FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
                 }
             },
@@ -1166,7 +1151,6 @@ fun InternalVideoPlayer(
         AnimatedVisibility(visible = showControls, enter = fadeIn(), exit = fadeOut(), modifier = Modifier.fillMaxSize()) {
             Box(modifier = Modifier.fillMaxSize()) {
 
-                // 左侧栏：只留旋转按钮
                 Column(modifier = Modifier.align(Alignment.CenterStart).padding(start = 16.dp), verticalArrangement = Arrangement.spacedBy(30.dp)) {
                     Surface(color = Color.White.copy(alpha = 0.1f), shape = CircleShape, border = BorderStroke(1.dp, Color.White.copy(alpha = 0.2f))) {
                         IconButton(onClick = {
@@ -1179,7 +1163,6 @@ fun InternalVideoPlayer(
                     }
                 }
 
-                // 右侧栏：画中画，锁屏
                 Column(modifier = Modifier.align(Alignment.CenterEnd).padding(end = 16.dp), verticalArrangement = Arrangement.spacedBy(30.dp)) {
                     Surface(color = Color.White.copy(alpha = 0.1f), shape = CircleShape, border = BorderStroke(1.dp, Color.White.copy(alpha = 0.2f))) {
                         IconButton(onClick = {
@@ -1230,7 +1213,6 @@ fun InternalVideoPlayer(
                     IconButton(onClick = { showSettingsPanel = true }) { Icon(Icons.Default.Settings, contentDescription = "设置", tint = Color.White) }
                 }
 
-                // 底部控制栏
                 Box(
                     modifier = Modifier
                         .align(Alignment.BottomCenter)
@@ -1610,7 +1592,6 @@ private fun formatTime(ms: Long): String {
     return String.format("%02d:%02d:%02d", hours, minutes, seconds)
 }
 
-// 新的中文时间格式化（X分Y秒）
 private fun formatIntroOutro(seconds: Int): String {
     if (seconds <= 0) return "0秒"
     val h = seconds / 3600
@@ -1636,7 +1617,7 @@ private fun Context.findActivity(): Activity? {
 @Composable
 fun SeriesPosterCard(
     series: MediaSeries, 
-    isScraping: Boolean = false, // 新增：是否正在刮削
+    isScraping: Boolean = false,
     onClick: () -> Unit, 
     onLongClick: () -> Unit
 ) {
@@ -1646,7 +1627,6 @@ fun SeriesPosterCard(
                 AsyncImage(model = series.posterUrl, contentDescription = null, modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
             } else {
                 if (isScraping) {
-                    // 新增：刮削中显示加载占位图
                     Box(modifier = Modifier.fillMaxSize().background(Color(0xFFE0E0E0)), contentAlignment = Alignment.Center) {
                         CircularProgressIndicator(color = Color.Gray, modifier = Modifier.size(24.dp), strokeWidth = 2.dp)
                     }
