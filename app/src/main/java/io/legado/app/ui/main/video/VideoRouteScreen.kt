@@ -426,11 +426,11 @@ fun VideoScraperScreen(
                         fontWeight = FontWeight.Bold,
                         modifier = Modifier.weight(1f).padding(start = 16.dp)
                     )
-                    // 【修改点】新增顶部刷新按钮，替代下拉刷新
+                    IconButton(onClick = { showSettingsDialog = true }) { Icon(Icons.Default.Settings, contentDescription = "设置") }
+                    // 将刷新按钮放在设置的右侧
                     IconButton(onClick = { viewModel.loadLibraryVideos() }, enabled = !uiState.isLoading) {
                         Icon(Icons.Default.Refresh, contentDescription = "刷新", tint = if (uiState.isLoading) Color.Gray else Color.Black)
                     }
-                    IconButton(onClick = { showSettingsDialog = true }) { Icon(Icons.Default.Settings, contentDescription = "设置") }
                 }
 
                 if (uiState.errorMsg != null && !uiState.isLoading) {
@@ -442,7 +442,6 @@ fun VideoScraperScreen(
                 if (uiState.isLoading && uiState.seriesList.isEmpty()) {
                     Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
                 } else {
-                    // 【修改点】移除 PullToRefreshBox，直接使用 LazyColumn
                     if (uiState.selectedLibraryFids.isEmpty()) {
                         Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { AppText("请先在资源库中勾选媒体文件夹") }
                     } else if (uiState.seriesList.isEmpty() && !uiState.isLoading) {
@@ -1253,7 +1252,6 @@ fun InternalVideoPlayer(
     DisposableEffect(lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event ->
             if (event == Lifecycle.Event.ON_PAUSE || event == Lifecycle.Event.ON_STOP) {
-                // 只要不是系统画中画，直接暂停
                 if (activity?.isInPictureInPictureMode != true) {
                     exoPlayer.pause()
                 }
@@ -1330,7 +1328,6 @@ fun InternalVideoPlayer(
                     val prevAction = RemoteAction(Icon.createWithResource(context, android.R.drawable.ic_media_previous), "上一集", "上一集", prevPendingIntent)
 
                     val playPauseIntent = Intent("ACTION_PIP_PLAY_PAUSE").setPackage(context.packageName)
-                    // 使用不同的 requestCode，防止系统复用旧图标
                     val playPauseRequestCode = if (isPlaying) 2 else 3
                     val playPausePendingIntent = PendingIntent.getBroadcast(context, playPauseRequestCode, playPauseIntent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
                     val playPauseAction = RemoteAction(
