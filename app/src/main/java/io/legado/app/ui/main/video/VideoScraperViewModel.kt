@@ -1068,6 +1068,11 @@ class VideoScraperViewModel(
         _uiState.update { it.copy(playUrl = null, playTitle = null, currentPlayFile = null, isDirectPlay = false) }
     }
 
+    fun clearRecentWatched() {
+        videoSettingsRepository.recentWatchedVideos = "[]"
+        _uiState.update { it.copy() } // 强制刷新 UI
+    }
+
     fun fetchQuarkFiles(fid: String = "0", isBack: Boolean = false, folderName: String? = null) {
         val cookie = _uiState.value.cookie
         if (cookie.isBlank()) {
