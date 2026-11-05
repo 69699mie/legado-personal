@@ -196,6 +196,7 @@
             android:configChanges="locale|layoutDirection|uiMode|screenLayout|orientation|screenSize|keyboardHidden|smallestScreenSize"
             android:enableOnBackInvokedCallback="true"
             android:windowSoftInputMode="adjustResize"
+            android:supportsPictureInPicture="true"
             android:exported="true">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
