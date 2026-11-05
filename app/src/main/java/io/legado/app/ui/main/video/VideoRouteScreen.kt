@@ -2,12 +2,18 @@ package io.legado.app.ui.main.video
 
 import android.annotation.SuppressLint
 import android.app.Activity
+import android.app.PendingIntent
 import android.app.PictureInPictureParams
+import android.app.RemoteAction
+import android.content.BroadcastReceiver
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
+import android.content.Intent
+import android.content.IntentFilter
 import android.content.pm.ActivityInfo
 import android.content.res.Configuration
+import android.graphics.drawable.Icon
 import android.media.AudioManager
 import android.net.TrafficStats
 import android.os.Build
@@ -93,6 +99,9 @@ import androidx.compose.ui.window.DialogWindowProvider
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MediaMetadata
@@ -318,7 +327,7 @@ fun VideoScraperScreen(
             }
         }
 
-        // 底部全局刷新/刮削悬浮提示（位置不变，仅增加毛玻璃背景）
+        // 底部全局刷新/刮削悬浮提示（修改为白底黑字，透明背景）
         if (uiState.isLoading || uiState.isScraping) {
             val isVideoPlaying = uiState.playUrl != null || uiState.currentPlayFile != null || uiState.isDirectPlay
             if (!isVideoPlaying) {
@@ -327,18 +336,18 @@ fun VideoScraperScreen(
                         .align(Alignment.BottomCenter)
                         .padding(bottom = 100.dp)
                         .background(
-                            color = Color(0xE61A1A1A),
+                            color = Color.White.copy(alpha = 0.92f),
                             shape = RoundedCornerShape(24.dp)
                         )
                         .border(
                             width = 1.dp,
-                            color = Color.White.copy(alpha = 0.1f),
+                            color = Color.Gray.copy(alpha = 0.2f),
                             shape = RoundedCornerShape(24.dp)
                         )
                         .padding(horizontal = 20.dp, vertical = 10.dp)
                 ) {
                     AnimatedLoadingDots(
-                        color = Color.White, 
+                        color = Color.Black, 
                         fontSize = 14.sp, 
                         text = if (uiState.isScraping) "正在刮削数据" else "正在刷新列表"
                     )
@@ -699,18 +708,7 @@ fun InternalVideoPlayer(
     val videoSettingsRepository = koinInject<VideoSettingsRepository>()
 
     val isInPip = remember { mutableStateOf(false) }
-    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-        val lifecycleOwner = androidx.lifecycle.compose.LocalLifecycleOwner.current
-        DisposableEffect(lifecycleOwner) {
-            val observer = androidx.lifecycle.LifecycleEventObserver { _, event ->
-                if (event == androidx.lifecycle.Lifecycle.Event.ON_RESUME) {
-                    isInPip.value = activity?.isInPictureInPictureMode == true
-                }
-            }
-            lifecycleOwner.lifecycle.addObserver(observer)
-            onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
-        }
-    }
+    val lifecycleOwner = LocalLifecycleOwner.current
 
     var errorDialogMsg by remember { mutableStateOf<String?>(null) }
     val lastManualSwitchTime = remember { longArrayOf(0L) }
@@ -821,7 +819,6 @@ fun InternalVideoPlayer(
     val audioManager = remember { context.getSystemService(Context.AUDIO_SERVICE) as AudioManager }
     var hasRestoredProgress by remember { mutableStateOf(false) }
     
-    // 记录进入播放器时的系统时间
     var entryTime by remember { mutableLongStateOf(0L) }
 
     var audioTracks by remember { mutableStateOf<List<Tracks.Group>>(emptyList()) }
@@ -875,7 +872,72 @@ fun InternalVideoPlayer(
             }
     }
 
-    // 极简计时逻辑：利用 DisposableEffect 在每次 URL 变化（切集）时结算上一集的时间
+    // ==========================================
+    // 【修复 1】监听生命周期，处理小窗关闭和后台播放问题
+    // ==========================================
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_STOP) {
+                // 如果退到后台，并且当前不在画中画模式，则强制暂停
+                if (activity?.isInPictureInPictureMode != true) {
+                    exoPlayer.pause()
+                }
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
+
+    // 用于判断当前是否处于画中画
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) {
+                isInPip.value = activity?.isInPictureInPictureMode == true
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
+
+    // ==========================================
+    // 【修复 2】动态注册广播接收器，处理小窗原生按钮点击
+    // ==========================================
+    val pipActionReceiver = remember {
+        object : BroadcastReceiver() {
+            override fun onReceive(ctx: Context?, intent: Intent?) {
+                when (intent?.action) {
+                    "ACTION_PIP_PREV" -> {
+                        val idx = series.videos.indexOfFirst { it.fid == currentFile.fid }
+                        if (idx > 0) viewModel.playVideo(context, series, series.videos[idx - 1])
+                    }
+                    "ACTION_PIP_NEXT" -> {
+                        val idx = series.videos.indexOfFirst { it.fid == currentFile.fid }
+                        if (idx != -1 && idx < series.videos.size - 1) viewModel.playVideo(context, series, series.videos[idx + 1])
+                    }
+                    "ACTION_PIP_PLAY_PAUSE" -> {
+                        if (exoPlayer.isPlaying) exoPlayer.pause() else exoPlayer.play()
+                    }
+                }
+            }
+        }
+    }
+
+    DisposableEffect(Unit) {
+        val filter = IntentFilter().apply {
+            addAction("ACTION_PIP_PREV")
+            addAction("ACTION_PIP_NEXT")
+            addAction("ACTION_PIP_PLAY_PAUSE")
+        }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            context.registerReceiver(pipActionReceiver, filter, Context.RECEIVER_NOT_EXPORTED)
+        } else {
+            context.registerReceiver(pipActionReceiver, filter)
+        }
+        onDispose {
+            context.unregisterReceiver(pipActionReceiver)
+        }
+    }
+
     DisposableEffect(url) {
         entryTime = System.currentTimeMillis()
         onDispose {
@@ -971,7 +1033,6 @@ fun InternalVideoPlayer(
         exoPlayer.addListener(listener)
         onDispose {
             if (exoPlayer.currentPosition > 0) viewModel.saveVideoProgress(currentFile.fid, exoPlayer.currentPosition)
-            
             exoPlayer.removeListener(listener)
             exoPlayer.stop()
             exoPlayer.release()
@@ -994,7 +1055,6 @@ fun InternalVideoPlayer(
                     }
                 }
             }
-
             delay(1000)
         }
     }
@@ -1131,30 +1191,8 @@ fun InternalVideoPlayer(
 
         if (isInPip.value) {
             Box(modifier = Modifier.fillMaxSize()) {
-                // 移除了网速显示，只保留居中的播放控制按钮
-                Row(
-                    modifier = Modifier.align(Alignment.Center),
-                    horizontalArrangement = Arrangement.spacedBy(24.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    IconButton(onClick = {
-                        val idx = series.videos.indexOfFirst { it.fid == currentFile.fid }
-                        if (idx > 0) viewModel.playVideo(context, series, series.videos[idx - 1])
-                    }) { 
-                        Icon(Icons.Default.SkipPrevious, null, tint = Color.White, modifier = Modifier.size(32.dp)) 
-                    }
-
-                    IconButton(onClick = { if (isPlaying) exoPlayer.pause() else exoPlayer.play() }) {
-                        Icon(if (isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow, null, tint = Color.White, modifier = Modifier.size(40.dp))
-                    }
-
-                    IconButton(onClick = {
-                        val idx = series.videos.indexOfFirst { it.fid == currentFile.fid }
-                        if (idx != -1 && idx < series.videos.size - 1) viewModel.playVideo(context, series, series.videos[idx + 1])
-                    }) { 
-                        Icon(Icons.Default.SkipNext, null, tint = Color.White, modifier = Modifier.size(32.dp)) 
-                    }
-                }
+                // 为了保持代码整洁，移除了此处无效的 Compose UI 控制面板。
+                // 实际的控制按钮已通过系统级 RemoteAction 注册，在系统层显示。
             }
             return@Box
         }
@@ -1222,8 +1260,35 @@ fun InternalVideoPlayer(
                         IconButton(onClick = {
                             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                                 try {
+                                    // ==========================================
+                                    // 【修复 3】进入画中画前注册系统级 RemoteAction 按钮
+                                    // ==========================================
+                                    val prevIntent = Intent("ACTION_PIP_PREV").setPackage(context.packageName)
+                                    val prevPendingIntent = PendingIntent.getBroadcast(context, 1, prevIntent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
+                                    val prevAction = RemoteAction(
+                                        Icon.createWithResource(context, android.R.drawable.ic_media_previous),
+                                        "上一集", "上一集", prevPendingIntent
+                                    )
+
+                                    val playPauseIntent = Intent("ACTION_PIP_PLAY_PAUSE").setPackage(context.packageName)
+                                    val playPausePendingIntent = PendingIntent.getBroadcast(context, 2, playPauseIntent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
+                                    val playPauseAction = RemoteAction(
+                                        Icon.createWithResource(context, if (isPlaying) android.R.drawable.ic_media_pause else android.R.drawable.ic_media_play),
+                                        if (isPlaying) "暂停" else "播放",
+                                        if (isPlaying) "暂停" else "播放",
+                                        playPausePendingIntent
+                                    )
+
+                                    val nextIntent = Intent("ACTION_PIP_NEXT").setPackage(context.packageName)
+                                    val nextPendingIntent = PendingIntent.getBroadcast(context, 3, nextIntent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
+                                    val nextAction = RemoteAction(
+                                        Icon.createWithResource(context, android.R.drawable.ic_media_next),
+                                        "下一集", "下一集", nextPendingIntent
+                                    )
+
                                     val params = PictureInPictureParams.Builder()
                                         .setAspectRatio(Rational(16, 9))
+                                        .setActions(listOf(prevAction, playPauseAction, nextAction))
                                         .build()
                                     activity?.enterPictureInPictureMode(params)
                                 } catch (e: Exception) {
@@ -1586,10 +1651,11 @@ fun InternalVideoPlayer(
 fun AnimatedLoadingDots(color: Color, fontSize: androidx.compose.ui.unit.TextUnit, text: String = "正在加载中") {
     val transition = rememberInfiniteTransition(label = "loadingDots")
     
+    // 如果文字是黑色的，就不需要黑色阴影了，否则在白色背景上会糊成一团
     val textStyle = TextStyle(
         color = color,
         fontSize = fontSize,
-        shadow = Shadow(
+        shadow = if (color == Color.Black) null else Shadow(
             color = Color.Black.copy(alpha = 0.8f),
             offset = Offset(1f, 1f),
             blurRadius = 4f
