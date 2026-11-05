@@ -271,7 +271,7 @@ fun VideoScraperScreen(
                 if (uiState.isLoading && uiState.seriesList.isEmpty()) {
                     Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
                 } else {
-                    // 【修改】隐藏默认的丑陋下拉刷新转圈 (indicator = {})
+                    // 隐藏默认的丑陋下拉刷新转圈
                     PullToRefreshBox(
                         isRefreshing = uiState.isLoading, 
                         onRefresh = { viewModel.loadLibraryVideos() }, 
@@ -314,15 +314,14 @@ fun VideoScraperScreen(
             }
         }
 
-        // 【新增】底部全局刷新/刮削悬浮提示
+        // 底部全局刷新/刮削悬浮提示
         if (uiState.isLoading || uiState.isScraping) {
-            // 确保处于播放状态时不显示提示
             val isVideoPlaying = uiState.playUrl != null || uiState.currentPlayFile != null || uiState.isDirectPlay
             if (!isVideoPlaying) {
                 Box(
                     modifier = Modifier
                         .align(Alignment.BottomCenter)
-                        .padding(bottom = 100.dp) // 避开底栏
+                        .padding(bottom = 100.dp)
                         .background(Color(0xCC000000), RoundedCornerShape(24.dp))
                         .padding(horizontal = 24.dp, vertical = 12.dp)
                 ) {
@@ -957,7 +956,8 @@ fun InternalVideoPlayer(
                 bufferedPosition = exoPlayer.bufferedPosition
             }
 
-            if (outroSeconds > 0 && duration > 0 && currentPosition >= (duration - outroSeconds * 1000L)) {
+            // 修复：只有当片尾时长小于总时长时，才触发连播
+            if (outroSeconds > 0 && duration > 0 && outroSeconds * 1000L < duration && currentPosition >= (duration - outroSeconds * 1000L)) {
                 if (!hasTriggeredAutoPlay) {
                     hasTriggeredAutoPlay = true
                     val idx = series.videos.indexOfFirst { it.fid == currentFile.fid }
