@@ -816,6 +816,7 @@ fun InternalVideoPlayer(
     }
 
     var hasTriggeredAutoPlay by remember { mutableStateOf(false) }
+    var hasAutoSkippedIntro by remember { mutableStateOf(false) }
     val audioManager = remember { context.getSystemService(Context.AUDIO_SERVICE) as AudioManager }
     var hasRestoredProgress by remember { mutableStateOf(false) }
 
@@ -873,6 +874,7 @@ fun InternalVideoPlayer(
     LaunchedEffect(url) {
         hasRestoredProgress = false
         hasTriggeredAutoPlay = false
+        hasAutoSkippedIntro = false
         exoPlayer.stop()
         exoPlayer.clearMediaItems()
 
@@ -895,14 +897,29 @@ fun InternalVideoPlayer(
                 isBuffering = state == Player.STATE_BUFFERING || state == Player.STATE_IDLE
                 if (state == Player.STATE_READY) {
                     duration = exoPlayer.duration.coerceAtLeast(0L)
+                    
+                    // 1. 恢复播放进度
                     if (!hasRestoredProgress) {
                         hasRestoredProgress = true
                         val savedPos = viewModel.getVideoProgress(currentFile.fid)
                         if (savedPos > 0L && savedPos < duration) {
                             exoPlayer.seekTo(savedPos)
                             currentPosition = savedPos
+                            // 如果历史进度已经超过了片头，就不需要自动跳了
+                            if (savedPos >= introSeconds * 1000L) {
+                                hasAutoSkippedIntro = true
+                            }
                         }
                     }
+                    
+                    // 2. 自动跳过片头
+                    if (introSeconds > 0 && !hasAutoSkippedIntro && exoPlayer.currentPosition < introSeconds * 1000L) {
+                        exoPlayer.seekTo(introSeconds * 1000L)
+                        currentPosition = introSeconds * 1000L
+                        hasAutoSkippedIntro = true
+                        Toast.makeText(context, "已自动跳过片头", Toast.LENGTH_SHORT).show()
+                    }
+
                 } else if (state == Player.STATE_ENDED) {
                     val idx = series.videos.indexOfFirst { it.fid == currentFile.fid }
                     if (idx != -1 && idx < series.videos.size - 1) viewModel.playVideo(context, series, series.videos[idx + 1])
@@ -952,9 +969,6 @@ fun InternalVideoPlayer(
             if (!isDraggingSeekBar) {
                 currentPosition = exoPlayer.currentPosition
                 bufferedPosition = exoPlayer.bufferedPosition
-            }
-
-            if (introSeconds > 0 && currentPosition in (introSeconds * 1000L)..(introSeconds * 1000L + 1000L)) {
             }
 
             // 自动连播：到达片尾（剩余时间等于片尾设置时间时触发）
