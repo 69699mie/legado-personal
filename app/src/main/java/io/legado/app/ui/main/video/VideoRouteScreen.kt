@@ -313,7 +313,7 @@ fun VideoScraperScreen(
             }
         }
 
-        // 底部全局刷新/刮削悬浮提示
+        // 底部全局刷新/刮削悬浮提示（去背景色，带阴影）
         if (uiState.isLoading || uiState.isScraping) {
             val isVideoPlaying = uiState.playUrl != null || uiState.currentPlayFile != null || uiState.isDirectPlay
             if (!isVideoPlaying) {
@@ -806,8 +806,8 @@ fun InternalVideoPlayer(
     val audioManager = remember { context.getSystemService(Context.AUDIO_SERVICE) as AudioManager }
     var hasRestoredProgress by remember { mutableStateOf(false) }
     
-    // 【新增】记录本次播放的起始位置，用于精确计算观看时长
-    var initialPlaybackPosition by remember { mutableLongStateOf(0L) }
+    // 【新增】记录进入播放器时的系统时间
+    var entryTime by remember { mutableLongStateOf(0L) }
 
     var audioTracks by remember { mutableStateOf<List<Tracks.Group>>(emptyList()) }
     var textTracks by remember { mutableStateOf<List<Tracks.Group>>(emptyList()) }
@@ -860,6 +860,18 @@ fun InternalVideoPlayer(
             }
     }
 
+    // 【极简计时逻辑】利用 DisposableEffect 在每次 URL 变化（切集）时结算上一集的时间
+    DisposableEffect(url) {
+        entryTime = System.currentTimeMillis()
+        onDispose {
+            val endTime = System.currentTimeMillis()
+            val watchTime = endTime - entryTime
+            if (watchTime > 0) {
+                videoSettingsRepository.totalVideoWatchTime += watchTime
+            }
+        }
+    }
+
     LaunchedEffect(url) {
         hasRestoredProgress = false
         hasTriggeredAutoPlay = false
@@ -897,8 +909,6 @@ fun InternalVideoPlayer(
                                 hasAutoSkippedIntro = true
                             }
                         }
-                        // 记录起始进度，用于计算观看时长
-                        initialPlaybackPosition = exoPlayer.currentPosition
                     }
                     
                     if (introSeconds > 0 && !hasAutoSkippedIntro && exoPlayer.currentPosition < introSeconds * 1000L) {
@@ -946,11 +956,9 @@ fun InternalVideoPlayer(
         exoPlayer.addListener(listener)
         onDispose {
             if (exoPlayer.currentPosition > 0) viewModel.saveVideoProgress(currentFile.fid, exoPlayer.currentPosition)
-            // 【新增】累加影视观看时长
-            val watchTime = exoPlayer.currentPosition - initialPlaybackPosition
-            if (watchTime > 0) {
-                videoSettingsRepository.totalVideoWatchTime += watchTime
-            }
+            
+            // 【修复】彻底去掉累加逻辑，全权交由上面的 DisposableEffect(url) 负责
+            
             exoPlayer.removeListener(listener)
             exoPlayer.stop()
             exoPlayer.release()
@@ -964,7 +972,6 @@ fun InternalVideoPlayer(
                 bufferedPosition = exoPlayer.bufferedPosition
             }
 
-            // 修复：只有当片尾时长小于总时长时，才触发连播
             if (outroSeconds > 0 && duration > 0 && outroSeconds * 1000L < duration && currentPosition >= (duration - outroSeconds * 1000L)) {
                 if (!hasTriggeredAutoPlay) {
                     hasTriggeredAutoPlay = true
@@ -1110,7 +1117,6 @@ fun InternalVideoPlayer(
         )
 
         if (isInPip.value) {
-            // 画中画状态下的极简控制层
             Box(modifier = Modifier.fillMaxSize()) {
                 Row(
                     modifier = Modifier
