@@ -1328,6 +1328,21 @@ fun InternalVideoPlayer(
         uiState.seriesList.find { it.id == series.id || it.title == series.title } ?: series
     )
 
+    // 动态计算标题，确保后台刮削完成后标题自动刷新
+    val dynamicTitle = remember(latestSeries, currentFile) {
+        val parsedInfo = currentFile.parsedInfo ?: io.legado.app.utils.VideoFileNameParser.parse(currentFile.name)
+        val epNum = parsedInfo.episode ?: Regex("第\\s*([0-9]+)\\s*集").find(currentFile.name)?.groupValues?.get(1)?.toIntOrNull()
+        val season = parsedInfo.season ?: 1
+        
+        if (epNum != null && latestSeries.category != "电影") {
+            val tmdbEpTitle = latestSeries.seasonEpisodeTitles["${season}_${epNum}"] ?: latestSeries.episodeTitles[epNum]
+            if (!tmdbEpTitle.isNullOrBlank()) "${latestSeries.title} 第${epNum}集 $tmdbEpTitle"
+            else "${latestSeries.title} 第${epNum}集"
+        } else {
+            latestSeries.title
+        }
+    }
+
     val isInPip = remember { mutableStateOf(activity?.isInPictureInPictureMode == true) }
     val lifecycleOwner = LocalLifecycleOwner.current
 
@@ -2127,7 +2142,7 @@ fun InternalVideoPlayer(
                     IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, null, tint = Color.White) }
 
                     AppText(
-                        text = title,
+                        text = dynamicTitle,
                         color = Color.White,
                         maxLines = 1,
                         modifier = Modifier.weight(1f).padding(start = 8.dp, end = 16.dp).basicMarquee()
@@ -2817,15 +2832,30 @@ fun MediaDetailScreen(
         item {
             Column(modifier = Modifier.fillMaxWidth().background(Color(0xFFF5F5F5)).padding(16.dp).padding(top = 24.dp)) {
                 AppText(text = "文件信息", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-                // 修复点2：寻找层级最深的文件并补齐前导斜杠
-                val deepestFile = series.videos.maxByOrNull { it.folderPath.size } ?: series.videos.firstOrNull()
-                deepestFile?.let { firstFile ->
+                
+                // 使用 targetPlayFile 作为代表，这样你切到哪一集，这里显示的就是那一集的信息
+                val infoFile = targetPlayFile ?: series.videos.firstOrNull()
+                
+                infoFile?.let { firstFile ->
                     AppText(text = firstFile.name, style = MaterialTheme.typography.bodySmall, color = Color.Gray, modifier = Modifier.padding(top = 8.dp))
-                    val pathStr = firstFile.folderPath.joinToString("/")
-                    val displayPath = if (pathStr.startsWith("/")) pathStr else "/$pathStr"
+                    
+                    // 🌟 寻找最深路径并补全前导斜杠
+                    val deepestFile = series.videos.maxByOrNull { it.folderPath.size } ?: firstFile
+                    val pathStr = deepestFile.folderPath.joinToString("/")
+                    val cleanPath = pathStr.trimStart('/')
+                    val displayPath = if (cleanPath.isBlank()) "/" else "/$cleanPath"
                     AppText(text = "夸克网盘: $displayPath", style = MaterialTheme.typography.bodySmall, color = Color.Gray, modifier = Modifier.padding(top = 4.dp))
-                    val sizeMb = firstFile.size / (1024 * 1024)
-                    AppText(text = "共 ${series.videos.size} 集 | ${sizeMb}MB (单集)", style = MaterialTheme.typography.bodySmall, color = Color.Gray, modifier = Modifier.padding(top = 4.dp))
+                    
+                    // 🌟 动态计算大小单位 (G/MB)
+                    val sizeInBytes = firstFile.size
+                    val sizeInMB = sizeInBytes / (1024f * 1024f)
+                    val sizeText = if (sizeInMB >= 1024f) {
+                        String.format(Locale.getDefault(), "%.2f GB", sizeInMB / 1024f)
+                    } else {
+                        String.format(Locale.getDefault(), "%.1f MB", sizeInMB)
+                    }
+                    
+                    AppText(text = "共 ${series.videos.size} 集 | $sizeText (单集)", style = MaterialTheme.typography.bodySmall, color = Color.Gray, modifier = Modifier.padding(top = 4.dp))
                 }
             }
         }
