@@ -167,17 +167,29 @@ fun VideoLibraryScreen(
     }
 
     Column(modifier = modifier.fillMaxSize().statusBarsPadding()) {
-        Row(modifier = Modifier.fillMaxWidth().background(Color(0xFFF5F5F5)).padding(horizontal = 16.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+        // 顶部栏：毛玻璃半透明质感
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .background(Color.White.copy(alpha = 0.75f)) // 磨砂白
+                .border(0.5.dp, Color.Gray.copy(alpha = 0.15f), RoundedCornerShape(0.dp))
+                .padding(horizontal = 16.dp, vertical = 12.dp), 
+            verticalAlignment = Alignment.CenterVertically
+        ) {
             if (uiState.currentFid != "0") {
-                IconButton(onClick = { viewModel.goBack() }) { Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "返回") }
+                IconButton(onClick = { viewModel.goBack() }, modifier = Modifier.padding(end = 8.dp)) { 
+                    Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "返回") 
+                }
             }
             AppText(
                 text = "资源库",
-                style = MaterialTheme.typography.titleMedium,
-                fontWeight = FontWeight.Bold,
-                modifier = Modifier.weight(1f).padding(start = 16.dp)
+                style = MaterialTheme.typography.titleLarge,
+                fontWeight = FontWeight.ExtraBold,
+                modifier = Modifier.weight(1f).padding(start = if (uiState.currentFid == "0") 8.dp else 0.dp)
             )
-            IconButton(onClick = { showSettingsDialog = true }) { Icon(Icons.Default.Settings, contentDescription = "设置") }
+            IconButton(onClick = { showSettingsDialog = true }) { 
+                Icon(Icons.Default.Settings, contentDescription = "设置", tint = Color.DarkGray) 
+            }
         }
 
         if (uiState.errorMsg != null && !uiState.isLoading) {
@@ -190,25 +202,45 @@ fun VideoLibraryScreen(
             Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
         } else {
             if (uiState.fileList.isEmpty()) {
-                Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { AppText("当前文件夹为空") }
+                Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { AppText("当前文件夹为空", color = Color.Gray) }
             } else {
-                LazyColumn(modifier = Modifier.fillMaxSize(), contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                LazyColumn(
+                    modifier = Modifier.fillMaxSize(), 
+                    contentPadding = PaddingValues(16.dp), 
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
                     items(uiState.fileList) { file ->
+                        // 列表项改为圆角轻盈卡片风格
                         Row(
-                            modifier = Modifier.fillMaxWidth().clickable(enabled = file.isFolder) { 
-                                if (file.isFolder) viewModel.fetchQuarkFiles(file.fid, folderName = file.name) 
-                            }.padding(vertical = 12.dp),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(12.dp))
+                                .background(Color.White.copy(alpha = 0.6f)) // 子级也微透
+                                .clickable(enabled = file.isFolder) { 
+                                    if (file.isFolder) viewModel.fetchQuarkFiles(file.fid, folderName = file.name) 
+                                }
+                                .padding(horizontal = 12.dp, vertical = 14.dp),
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Icon(if (file.isFolder) Icons.Default.Folder else Icons.Default.Movie, null, tint = if (file.isFolder) Color(0xFFFFB300) else Color.Gray)
-                            Column(modifier = Modifier.padding(start = 12.dp).weight(1f)) { AppText(text = file.name, maxLines = 1, overflow = TextOverflow.Ellipsis) }
+                            Icon(
+                                if (file.isFolder) Icons.Default.Folder else Icons.Default.Movie, 
+                                null, 
+                                tint = if (file.isFolder) Color(0xFFFFB300) else Color.Gray,
+                                modifier = Modifier.size(28.dp)
+                            )
+                            Column(modifier = Modifier.padding(start = 16.dp).weight(1f)) { 
+                                AppText(text = file.name, maxLines = 1, overflow = TextOverflow.Ellipsis, fontWeight = FontWeight.Medium) 
+                            }
                             if (file.isFolder) {
                                 IconButton(onClick = { 
                                     val fullPath = (viewModel.browsePath + file.name).joinToString("/")
                                     viewModel.toggleLibrary(file.fid, fullPath) 
                                 }) {
-                                    Icon(if (uiState.selectedLibraryFids.contains(file.fid)) Icons.Default.Star else Icons.Outlined.StarBorder, "加入影视库",
-                                        tint = if (uiState.selectedLibraryFids.contains(file.fid)) Color(0xFFFFB300) else Color.Gray)
+                                    Icon(
+                                        if (uiState.selectedLibraryFids.contains(file.fid)) Icons.Default.Star else Icons.Outlined.StarBorder, 
+                                        "加入影视库",
+                                        tint = if (uiState.selectedLibraryFids.contains(file.fid)) Color(0xFFFFB300) else Color.LightGray
+                                    )
                                 }
                             }
                         }
