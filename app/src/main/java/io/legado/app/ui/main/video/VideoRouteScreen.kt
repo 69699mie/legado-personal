@@ -171,7 +171,7 @@ fun VideoLibraryScreen(
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .background(Color.White.copy(alpha = 0.75f)) // 磨砂白
+                .background(Color.White.copy(alpha = 0.75f)) 
                 .border(0.5.dp, Color.Gray.copy(alpha = 0.15f), RoundedCornerShape(0.dp))
                 .padding(horizontal = 16.dp, vertical = 12.dp), 
             verticalAlignment = Alignment.CenterVertically
@@ -210,12 +210,11 @@ fun VideoLibraryScreen(
                     verticalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
                     items(uiState.fileList) { file ->
-                        // 列表项改为圆角轻盈卡片风格
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .clip(RoundedCornerShape(12.dp))
-                                .background(Color.White.copy(alpha = 0.6f)) // 子级也微透
+                                .background(Color.White.copy(alpha = 0.6f)) 
                                 .clickable(enabled = file.isFolder) { 
                                     if (file.isFolder) viewModel.fetchQuarkFiles(file.fid, folderName = file.name) 
                                 }
@@ -255,8 +254,7 @@ fun VideoLibraryScreen(
             uiState = uiState,
             viewModel = viewModel,
             onDismiss = { showSettingsDialog = false },
-            onWebLoginClick = { 
-            }
+            onWebLoginClick = { }
         )
     }
 }
@@ -300,7 +298,6 @@ fun VideoScraperScreen(
             for (i in 0 until jsonArray.length()) {
                 val obj = jsonArray.getJSONObject(i)
                 val sTitle = obj.optString("seriesTitle")
-                // UI层强制去重，保证同一个剧只显示一次
                 if (sTitle.isNotBlank() && !seenSeries.contains(sTitle)) {
                     seenSeries.add(sTitle)
                     list.add(
@@ -370,7 +367,6 @@ fun VideoScraperScreen(
                 }
             }
         } else if (showAllHistoryPage) {
-            // 全部历史记录全屏页面
             Column(modifier = Modifier.fillMaxSize().statusBarsPadding().background(Color.White)) {
                 Row(modifier = Modifier.fillMaxWidth().padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
                     if (isSelectionMode) {
@@ -463,9 +459,7 @@ fun VideoScraperScreen(
                         fontWeight = FontWeight.Bold,
                         modifier = Modifier.weight(1f).padding(start = 16.dp)
                     )
-                    // 设置按钮
                     IconButton(onClick = { showSettingsDialog = true }) { Icon(Icons.Default.Settings, contentDescription = "设置") }
-                    // 刷新按钮（放在了设置的右侧）
                     IconButton(onClick = { viewModel.loadLibraryVideos() }, enabled = !uiState.isLoading) {
                         Icon(Icons.Default.Refresh, contentDescription = "刷新", tint = if (uiState.isLoading) Color.Gray else Color.Black)
                     }
@@ -492,7 +486,6 @@ fun VideoScraperScreen(
                         val finalOrderList = orderList + allCategories
 
                         LazyColumn(modifier = Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 16.dp)) {
-                            // === 顶部轮播海报 ===
                             item {
                                 val bannerList = remember(uiState.seriesList, uiState.bannerLogic) {
                                     val list = uiState.seriesList.filter { !it.backdropUrl.isNullOrBlank() }
@@ -509,7 +502,6 @@ fun VideoScraperScreen(
                                 }
                             }
 
-                            // === 根据自定义顺序遍历分类 ===
                             finalOrderList.forEach { categoryName ->
                                 if (categoryName == "最近观看") {
                                     if (recentWatchedList.isNotEmpty()) {
@@ -578,7 +570,6 @@ fun VideoScraperScreen(
             }
         }
 
-        // 底部全局刷新/刮削悬浮提示
         if (uiState.isLoading || uiState.isScraping) {
             val isVideoPlaying = uiState.playUrl != null || uiState.currentPlayFile != null || uiState.isDirectPlay
             if (!isVideoPlaying) {
@@ -660,7 +651,6 @@ fun VideoScraperScreen(
         ManualScrapeDialog(series = manualScrapeSeries!!, viewModel = viewModel, onDismiss = { showManualScrapeDialog = false })
     }
 
-    // 清空历史确认框
     if (showClearHistoryConfirm) {
         AlertDialog(
             onDismissRequest = { showClearHistoryConfirm = false },
@@ -737,7 +727,6 @@ fun BannerCarousel(seriesList: List<MediaSeries>, onSelect: (MediaSeries) -> Uni
     }
 }
 
-// 竖屏卡片，首页最近观看横排使用
 @Composable
 fun RecentWatchedCard(item: RecentWatchedItem, onClick: () -> Unit) {
     Column(modifier = Modifier.width(110.dp).clickable { onClick() }) {
@@ -752,7 +741,6 @@ fun RecentWatchedCard(item: RecentWatchedItem, onClick: () -> Unit) {
     }
 }
 
-// 竖屏卡片，全部历史记录网格使用
 @Composable
 fun RecentWatchedGridCard(
     item: RecentWatchedItem, 
@@ -787,9 +775,6 @@ fun RecentWatchedGridCard(
     }
 }
 
-// ==========================================
-// 辅助组件：设置弹窗、手动刮削弹窗
-// ==========================================
 @Composable
 private fun SettingsDialog(
     uiState: VideoUiState,
@@ -810,7 +795,7 @@ private fun SettingsDialog(
 
     Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
         Surface(
-            shape = RoundedCornerShape(0.dp), // 改为全屏不需要圆角
+            shape = RoundedCornerShape(0.dp),
             color = Color.White, 
             modifier = Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding()
         ) {
@@ -820,7 +805,6 @@ private fun SettingsDialog(
                     .fillMaxSize()
                     .verticalScroll(rememberScrollState()) 
             ) {
-                // 顶部标题栏 + 关闭按钮
                 Row(modifier = Modifier.fillMaxWidth().padding(bottom = 16.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                     AppText(text = "设置", fontWeight = FontWeight.Bold, fontSize = 20.sp)
                     IconButton(onClick = onDismiss) {
@@ -907,7 +891,6 @@ private fun SettingsDialog(
                     }
                 }
 
-                // 分类排序入口
                 Row(
                     modifier = Modifier.fillMaxWidth().clickable { showCategoryOrderDialog = true }.padding(vertical = 8.dp),
                     horizontalArrangement = Arrangement.SpaceBetween,
@@ -998,7 +981,6 @@ private fun SettingsDialog(
     }
 }
 
-// 拖拽排序弹窗
 @Composable
 fun CategoryOrderDialog(
     uiState: VideoUiState,
@@ -1012,7 +994,6 @@ fun CategoryOrderDialog(
         val list = mutableStateListOf<String>()
         list.addAll(currentOrder)
         existingCategories.forEach { if (!list.contains(it)) list.add(it) }
-        // 强制保证“最近观看”在第一位
         if (!list.contains("最近观看")) list.add(0, "最近观看") else {
             list.remove("最近观看")
             list.add(0, "最近观看")
@@ -1022,7 +1003,6 @@ fun CategoryOrderDialog(
 
     val lazyListState = rememberLazyListState()
     val reorderableState = rememberReorderableLazyListState(lazyListState) { from, to ->
-        // 防越界和防逻辑冲突：如果拖拽的是“最近观看”，或者是把它放到第一位，直接拦截
         if (from.index == 0) return@rememberReorderableLazyListState
         if (to.index > 0 && from.index != to.index) {
             val item = orderList.removeAt(from.index)
@@ -1066,8 +1046,6 @@ fun CategoryOrderDialog(
                                     verticalAlignment = Alignment.CenterVertically
                                 ) {
                                     AppText(item, fontWeight = FontWeight.Medium)
-                                    
-                                    // 此处添加 Modifier.draggableHandle() 修复无法拖拽问题
                                     IconButton(
                                         onClick = {},
                                         modifier = Modifier.draggableHandle()
@@ -1133,10 +1111,6 @@ private fun ManualScrapeDialog(
     }
 }
 
-
-// ==========================================
-// 播放器与登录页面
-// ==========================================
 @SuppressLint("SetJavaScriptEnabled")
 @Composable
 fun WebLoginView(onLoginSuccess: (String) -> Unit, onCancel: () -> Unit) {
@@ -1352,7 +1326,7 @@ fun InternalVideoPlayer(
 
     var audioTracks by remember { mutableStateOf<List<Tracks.Group>>(emptyList()) }
     var textTracks by remember { mutableStateOf<List<Tracks.Group>>(emptyList()) }
-    var trackSelectionVersion by remember { mutableIntStateOf(0) } // 用于强制刷新音频高亮状态
+    var trackSelectionVersion by remember { mutableIntStateOf(0) } 
 
     val episodeListState = rememberLazyListState()
 
@@ -1404,17 +1378,14 @@ fun InternalVideoPlayer(
             }
     }
 
-    // 监听生命周期，处理小窗关闭、后台播放、以及 PiP UI 同步
     DisposableEffect(lifecycleOwner) {
         var isPlayerReleased = false
         val observer = LifecycleEventObserver { _, event ->
             if (event == Lifecycle.Event.ON_PAUSE || event == Lifecycle.Event.ON_STOP) {
-                // 延迟复核，确保关闭小窗时，系统能准确把 isInPictureInPictureMode 置为 false
                 Handler(Looper.getMainLooper()).postDelayed({
                     if (!isPlayerReleased && activity?.isInPictureInPictureMode != true) {
                         exoPlayer.pause()
                     }
-                    // 如果刚进入小窗，立刻同步 UI 状态，防止残留
                     if (activity?.isInPictureInPictureMode == true) {
                         isInPip.value = true
                     }
@@ -1432,7 +1403,6 @@ fun InternalVideoPlayer(
         }
     }
 
-    // 动态注册广播接收器，处理小窗原生按钮点击
     val pipActionReceiver = remember {
         object : BroadcastReceiver() {
             override fun onReceive(ctx: Context?, intent: Intent?) {
@@ -1467,7 +1437,6 @@ fun InternalVideoPlayer(
             addAction("ACTION_PIP_NEXT")
             addAction("ACTION_PIP_PLAY_PAUSE")
         }
-        // 修复小窗点击无响应：Android 13+ 需要 Context.RECEIVER_EXPORTED
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             context.registerReceiver(pipActionReceiver, filter, Context.RECEIVER_EXPORTED)
         } else {
@@ -1478,13 +1447,11 @@ fun InternalVideoPlayer(
         }
     }
 
-    // 优化：PiP 状态同步（当播放状态改变时，刷新系统控制面板）
     LaunchedEffect(isPlaying, isInPip.value) {
         if (isInPip.value && Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             val handler = Handler(Looper.getMainLooper())
             handler.post {
                 try {
-                    // 终极修复：通过绑带时间戳的 Data 和 requestCode，彻底打破部分国产 ROM 的 PendingIntent 缓存
                     val timeStamp = System.currentTimeMillis()
                     
                     val prevIntent = Intent("ACTION_PIP_PREV").setPackage(context.packageName).setData(Uri.parse("pip://prev$timeStamp"))
@@ -1641,7 +1608,6 @@ fun InternalVideoPlayer(
         }
     }
 
-    // 打开选集侧边栏时，自动定位到当前集
     LaunchedEffect(showEpisodeDrawer) {
         if (showEpisodeDrawer) {
             val idx = series.videos.indexOfFirst { it.fid == currentFile.fid }
@@ -1716,25 +1682,33 @@ fun InternalVideoPlayer(
                 var dragDirection = "" // "seek", "brightness", "volume"
                 var startPos = 0L
                 var accumulatedX = 0f
+                var totalDx = 0f
+                var totalDy = 0f
+                var startX = 0f
                 
                 detectDragGestures(
                     onDragStart = { offset ->
                         dragDirection = ""
                         accumulatedX = 0f
+                        totalDx = 0f
+                        totalDy = 0f
+                        startX = offset.x
                         startPos = exoPlayer.currentPosition
                     },
                     onDrag = { change, dragAmount ->
                         change.consume()
                         accumulatedX += dragAmount.x
+                        totalDx += dragAmount.x
+                        totalDy += dragAmount.y
                         
                         if (dragDirection.isEmpty()) {
-                            // 判定阈值 15px，判断方向
-                            if (abs(accumulatedX) > 15f || abs(dragAmount.y) > 15f) {
-                                if (abs(accumulatedX) > abs(dragAmount.y)) {
+                            // 判定阈值 15px，判断总方向
+                            if (abs(totalDx) > 15f || abs(totalDy) > 15f) {
+                                if (abs(totalDx) > abs(totalDy)) {
                                     dragDirection = "seek"
                                     isDraggingSeekBar = true
                                 } else {
-                                    dragDirection = if (change.position.x < size.width / 2) "brightness" else "volume"
+                                    dragDirection = if (startX < size.width / 2) "brightness" else "volume"
                                     gestureType = dragDirection
                                     if (dragDirection == "brightness") {
                                         val currentB = activity?.window?.attributes?.screenBrightness ?: 0.5f
@@ -1912,8 +1886,10 @@ fun InternalVideoPlayer(
                                         .setAspectRatio(Rational(16, 9))
                                         .setActions(listOf(prevAction, playPauseAction, nextAction))
                                         .build()
-                                    activity?.enterPictureInPictureMode(params)
-                                    isInPip.value = true // 立刻进入UI清理状态
+                                    val success = activity?.enterPictureInPictureMode(params) ?: false
+                                    if (success) {
+                                        isInPip.value = true 
+                                    }
                                 } catch (e: Exception) {
                                     Toast.makeText(context, "设备不支持画中画", Toast.LENGTH_SHORT).show()
                                 }
@@ -2122,7 +2098,6 @@ fun InternalVideoPlayer(
             }
         }
 
-        // 长按快进与快进快退提示：移至顶部居中并加上淡入淡出
         AnimatedVisibility(
             visible = isLongPressing,
             enter = fadeIn(),
@@ -2227,7 +2202,6 @@ fun InternalVideoPlayer(
                         audioTracks.forEachIndexed { index, trackGroup ->
                             val format = trackGroup.getTrackFormat(0)
                             val label = format.label ?: format.language ?: "音轨 ${index + 1}"
-                            // 使用 trackSelectionVersion 强制刷新监听
                             val isSelected = remember(trackSelectionVersion, audioTracks) { trackGroup.isTrackSelected(0) }
                             Row(
                                 modifier = Modifier.fillMaxWidth().clickable {
@@ -2238,7 +2212,6 @@ fun InternalVideoPlayer(
                                 }.padding(vertical = 12.dp),
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
-                                // 选中纯白，未选中灰色，不加背景色块
                                 AppText(label, color = if (isSelected) Color.White else Color.Gray, fontSize = 15.sp, modifier = Modifier.weight(1f))
                             }
                         }
@@ -2546,7 +2519,6 @@ fun MediaDetailScreen(
             }
         }
 
-        // 系列其他影片推荐
         if (relatedSeries.isNotEmpty()) {
             item {
                 AppText(
