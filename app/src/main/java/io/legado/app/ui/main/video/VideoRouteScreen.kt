@@ -1679,71 +1679,82 @@ fun InternalVideoPlayer(
                     return@pointerInput
                 }
                 
-                var dragDirection = "" // "seek", "brightness", "volume"
-                var startPos = 0L
-                var accumulatedX = 0f
-                var totalDx = 0f
-                var totalDy = 0f
+                var gestureMode = "" // "seek", "brightness", "volume", "none"
                 var startX = 0f
+                var startY = 0f
+                var startPos = 0L
+                var startBrightness = 0f
+                var startVolume = 0
                 
                 detectDragGestures(
                     onDragStart = { offset ->
-                        dragDirection = ""
-                        accumulatedX = 0f
-                        totalDx = 0f
-                        totalDy = 0f
+                        gestureMode = ""
                         startX = offset.x
+                        startY = offset.y
                         startPos = exoPlayer.currentPosition
+                        startBrightness = activity?.window?.attributes?.screenBrightness?.let { if (it < 0) 0.5f else it } ?: 0.5f
+                        startVolume = audioManager.getStreamVolume(AudioManager.STREAM_MUSIC)
                     },
-                    onDrag = { change, dragAmount ->
+                    onDrag = { change, _ ->
                         change.consume()
-                        accumulatedX += dragAmount.x
-                        totalDx += dragAmount.x
-                        totalDy += dragAmount.y
                         
-                        if (dragDirection.isEmpty()) {
-                            // 判定阈值 15px，判断总方向
-                            if (abs(totalDx) > 15f || abs(totalDy) > 15f) {
-                                if (abs(totalDx) > abs(totalDy)) {
-                                    dragDirection = "seek"
+                        val deltaX = change.position.x - startX
+                        val deltaY = change.position.y - startY
+                        val absX = abs(deltaX)
+                        val absY = abs(deltaY)
+                        
+                        if (gestureMode.isEmpty()) {
+                            // 设定阈值 15f，避免手抖
+                            if (absX > 15f || absY > 15f) {
+                                if (absX > absY) {
+                                    gestureMode = "seek"
                                     isDraggingSeekBar = true
                                 } else {
-                                    dragDirection = if (startX < size.width / 2) "brightness" else "volume"
-                                    gestureType = dragDirection
-                                    if (dragDirection == "brightness") {
-                                        val currentB = activity?.window?.attributes?.screenBrightness ?: 0.5f
-                                        gestureValue = if (currentB < 0) 0.5f else currentB
+                                    if (startX < size.width / 3f) {
+                                        gestureMode = "brightness"
+                                        gestureType = "brightness"
+                                        gestureValue = startBrightness
+                                    } else if (startX > size.width * 2f / 3f) {
+                                        gestureMode = "volume"
+                                        gestureType = "volume"
+                                        val maxVol = audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC)
+                                        gestureValue = startVolume.toFloat() / maxVol
                                     } else {
-                                        gestureValue = audioManager.getStreamVolume(AudioManager.STREAM_MUSIC).toFloat() / audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC)
+                                        gestureMode = "none"
                                     }
                                 }
                             }
                         }
                         
-                        if (dragDirection == "seek") {
-                            // 滑动满屏代表 300 秒
-                            val timeDeltaMs = (accumulatedX / size.width) * 300 * 1000
-                            val target = (startPos + timeDeltaMs.toLong()).coerceIn(0L, if (duration > 0) duration else Long.MAX_VALUE)
-                            currentPosition = target
-                            exoPlayer.seekTo(target)
-                            val diffSec = (timeDeltaMs / 1000).toInt()
-                            seekMessage = if (diffSec >= 0) "快进 +${diffSec}秒" else "快退 ${diffSec}秒"
-                        } else if (dragDirection == "brightness") {
-                            gestureValue = (gestureValue - dragAmount.y / size.height).coerceIn(0f, 1f)
-                            activity?.window?.let { val params = it.attributes; params.screenBrightness = gestureValue; it.attributes = params }
-                        } else if (dragDirection == "volume") {
-                            gestureValue = (gestureValue - dragAmount.y / size.height).coerceIn(0f, 1f)
-                            val maxVol = audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC)
-                            audioManager.setStreamVolume(AudioManager.STREAM_MUSIC, (gestureValue * maxVol).roundToInt(), 0)
+                        when (gestureMode) {
+                            "seek" -> {
+                                val timeDeltaMs = (deltaX / size.width) * 300 * 1000
+                                val target = (startPos + timeDeltaMs.toLong()).coerceIn(0L, if (duration > 0) duration else Long.MAX_VALUE)
+                                currentPosition = target
+                                exoPlayer.seekTo(target)
+                                val diffSec = (timeDeltaMs / 1000).toInt()
+                                seekMessage = if (diffSec >= 0) "快进 +${diffSec}秒" else "快退 ${diffSec}秒"
+                            }
+                            "brightness" -> {
+                                gestureValue = (startBrightness - (deltaY / size.height)).coerceIn(0f, 1f)
+                                activity?.window?.let { val params = it.attributes; params.screenBrightness = gestureValue; it.attributes = params }
+                            }
+                            "volume" -> {
+                                val maxVol = audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC)
+                                val newVolFloat = (startVolume.toFloat() / maxVol) - (deltaY / size.height)
+                                gestureValue = newVolFloat.coerceIn(0f, 1f)
+                                audioManager.setStreamVolume(AudioManager.STREAM_MUSIC, (gestureValue * maxVol).roundToInt(), 0)
+                            }
                         }
                     },
                     onDragEnd = { 
-                        dragDirection = "" 
+                        gestureMode = "" 
                         gestureType = "" 
                         isDraggingSeekBar = false 
+                        if (isPlaying) exoPlayer.play()
                     },
                     onDragCancel = { 
-                        dragDirection = "" 
+                        gestureMode = "" 
                         gestureType = ""
                         isDraggingSeekBar = false 
                     }
