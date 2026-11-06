@@ -392,15 +392,46 @@ fun VideoScraperScreen(
             }
 
             if (latestSeries != null) {
-                MediaDetailScreen(
-                    series = latestSeries,
-                    allSeries = uiState.seriesList,
-                    isScraping = uiState.isScraping,
-                    onBack = { viewModel.selectSeries(null) },
-                    onPlay = { series, file -> viewModel.playVideo(context, series, file) },
-                    onLongClickPoster = { manualScrapeSeries = it; showManualScrapeDialog = true },
-                    onSelectSeries = { viewModel.selectSeries(it) }
-                )
+                // 判断数据是否残缺（没简介、没海报、未分类），且正在刮削
+                val isDataIncomplete = latestSeries.overview.isNullOrBlank() || latestSeries.posterUrl.isNullOrBlank() || latestSeries.category == "未分类"
+                val showLoading = uiState.isScraping && isDataIncomplete && !latestSeries.isManuallyEdited
+
+                if (showLoading) {
+                    // 🌟 完美替代图二：全屏加载中，带波浪跳动的省略号
+                    Box(
+                        modifier = Modifier.fillMaxSize().background(Color.White).statusBarsPadding(),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                            CircularProgressIndicator(color = Color.Gray)
+                            Spacer(modifier = Modifier.height(16.dp))
+                            AnimatedLoadingDots(
+                                color = Color.Gray,
+                                fontSize = 16.sp,
+                                text = "正在获取影视详情"
+                            )
+                        }
+                        
+                        // 左上角保留返回按钮，防止卡死
+                        IconButton(
+                            onClick = { viewModel.selectSeries(null) },
+                            modifier = Modifier.align(Alignment.TopStart).padding(16.dp)
+                        ) {
+                            Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "返回", tint = Color.Black)
+                        }
+                    }
+                } else {
+                    // 🌟 数据就绪后，自动瞬间渲染完整的图一
+                    MediaDetailScreen(
+                        series = latestSeries,
+                        allSeries = uiState.seriesList,
+                        isScraping = uiState.isScraping,
+                        onBack = { viewModel.selectSeries(null) },
+                        onPlay = { series, file -> viewModel.playVideo(context, series, file) },
+                        onLongClickPoster = { manualScrapeSeries = it; showManualScrapeDialog = true },
+                        onSelectSeries = { viewModel.selectSeries(it) }
+                    )
+                }
             }
         } else if (viewAllCategory != null) {
             val categorySeries = uiState.seriesList.filter { it.category == viewAllCategory }
@@ -1270,7 +1301,7 @@ fun InternalVideoPlayer(
     val isLandscape = configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
     val videoSettingsRepository = koinInject<VideoSettingsRepository>()
 
-    // 修复点1：使用 Activity 真实状态作为兜底，防止重组时状态丢失
+    // 使用 Activity 真实状态作为兜底，防止重组时状态丢失
     val isInPip = remember { mutableStateOf(activity?.isInPictureInPictureMode == true) }
     val lifecycleOwner = LocalLifecycleOwner.current
 
@@ -1522,14 +1553,13 @@ fun InternalVideoPlayer(
             context,
             pipActionReceiver,
             filter,
-            ContextCompat.RECEIVER_NOT_EXPORTED
+            ContextCompat.RECEIVER_EXPORTED // 使用 EXPORTED 允许 SystemUI 发送广播
         )
         onDispose {
             context.unregisterReceiver(pipActionReceiver)
         }
     }
 
-    // 修复点2：加入时间戳强制系统刷新图标缓存
     LaunchedEffect(isPlaying, isInPip.value) {
         if (isInPip.value && Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             val handler = Handler(Looper.getMainLooper())
@@ -1539,12 +1569,13 @@ fun InternalVideoPlayer(
                     val playPauseBitmap = createPipIcon(if (isPlaying) "pause" else "play", context)
                     val nextBitmap = createPipIcon("next", context)
 
+                    // 使用 MUTABLE 和唯一 requestCode，添加时间戳强制刷新
                     val prevIntent = Intent("com.mie.reading.ACTION_PIP_PREV").setPackage(context.packageName).setData(Uri.parse("pip://prev_${System.currentTimeMillis()}"))
-                    val prevPendingIntent = PendingIntent.getBroadcast(context, 100, prevIntent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
+                    val prevPendingIntent = PendingIntent.getBroadcast(context, 100, prevIntent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_MUTABLE)
                     val prevAction = RemoteAction(Icon.createWithBitmap(prevBitmap), "上一集", "上一集", prevPendingIntent)
 
                     val playPauseIntent = Intent("com.mie.reading.ACTION_PIP_PLAY_PAUSE").setPackage(context.packageName).setData(Uri.parse("pip://play_pause_${isPlaying}_${System.currentTimeMillis()}"))
-                    val playPausePendingIntent = PendingIntent.getBroadcast(context, 101, playPauseIntent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
+                    val playPausePendingIntent = PendingIntent.getBroadcast(context, 101, playPauseIntent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_MUTABLE)
                     val playPauseAction = RemoteAction(
                         Icon.createWithBitmap(playPauseBitmap),
                         if (isPlaying) "暂停" else "播放",
@@ -1553,7 +1584,7 @@ fun InternalVideoPlayer(
                     )
 
                     val nextIntent = Intent("com.mie.reading.ACTION_PIP_NEXT").setPackage(context.packageName).setData(Uri.parse("pip://next_${System.currentTimeMillis()}"))
-                    val nextPendingIntent = PendingIntent.getBroadcast(context, 102, nextIntent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
+                    val nextPendingIntent = PendingIntent.getBroadcast(context, 102, nextIntent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_MUTABLE)
                     val nextAction = RemoteAction(Icon.createWithBitmap(nextBitmap), "下一集", "下一集", nextPendingIntent)
 
                     val params = PictureInPictureParams.Builder()
@@ -1903,11 +1934,8 @@ fun InternalVideoPlayer(
             }
         )
 
-        // 修复点3：双重判断拦截全屏UI（防止重组时泄漏）
+        // 彻底切断 UI 泄漏：只要处于小窗，直接 return，不画任何按钮
         if (activity?.isInPictureInPictureMode == true || isInPip.value) {
-            Box(modifier = Modifier.fillMaxSize()) {
-                // 纯黑背景，不显示 Compose UI
-            }
             return@Box
         }
 
@@ -2005,13 +2033,12 @@ fun InternalVideoPlayer(
                                     val playPauseBitmap = createPipIcon(if (isPlaying) "pause" else "play", context)
                                     val nextBitmap = createPipIcon("next", context)
 
-                                    // 修复点4：进入小窗时同样使用带时间戳的 PendingIntent
                                     val prevIntent = Intent("com.mie.reading.ACTION_PIP_PREV").setPackage(context.packageName).setData(Uri.parse("pip://prev_${System.currentTimeMillis()}"))
-                                    val prevPendingIntent = PendingIntent.getBroadcast(context, 100, prevIntent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
+                                    val prevPendingIntent = PendingIntent.getBroadcast(context, 100, prevIntent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_MUTABLE)
                                     val prevAction = RemoteAction(Icon.createWithBitmap(prevBitmap), "上一集", "上一集", prevPendingIntent)
 
                                     val playPauseIntent = Intent("com.mie.reading.ACTION_PIP_PLAY_PAUSE").setPackage(context.packageName).setData(Uri.parse("pip://play_pause_${isPlaying}_${System.currentTimeMillis()}"))
-                                    val playPausePendingIntent = PendingIntent.getBroadcast(context, 101, playPauseIntent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
+                                    val playPausePendingIntent = PendingIntent.getBroadcast(context, 101, playPauseIntent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_MUTABLE)
                                     val playPauseAction = RemoteAction(
                                         Icon.createWithBitmap(playPauseBitmap),
                                         if (isPlaying) "暂停" else "播放",
@@ -2020,7 +2047,7 @@ fun InternalVideoPlayer(
                                     )
 
                                     val nextIntent = Intent("com.mie.reading.ACTION_PIP_NEXT").setPackage(context.packageName).setData(Uri.parse("pip://next_${System.currentTimeMillis()}"))
-                                    val nextPendingIntent = PendingIntent.getBroadcast(context, 102, nextIntent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
+                                    val nextPendingIntent = PendingIntent.getBroadcast(context, 102, nextIntent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_MUTABLE)
                                     val nextAction = RemoteAction(Icon.createWithBitmap(nextBitmap), "下一集", "下一集", nextPendingIntent)
 
                                     val params = PictureInPictureParams.Builder()
