@@ -106,6 +106,7 @@ import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import androidx.compose.ui.window.DialogWindowProvider
+import androidx.core.content.ContextCompat
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
@@ -127,6 +128,7 @@ import androidx.media3.exoplayer.DefaultRenderersFactory
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.source.ProgressiveMediaSource
 import androidx.media3.session.MediaSession
+import androidx.media3.session.MediaSessionService
 import androidx.media3.ui.PlayerView
 import coil3.compose.AsyncImage
 import io.legado.app.data.repository.VideoSettingsRepository
@@ -194,6 +196,9 @@ fun createPipIcon(type: String, context: Context): Bitmap {
     return bitmap
 }
 
+// ==========================================
+// 1. 资源库独立页面
+// ==========================================
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
 fun VideoLibraryScreen(
@@ -299,6 +304,10 @@ fun VideoLibraryScreen(
     }
 }
 
+
+// ==========================================
+// 2. 影视库独立页面
+// ==========================================
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
 fun VideoScraperScreen(
@@ -825,9 +834,12 @@ private fun SettingsDialog(
         LaunchedEffect(Unit) {
             val window = (view.parent as? DialogWindowProvider)?.window
             if (window != null) {
-                window.setDimAmount(0f)
-                window.setBackgroundDrawableResource(android.R.color.transparent)
+                // 移除系统遮罩层
+                window.clearFlags(WindowManager.LayoutParams.FLAG_DIM_BEHIND)
+                // 状态栏和导航栏强制透明
                 window.statusBarColor = android.graphics.Color.TRANSPARENT
+                window.navigationBarColor = android.graphics.Color.TRANSPARENT
+                // 强制状态栏图标为黑色
                 val controller = WindowCompat.getInsetsController(window, window.decorView)
                 controller.isAppearanceLightStatusBars = true
                 controller.isAppearanceLightNavigationBars = true
@@ -1428,12 +1440,32 @@ fun InternalVideoPlayer(
             }
     }
 
+    // 核心修复2：真正激活并绑定 MediaSession 的 Callback，作为小窗按钮的终极兜底
     val mediaSession = remember {
-        MediaSession.Builder(context, exoPlayer).build()
+        MediaSession.Builder(context, exoPlayer)
+            .setCallback(object : MediaSession.Callback {
+                override fun onPlay() { exoPlayer.play() }
+                override fun onPause() { exoPlayer.pause() }
+                override fun onSkipToNext() {
+                    val idx = series.videos.indexOfFirst { it.fid == currentFile.fid }
+                    if (idx != -1 && idx < series.videos.size - 1) {
+                        viewModel.playVideo(context, series, series.videos[idx + 1])
+                    }
+                }
+                override fun onSkipToPrevious() {
+                    val idx = series.videos.indexOfFirst { it.fid == currentFile.fid }
+                    if (idx > 0) {
+                        viewModel.playVideo(context, series, series.videos[idx - 1])
+                    }
+                }
+            })
+            .build()
+            .also { it.isActive = true }
     }
 
     DisposableEffect(mediaSession) {
         onDispose {
+            mediaSession.isActive = false
             mediaSession.release()
         }
     }
@@ -1491,17 +1523,19 @@ fun InternalVideoPlayer(
         }
     }
 
+    // 核心修复1：广播必须使用 RECEIVER_EXPORTED，否则系统画中画根本调不通
     DisposableEffect(Unit) {
         val filter = IntentFilter().apply {
             addAction("com.mie.reading.ACTION_PIP_PREV")
             addAction("com.mie.reading.ACTION_PIP_NEXT")
             addAction("com.mie.reading.ACTION_PIP_PLAY_PAUSE")
         }
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            context.registerReceiver(pipActionReceiver, filter, Context.RECEIVER_EXPORTED)
-        } else {
-            context.registerReceiver(pipActionReceiver, filter)
-        }
+        ContextCompat.registerReceiver(
+            context,
+            pipActionReceiver,
+            filter,
+            ContextCompat.RECEIVER_EXPORTED
+        )
         onDispose {
             context.unregisterReceiver(pipActionReceiver)
         }
