@@ -931,14 +931,24 @@ class VideoScraperViewModel(
         } else series
 
         val cookie = _uiState.value.cookie
-        val epNum = file.parsedInfo?.episode
-        val season = file.parsedInfo?.season ?: 1
-        // 修复点1：去掉了 videos.size > 1 的限制
-        val titleText = if (epNum != null && realSeries.category != "电影") {
-            val tmdbEpTitle = realSeries.seasonEpisodeTitles["${season}_${epNum}"] ?: realSeries.episodeTitles[epNum]
-            if (!tmdbEpTitle.isNullOrBlank()) "${realSeries.title} 第${epNum}集 $tmdbEpTitle"
-            else "${realSeries.title} 第${epNum}集"
-        } else { realSeries.title }
+        
+        // 修复：如果 parsedInfo 为空（重启时的临时对象），重新解析
+        val parsedInfo = file.parsedInfo ?: VideoFileNameParser.parse(file.name)
+        val epNum = parsedInfo.episode
+        val season = parsedInfo.season ?: 1
+        
+        var titleText = realSeries.title
+        if (realSeries.category != "电影") {
+            // 修复：强行用正则从 file.name 里提取集数（兼容“狂飙 第2集 安欣…”）
+            val realEpNum = epNum ?: Regex("第\\s*([0-9]+)\\s*集").find(file.name)?.groupValues?.get(1)?.toIntOrNull()
+            if (realEpNum != null) {
+                val tmdbEpTitle = realSeries.seasonEpisodeTitles["${season}_${realEpNum}"] ?: realSeries.episodeTitles[realEpNum]
+                titleText = if (!tmdbEpTitle.isNullOrBlank()) "${realSeries.title} 第${realEpNum}集 $tmdbEpTitle"
+                else "${realSeries.title} 第${realEpNum}集"
+            } else if (file.name.contains("第") && file.name.contains("集")) {
+                titleText = file.name // 如果提取不到，直接用完整文件名兜底
+            }
+        }
 
         try {
             val jsonArray = JSONArray(videoSettingsRepository.recentWatchedVideos)
@@ -951,7 +961,7 @@ class VideoScraperViewModel(
             }
             val newObj = JSONObject().apply {
                 put("fid", file.fid)
-                put("title", titleText)
+                put("title", titleText) // 存下完整标题
                 put("seriesTitle", realSeries.title)
                 put("coverPath", realSeries.posterUrl ?: "")
                 put("timestamp", System.currentTimeMillis())
@@ -997,14 +1007,21 @@ class VideoScraperViewModel(
             isHandlingPendingRequest = true
             videoSettingsRepository.pendingPlayFid = null
             
-            val epNum = file.parsedInfo?.episode
-            val season = file.parsedInfo?.season ?: 1
-            // 修复点1：去掉了 videos.size > 1 的限制
-            val titleText = if (epNum != null && series.category != "电影") {
-                val tmdbEpTitle = series.seasonEpisodeTitles["${season}_${epNum}"] ?: series.episodeTitles[epNum]
-                if (!tmdbEpTitle.isNullOrBlank()) "${series.title} 第${epNum}集 $tmdbEpTitle"
-                else "${series.title} 第${epNum}集"
-            } else { series.title }
+            val parsedInfo = file.parsedInfo ?: VideoFileNameParser.parse(file.name)
+            val epNum = parsedInfo.episode
+            val season = parsedInfo.season ?: 1
+            
+            var titleText = series.title
+            if (series.category != "电影") {
+                val realEpNum = epNum ?: Regex("第\\s*([0-9]+)\\s*集").find(file.name)?.groupValues?.get(1)?.toIntOrNull()
+                if (realEpNum != null) {
+                    val tmdbEpTitle = series.seasonEpisodeTitles["${season}_${realEpNum}"] ?: series.episodeTitles[realEpNum]
+                    titleText = if (!tmdbEpTitle.isNullOrBlank()) "${series.title} 第${realEpNum}集 $tmdbEpTitle"
+                    else "${series.title} 第${realEpNum}集"
+                } else if (file.name.contains("第") && file.name.contains("集")) {
+                    titleText = file.name
+                }
+            }
 
             _uiState.update { it.copy(playUrl = null, playTitle = titleText, currentSeries = series, currentPlayFile = file, isDirectPlay = true) }
             
