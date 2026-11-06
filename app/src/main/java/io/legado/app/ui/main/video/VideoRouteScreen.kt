@@ -133,7 +133,6 @@ import org.json.JSONArray
 import org.koin.androidx.compose.koinViewModel
 import org.koin.compose.koinInject
 import sh.calvin.reorderable.ReorderableItem
-import sh.calvin.reorderable.draggableHandle
 import sh.calvin.reorderable.rememberReorderableLazyListState
 import java.util.Locale
 import java.util.concurrent.TimeUnit
@@ -1028,18 +1027,9 @@ fun CategoryOrderDialog(
                                 ) {
                                     AppText(item, fontWeight = FontWeight.Medium)
                                     
-                                    // 只有非“最近观看”才可以拖拽
-                                    if (item != "最近观看") {
-                                        IconButton(
-                                            onClick = {},
-                                            modifier = Modifier.draggableHandle()
-                                        ) {
-                                            Icon(Icons.Default.Menu, contentDescription = "拖动排序", tint = Color.Gray)
-                                        }
-                                    } else {
-                                        IconButton(onClick = {}) {
-                                            Icon(Icons.Default.Menu, contentDescription = "固定", tint = Color.LightGray)
-                                        }
+                                    // 移除了 draggableHandle，整个卡片区域长按即可拖拽
+                                    IconButton(onClick = {}) {
+                                        Icon(Icons.Default.Menu, contentDescription = "拖动排序", tint = if (item != "最近观看") Color.Gray else Color.LightGray)
                                     }
                                 }
                             }
