@@ -126,6 +126,7 @@ import androidx.media3.exoplayer.DefaultLoadControl
 import androidx.media3.exoplayer.DefaultRenderersFactory
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.source.ProgressiveMediaSource
+import androidx.media3.session.MediaSession
 import androidx.media3.ui.PlayerView
 import coil3.compose.AsyncImage
 import io.legado.app.data.repository.VideoSettingsRepository
@@ -384,8 +385,11 @@ fun VideoScraperScreen(
 
     Box(modifier = Modifier.fillMaxSize().background(AppBackgroundColor)) {
         if (uiState.currentSeries != null) {
+            // 关键修复：实时从全局列表中获取当前剧集的最新数据，解决详情页数据不同步问题
+            val latestSeries = uiState.seriesList.find { it.id == uiState.currentSeries!!.id } ?: uiState.currentSeries!!
+            
             MediaDetailScreen(
-                series = uiState.currentSeries!!,
+                series = latestSeries,
                 allSeries = uiState.seriesList,
                 onBack = { viewModel.selectSeries(null) },
                 onPlay = { series, file -> viewModel.playVideo(context, series, file) },
@@ -612,23 +616,27 @@ fun VideoScraperScreen(
             }
         }
 
-        if (uiState.isLoading || uiState.isScraping) {
-            val isVideoPlaying = uiState.playUrl != null || uiState.currentPlayFile != null || uiState.isDirectPlay
-            if (!isVideoPlaying) {
-                Box(
-                    modifier = Modifier
-                        .align(Alignment.BottomCenter)
-                        .padding(bottom = 100.dp)
-                        .background(Color.White.copy(alpha = 0.95f), RoundedCornerShape(24.dp))
-                        .border(1.dp, Color.Gray.copy(alpha = 0.2f), RoundedCornerShape(24.dp))
-                        .padding(horizontal = 24.dp, vertical = 12.dp)
-                ) {
-                    AnimatedLoadingDots(
-                        color = Color.Black, 
-                        fontSize = 14.sp, 
-                        text = if (uiState.isScraping) "正在刮削数据" else "正在刷新列表"
-                    )
-                }
+        // 关键修复：只在没有进入详情页且不在播放时，才显示悬浮窗
+        val showLoadingOverlay = (uiState.isLoading || uiState.isScraping) && 
+                                  uiState.currentSeries == null && 
+                                  uiState.playUrl == null && 
+                                  uiState.currentPlayFile == null && 
+                                  !uiState.isDirectPlay
+
+        if (showLoadingOverlay) {
+            Box(
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .padding(bottom = 100.dp)
+                    .background(Color.White.copy(alpha = 0.95f), RoundedCornerShape(24.dp))
+                    .border(1.dp, Color.Gray.copy(alpha = 0.2f), RoundedCornerShape(24.dp))
+                    .padding(horizontal = 24.dp, vertical = 12.dp)
+            ) {
+                AnimatedLoadingDots(
+                    color = Color.Black, 
+                    fontSize = 14.sp, 
+                    text = if (uiState.isScraping) "正在刮削数据" else "正在刷新列表"
+                )
             }
         }
     }
@@ -1357,11 +1365,9 @@ fun InternalVideoPlayer(
     var gestureValue by remember { mutableFloatStateOf(0f) }
     var isDraggingSeekBar by remember { mutableStateOf(false) }
     
-    // 用于记录拖动进度条时的秒数差值
     var dragStartPosition by remember { mutableLongStateOf(0L) }
     var seekDeltaMillis by remember { mutableLongStateOf(0L) }
     
-    // 用于双击快进/快退的提示文字
     var seekMessage by remember { mutableStateOf<String?>(null) }
 
     val season = currentFile.parsedInfo?.season ?: 1
@@ -1433,6 +1439,17 @@ fun InternalVideoPlayer(
                 playWhenReady = true
                 setWakeMode(androidx.media3.common.C.WAKE_MODE_NETWORK)
             }
+    }
+
+    // 注册 MediaSession 以便系统更好地处理媒体按键（针对画中画）
+    val mediaSession = remember {
+        MediaSession.Builder(context, exoPlayer).build()
+    }
+
+    DisposableEffect(mediaSession) {
+        onDispose {
+            mediaSession.release()
+        }
     }
 
     DisposableEffect(lifecycleOwner) {
@@ -1688,7 +1705,6 @@ fun InternalVideoPlayer(
         if (isLocked && showUnlockIcon) { delay(3000); showUnlockIcon = false }
     }
 
-    // 双击快进/快退提示自动消失
     LaunchedEffect(seekMessage) {
         if (seekMessage != null) {
             delay(1500)
@@ -1817,7 +1833,6 @@ fun InternalVideoPlayer(
                     },
                     onDragEnd = { 
                         if (gestureMode == "seek") {
-                            // 只有移动距离超过1秒才真正加载
                             if (abs(currentPosition - dragStartPosition) > 1000L) {
                                 exoPlayer.seekTo(currentPosition)
                                 if (isPlaying) exoPlayer.play()
@@ -2041,7 +2056,6 @@ fun InternalVideoPlayer(
                         modifier = Modifier.weight(1f).padding(start = 8.dp, end = 16.dp).basicMarquee()
                     )
 
-                    // 网速和时间位置互换
                     if (isLandscape) {
                         AppText(text = networkSpeed, color = Color.White, fontSize = 12.sp, modifier = Modifier.padding(end = 12.dp))
                         AppText(text = currentSystemTime, color = Color.White, fontSize = 12.sp, modifier = Modifier.padding(end = 12.dp))
@@ -2238,7 +2252,6 @@ fun InternalVideoPlayer(
             }
         }
 
-        // 双击快退/快进提示
         AnimatedVisibility(
             visible = seekMessage != null,
             enter = fadeIn(),
@@ -2252,7 +2265,6 @@ fun InternalVideoPlayer(
             ) { AppText(text = seekMessage ?: "", color = Color.White, fontSize = 16.sp) }
         }
 
-        // 2.0快进中位置往上调
         AnimatedVisibility(
             visible = isLongPressing,
             enter = fadeIn(),
