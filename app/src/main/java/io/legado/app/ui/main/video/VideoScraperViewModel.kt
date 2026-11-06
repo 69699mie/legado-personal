@@ -700,7 +700,6 @@ class VideoScraperViewModel(
                     scrapedList.find { it.id == old.id } ?: old
                 }
                 
-                // === 修复点：同步更新 currentSeries ===
                 val oldCurrent = _uiState.value.currentSeries
                 val newCurrent = if (oldCurrent != null) {
                     currentList.find { it.id == oldCurrent.id } 
@@ -927,7 +926,6 @@ class VideoScraperViewModel(
     }
 
     fun playVideo(context: Context, series: MediaSeries, file: QuarkFile) {
-        // === 修复点：如果传入的是临时拼装对象，强制从缓存列表拦截并替换为真实完整对象 ===
         val realSeries = if (series.id.startsWith("temp_")) {
             _uiState.value.seriesList.find { s -> s.videos.any { it.fid == file.fid } } ?: series
         } else series
@@ -935,7 +933,8 @@ class VideoScraperViewModel(
         val cookie = _uiState.value.cookie
         val epNum = file.parsedInfo?.episode
         val season = file.parsedInfo?.season ?: 1
-        val titleText = if (epNum != null && realSeries.category != "电影" && realSeries.videos.size > 1) {
+        // 修复点1：去掉了 videos.size > 1 的限制
+        val titleText = if (epNum != null && realSeries.category != "电影") {
             val tmdbEpTitle = realSeries.seasonEpisodeTitles["${season}_${epNum}"] ?: realSeries.episodeTitles[epNum]
             if (!tmdbEpTitle.isNullOrBlank()) "${realSeries.title} 第${epNum}集 $tmdbEpTitle"
             else "${realSeries.title} 第${epNum}集"
@@ -1000,7 +999,8 @@ class VideoScraperViewModel(
             
             val epNum = file.parsedInfo?.episode
             val season = file.parsedInfo?.season ?: 1
-            val titleText = if (epNum != null && series.category != "电影" && series.videos.size > 1) {
+            // 修复点1：去掉了 videos.size > 1 的限制
+            val titleText = if (epNum != null && series.category != "电影") {
                 val tmdbEpTitle = series.seasonEpisodeTitles["${season}_${epNum}"] ?: series.episodeTitles[epNum]
                 if (!tmdbEpTitle.isNullOrBlank()) "${series.title} 第${epNum}集 $tmdbEpTitle"
                 else "${series.title} 第${epNum}集"
@@ -1262,5 +1262,5 @@ data class VideoUiState(
     val downloadThreads: Int = 6,
     val isDirectPlay: Boolean = false,
     val bannerLogic: String = "智能推荐",
-    val categoryOrder: String = "最近观看,剧集,电影,动漫"
+    val categoryOrder: String = "最近观看,剧集,电影,动漫,综艺"
 )
