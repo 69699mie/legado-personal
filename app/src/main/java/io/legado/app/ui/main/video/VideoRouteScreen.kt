@@ -126,7 +126,6 @@ import androidx.media3.exoplayer.DefaultLoadControl
 import androidx.media3.exoplayer.DefaultRenderersFactory
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.source.ProgressiveMediaSource
-import androidx.media3.session.MediaSession
 import androidx.media3.ui.PlayerView
 import coil3.compose.AsyncImage
 import io.legado.app.data.repository.VideoSettingsRepository
@@ -385,7 +384,7 @@ fun VideoScraperScreen(
 
     Box(modifier = Modifier.fillMaxSize().background(AppBackgroundColor)) {
         if (uiState.currentSeries != null) {
-            // 关键修复：实时从全局列表中获取当前剧集的最新数据，解决详情页数据不同步问题
+            // 核心修复：实时从 seriesList 中查找最新的 currentSeries 数据，确保数据实时刷新
             val latestSeries = uiState.seriesList.find { it.id == uiState.currentSeries!!.id } ?: uiState.currentSeries!!
             
             MediaDetailScreen(
@@ -616,7 +615,7 @@ fun VideoScraperScreen(
             }
         }
 
-        // 关键修复：只在没有进入详情页且不在播放时，才显示悬浮窗
+        // 核心修复：只在首页展示（没有进入详情页，且没有在播放）时，才显示悬浮窗
         val showLoadingOverlay = (uiState.isLoading || uiState.isScraping) && 
                                   uiState.currentSeries == null && 
                                   uiState.playUrl == null && 
@@ -839,8 +838,15 @@ private fun SettingsDialog(
         val view = LocalView.current
         LaunchedEffect(Unit) {
             val window = (view.parent as? DialogWindowProvider)?.window
-            window?.setDimAmount(0f)
-            window?.setBackgroundDrawableResource(android.R.color.transparent)
+            if (window != null) {
+                // 去除灰色蒙版
+                window.setDimAmount(0f)
+                window.setBackgroundDrawableResource(android.R.color.transparent)
+                // 核心修复：强制状态栏字体变为黑色
+                val controller = WindowCompat.getInsetsController(window, window.decorView)
+                controller.isAppearanceLightStatusBars = true
+                controller.isAppearanceLightNavigationBars = true
+            }
         }
 
         Surface(
@@ -855,23 +861,23 @@ private fun SettingsDialog(
                     .verticalScroll(rememberScrollState()) 
             ) {
                 Row(modifier = Modifier.fillMaxWidth().padding(bottom = 16.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                    AppText(text = "设置", fontWeight = FontWeight.Bold, fontSize = 20.sp)
+                    AppText(text = "设置", fontWeight = FontWeight.Bold, fontSize = 20.sp, color = Color.Black)
                     IconButton(onClick = onDismiss) {
-                        Icon(Icons.Default.Close, contentDescription = "关闭")
+                        Icon(Icons.Default.Close, contentDescription = "关闭", tint = Color.Black)
                     }
                 }
 
                 Row(modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                    AppText(text = "夸克登录状态", fontWeight = FontWeight.Bold, fontSize = 18.sp)
+                    AppText(text = "夸克登录状态", fontWeight = FontWeight.Bold, fontSize = 18.sp, color = Color.Black)
                     if (onWebLoginClick != null) {
                         OutlinedButton(
                             onClick = onWebLoginClick,
                             shape = RoundedCornerShape(20.dp),
                             contentPadding = PaddingValues(horizontal = 16.dp, vertical = 6.dp),
                             modifier = Modifier.height(36.dp),
-                            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.5f))
+                            border = BorderStroke(1.dp, Color.Gray.copy(alpha = 0.5f))
                         ) {
-                            AppText("登录", fontSize = 13.sp)
+                            AppText("登录", fontSize = 13.sp, color = Color.Black)
                         }
                     }
                 }
@@ -893,7 +899,7 @@ private fun SettingsDialog(
                     }
                 )
                 
-                AppText(text = "TMDB API Key (v3 auth)", modifier = Modifier.padding(top = 8.dp))
+                AppText(text = "TMDB API Key (v3 auth)", modifier = Modifier.padding(top = 8.dp), color = Color.Black)
                 
                 OutlinedTextField(
                     value = inputTmdbKey,
@@ -911,7 +917,7 @@ private fun SettingsDialog(
                     }
                 )
 
-                AppText(text = "TMDB API 代理地址")
+                AppText(text = "TMDB API 代理地址", color = Color.Black)
                 OutlinedTextField(value = inputTmdbUrl, onValueChange = { inputTmdbUrl = it }, modifier = Modifier.padding(vertical = 8.dp).fillMaxWidth(), maxLines = 1)
                 
                 HorizontalDivider(modifier = Modifier.padding(vertical = 12.dp))
@@ -921,7 +927,7 @@ private fun SettingsDialog(
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    AppText("极速播放线程数")
+                    AppText("极速播放线程数", color = Color.Black)
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         AppText("${uiState.downloadThreads} ", color = Color.Gray)
                         Icon(Icons.Default.KeyboardArrowRight, null, tint = Color.Gray)
@@ -933,7 +939,7 @@ private fun SettingsDialog(
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    AppText("首页轮播海报显示逻辑")
+                    AppText("首页轮播海报显示逻辑", color = Color.Black)
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         AppText(uiState.bannerLogic, color = Color.Gray)
                         Icon(Icons.Default.KeyboardArrowRight, null, tint = Color.Gray)
@@ -945,7 +951,7 @@ private fun SettingsDialog(
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    AppText("分类排序")
+                    AppText("分类排序", color = Color.Black)
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Icon(Icons.Default.KeyboardArrowRight, null, tint = Color.Gray)
                     }
@@ -959,9 +965,9 @@ private fun SettingsDialog(
                     shape = RoundedCornerShape(20.dp),
                     contentPadding = PaddingValues(horizontal = 24.dp, vertical = 8.dp),
                     modifier = Modifier.fillMaxWidth().padding(top = 24.dp),
-                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.5f))
+                    border = BorderStroke(1.dp, Color.Gray.copy(alpha = 0.5f))
                 ) { 
-                    AppText("确认保存", fontWeight = FontWeight.Bold) 
+                    AppText("确认保存", fontWeight = FontWeight.Bold, color = Color.Black) 
                 }
             }
         }
@@ -1441,17 +1447,6 @@ fun InternalVideoPlayer(
             }
     }
 
-    // 注册 MediaSession 以便系统更好地处理媒体按键（针对画中画）
-    val mediaSession = remember {
-        MediaSession.Builder(context, exoPlayer).build()
-    }
-
-    DisposableEffect(mediaSession) {
-        onDispose {
-            mediaSession.release()
-        }
-    }
-
     DisposableEffect(lifecycleOwner) {
         var isPlayerReleased = false
         val observer = LifecycleEventObserver { _, event ->
@@ -1533,12 +1528,13 @@ fun InternalVideoPlayer(
                     val nextBitmap = createPipIcon("next", context)
 
                     val prevIntent = Intent("com.mie.reading.ACTION_PIP_PREV").setPackage(context.packageName).setData(Uri.parse("pip://prev$timeStamp"))
-                    val prevPendingIntent = PendingIntent.getBroadcast(context, 1, prevIntent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
+                    // 核心修复：小窗的 PendingIntent 必须使用 FLAG_MUTABLE，否则系统无法传递点击事件
+                    val prevPendingIntent = PendingIntent.getBroadcast(context, 1, prevIntent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_MUTABLE)
                     val prevAction = RemoteAction(Icon.createWithBitmap(prevBitmap), "上一集", "上一集", prevPendingIntent)
 
                     val playPauseIntent = Intent("com.mie.reading.ACTION_PIP_PLAY_PAUSE").setPackage(context.packageName).setData(Uri.parse("pip://play$timeStamp"))
                     val playPauseRequestCode = if (isPlaying) 2 else 3
-                    val playPausePendingIntent = PendingIntent.getBroadcast(context, playPauseRequestCode, playPauseIntent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
+                    val playPausePendingIntent = PendingIntent.getBroadcast(context, playPauseRequestCode, playPauseIntent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_MUTABLE)
                     val playPauseAction = RemoteAction(
                         Icon.createWithBitmap(playPauseBitmap),
                         if (isPlaying) "暂停" else "播放",
@@ -1547,7 +1543,7 @@ fun InternalVideoPlayer(
                     )
 
                     val nextIntent = Intent("com.mie.reading.ACTION_PIP_NEXT").setPackage(context.packageName).setData(Uri.parse("pip://next$timeStamp"))
-                    val nextPendingIntent = PendingIntent.getBroadcast(context, 4, nextIntent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
+                    val nextPendingIntent = PendingIntent.getBroadcast(context, 4, nextIntent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_MUTABLE)
                     val nextAction = RemoteAction(Icon.createWithBitmap(nextBitmap), "下一集", "下一集", nextPendingIntent)
 
                     val params = PictureInPictureParams.Builder()
@@ -2000,12 +1996,12 @@ fun InternalVideoPlayer(
                                     val nextBitmap = createPipIcon("next", context)
 
                                     val prevIntent = Intent("com.mie.reading.ACTION_PIP_PREV").setPackage(context.packageName).setData(Uri.parse("pip://prev$timeStamp"))
-                                    val prevPendingIntent = PendingIntent.getBroadcast(context, 1, prevIntent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
+                                    val prevPendingIntent = PendingIntent.getBroadcast(context, 1, prevIntent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_MUTABLE)
                                     val prevAction = RemoteAction(Icon.createWithBitmap(prevBitmap), "上一集", "上一集", prevPendingIntent)
 
                                     val playPauseIntent = Intent("com.mie.reading.ACTION_PIP_PLAY_PAUSE").setPackage(context.packageName).setData(Uri.parse("pip://play$timeStamp"))
                                     val playPauseRequestCode = if (isPlaying) 2 else 3
-                                    val playPausePendingIntent = PendingIntent.getBroadcast(context, playPauseRequestCode, playPauseIntent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
+                                    val playPausePendingIntent = PendingIntent.getBroadcast(context, playPauseRequestCode, playPauseIntent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_MUTABLE)
                                     val playPauseAction = RemoteAction(
                                         Icon.createWithBitmap(playPauseBitmap),
                                         if (isPlaying) "暂停" else "播放",
@@ -2014,7 +2010,7 @@ fun InternalVideoPlayer(
                                     )
 
                                     val nextIntent = Intent("com.mie.reading.ACTION_PIP_NEXT").setPackage(context.packageName).setData(Uri.parse("pip://next$timeStamp"))
-                                    val nextPendingIntent = PendingIntent.getBroadcast(context, 4, nextIntent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
+                                    val nextPendingIntent = PendingIntent.getBroadcast(context, 4, nextIntent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_MUTABLE)
                                     val nextAction = RemoteAction(Icon.createWithBitmap(nextBitmap), "下一集", "下一集", nextPendingIntent)
 
                                     val params = PictureInPictureParams.Builder()
