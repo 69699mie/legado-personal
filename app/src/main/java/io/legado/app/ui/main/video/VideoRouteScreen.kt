@@ -128,7 +128,6 @@ import androidx.media3.exoplayer.DefaultRenderersFactory
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.source.ProgressiveMediaSource
 import androidx.media3.session.MediaSession
-import androidx.media3.session.MediaSessionService
 import androidx.media3.ui.PlayerView
 import coil3.compose.AsyncImage
 import io.legado.app.data.repository.VideoSettingsRepository
@@ -196,9 +195,6 @@ fun createPipIcon(type: String, context: Context): Bitmap {
     return bitmap
 }
 
-// ==========================================
-// 1. 资源库独立页面
-// ==========================================
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
 fun VideoLibraryScreen(
@@ -304,10 +300,6 @@ fun VideoLibraryScreen(
     }
 }
 
-
-// ==========================================
-// 2. 影视库独立页面
-// ==========================================
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
 fun VideoScraperScreen(
@@ -831,16 +823,19 @@ private fun SettingsDialog(
 
     Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
         val view = LocalView.current
-        LaunchedEffect(Unit) {
-            val window = (view.parent as? DialogWindowProvider)?.window
-            if (window != null) {
-                // 移除系统遮罩层
-                window.clearFlags(WindowManager.LayoutParams.FLAG_DIM_BEHIND)
-                // 状态栏和导航栏强制透明
-                window.statusBarColor = android.graphics.Color.TRANSPARENT
-                window.navigationBarColor = android.graphics.Color.TRANSPARENT
-                // 强制状态栏图标为黑色
-                val controller = WindowCompat.getInsetsController(window, window.decorView)
+        val window = (view.parent as? DialogWindowProvider)?.window
+
+        // 核心修复：使用 SideEffect 确保在 Dialog 渲染前完成 Window 设置
+        SideEffect {
+            window?.let {
+                // 1. 彻底清除系统默认的白色/黑色底色
+                it.setBackgroundDrawableResource(android.R.color.transparent)
+                // 2. 移除半透明灰色遮罩（防闪烁）
+                it.clearFlags(WindowManager.LayoutParams.FLAG_DIM_BEHIND)
+                // 3. 让内容延伸到状态栏（Edge-to-Edge）
+                WindowCompat.setDecorFitsSystemWindows(it, false)
+                // 4. 强制状态栏图标为黑色
+                val controller = WindowCompat.getInsetsController(it, it.decorView)
                 controller.isAppearanceLightStatusBars = true
                 controller.isAppearanceLightNavigationBars = true
             }
@@ -848,13 +843,15 @@ private fun SettingsDialog(
 
         Surface(
             shape = RoundedCornerShape(0.dp),
-            color = AppBackgroundColor, 
-            modifier = Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding()
+            color = AppBackgroundColor, // 背景色铺满全屏（包含状态栏）
+            modifier = Modifier.fillMaxSize() // 不能在这里加 statusBarsPadding
         ) {
             Column(
                 modifier = Modifier
-                    .padding(24.dp)
                     .fillMaxSize()
+                    .statusBarsPadding() // 核心修复：padding 加在这里，背景色就能延伸到状态栏后面
+                    .navigationBarsPadding()
+                    .padding(24.dp)
                     .verticalScroll(rememberScrollState()) 
             ) {
                 Row(modifier = Modifier.fillMaxWidth().padding(bottom = 16.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
