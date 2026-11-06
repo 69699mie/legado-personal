@@ -300,6 +300,7 @@ fun VideoLibraryScreen(
     }
 }
 
+
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
 fun VideoScraperScreen(
@@ -825,16 +826,11 @@ private fun SettingsDialog(
         val view = LocalView.current
         val window = (view.parent as? DialogWindowProvider)?.window
 
-        // 核心修复：使用 SideEffect 确保在 Dialog 渲染前完成 Window 设置
         SideEffect {
             window?.let {
-                // 1. 彻底清除系统默认的白色/黑色底色
                 it.setBackgroundDrawableResource(android.R.color.transparent)
-                // 2. 移除半透明灰色遮罩（防闪烁）
                 it.clearFlags(WindowManager.LayoutParams.FLAG_DIM_BEHIND)
-                // 3. 让内容延伸到状态栏（Edge-to-Edge）
                 WindowCompat.setDecorFitsSystemWindows(it, false)
-                // 4. 强制状态栏图标为黑色
                 val controller = WindowCompat.getInsetsController(it, it.decorView)
                 controller.isAppearanceLightStatusBars = true
                 controller.isAppearanceLightNavigationBars = true
@@ -843,13 +839,13 @@ private fun SettingsDialog(
 
         Surface(
             shape = RoundedCornerShape(0.dp),
-            color = AppBackgroundColor, // 背景色铺满全屏（包含状态栏）
-            modifier = Modifier.fillMaxSize() // 不能在这里加 statusBarsPadding
+            color = AppBackgroundColor, 
+            modifier = Modifier.fillMaxSize()
         ) {
             Column(
                 modifier = Modifier
                     .fillMaxSize()
-                    .statusBarsPadding() // 核心修复：padding 加在这里，背景色就能延伸到状态栏后面
+                    .statusBarsPadding()
                     .navigationBarsPadding()
                     .padding(24.dp)
                     .verticalScroll(rememberScrollState()) 
@@ -1437,32 +1433,33 @@ fun InternalVideoPlayer(
             }
     }
 
-    // 核心修复2：真正激活并绑定 MediaSession 的 Callback，作为小窗按钮的终极兜底
     val mediaSession = remember {
         MediaSession.Builder(context, exoPlayer)
-            .setCallback(object : MediaSession.Callback {
-                override fun onPlay() { exoPlayer.play() }
-                override fun onPause() { exoPlayer.pause() }
-                override fun onSkipToNext() {
-                    val idx = series.videos.indexOfFirst { it.fid == currentFile.fid }
-                    if (idx != -1 && idx < series.videos.size - 1) {
-                        viewModel.playVideo(context, series, series.videos[idx + 1])
-                    }
-                }
-                override fun onSkipToPrevious() {
-                    val idx = series.videos.indexOfFirst { it.fid == currentFile.fid }
-                    if (idx > 0) {
-                        viewModel.playVideo(context, series, series.videos[idx - 1])
-                    }
-                }
-            })
             .build()
-            .also { it.isActive = true }
+            .apply {
+                setCallback(object : MediaSession.Callback {
+                    override fun onPlay() { exoPlayer.play() }
+                    override fun onPause() { exoPlayer.pause() }
+                    override fun onSkipToNext() {
+                        val idx = series.videos.indexOfFirst { it.fid == currentFile.fid }
+                        if (idx != -1 && idx < series.videos.size - 1) {
+                            viewModel.playVideo(context, series, series.videos[idx + 1])
+                        }
+                    }
+                    override fun onSkipToPrevious() {
+                        val idx = series.videos.indexOfFirst { it.fid == currentFile.fid }
+                        if (idx > 0) {
+                            viewModel.playVideo(context, series, series.videos[idx - 1])
+                        }
+                    }
+                })
+                setActive(true)
+            }
     }
 
     DisposableEffect(mediaSession) {
         onDispose {
-            mediaSession.isActive = false
+            mediaSession.setActive(false)
             mediaSession.release()
         }
     }
@@ -1520,7 +1517,6 @@ fun InternalVideoPlayer(
         }
     }
 
-    // 核心修复1：广播必须使用 RECEIVER_EXPORTED，否则系统画中画根本调不通
     DisposableEffect(Unit) {
         val filter = IntentFilter().apply {
             addAction("com.mie.reading.ACTION_PIP_PREV")
@@ -1961,7 +1957,7 @@ fun InternalVideoPlayer(
             Box(
                 modifier = Modifier
                     .align(Alignment.Center)
-                    .padding(bottom = 140.dp) // 核心修复：居中偏上，完美避开人脸
+                    .padding(bottom = 140.dp) 
                     .background(Color.Black.copy(alpha = 0.6f), RoundedCornerShape(12.dp))
                     .padding(horizontal = 24.dp, vertical = 16.dp)
             ) {
