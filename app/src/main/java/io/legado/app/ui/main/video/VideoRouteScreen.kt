@@ -376,7 +376,7 @@ fun VideoScraperScreen(
 
     Box(modifier = Modifier.fillMaxSize().background(AppBackgroundColor)) {
         if (uiState.currentSeries != null) {
-            // 修复核心点：增强匹配逻辑，确保拿到最新最全的数据
+            // 增强匹配逻辑，确保拿到最新最全的数据
             val latestSeries = remember(uiState.seriesList, uiState.currentSeries, uiState.currentPlayFile) {
                 val current = uiState.currentSeries
                 val byId = current?.let { c -> uiState.seriesList.find { it.id == c.id } }
@@ -1448,9 +1448,38 @@ fun InternalVideoPlayer(
             }
     }
 
-    // 修复点：移除不兼容的 isActive 属性，Media3 中 Session 会随 ExoPlayer 自动激活
+    // 修复：加入 setCallback 拦截系统的媒体按键（防某些 ROM 小窗直接调用系统媒体接口）
     val mediaSession = remember {
-        MediaSession.Builder(context, exoPlayer).build()
+        MediaSession.Builder(context, exoPlayer)
+            .setCallback(object : MediaSession.Callback {
+                override fun onMediaButtonEvent(
+                    session: MediaSession,
+                    controller: MediaSession.ControllerInfo,
+                    intent: Intent
+                ): Boolean {
+                    val keyEvent = intent.getParcelableExtra<android.view.KeyEvent>(Intent.EXTRA_KEY_EVENT)
+                    if (keyEvent?.action == android.view.KeyEvent.ACTION_DOWN) {
+                        when (keyEvent.keyCode) {
+                            android.view.KeyEvent.KEYCODE_MEDIA_NEXT -> {
+                                val idx = series.videos.indexOfFirst { it.fid == currentFile.fid }
+                                if (idx != -1 && idx < series.videos.size - 1) {
+                                    viewModel.playVideo(context, series, series.videos[idx + 1])
+                                    return true
+                                }
+                            }
+                            android.view.KeyEvent.KEYCODE_MEDIA_PREVIOUS -> {
+                                val idx = series.videos.indexOfFirst { it.fid == currentFile.fid }
+                                if (idx > 0) {
+                                    viewModel.playVideo(context, series, series.videos[idx - 1])
+                                    return true
+                                }
+                            }
+                        }
+                    }
+                    return super.onMediaButtonEvent(session, controller, intent)
+                }
+            })
+            .build()
     }
 
     DisposableEffect(mediaSession) {
@@ -1522,7 +1551,7 @@ fun InternalVideoPlayer(
             context,
             pipActionReceiver,
             filter,
-            ContextCompat.RECEIVER_NOT_EXPORTED // 修复点：改为 NOT_EXPORTED 提高安全性和兼容性
+            ContextCompat.RECEIVER_EXPORTED // ✅ 修复：改回 EXPORTED，允许系统 SystemUI 代发点击事件
         )
         onDispose {
             context.unregisterReceiver(pipActionReceiver)
