@@ -156,7 +156,6 @@ data class RecentWatchedItem(
 
 val AppBackgroundColor = Color(0xFFF7F8FA)
 
-// PiP 控制常量
 const val PIP_ACTION = "com.mie.reading.ACTION_PIP_CONTROL"
 const val EXTRA_CONTROL = "control"
 const val CONTROL_PREV = 1
@@ -578,10 +577,14 @@ fun VideoScraperScreen(
                         Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { AppText("没找到任何视频，点击右上角刷新") }
                     } else {
                         val grouped = uiState.seriesList.groupBy { it.category }
-                        val orderList = uiState.categoryOrder.split(",").filter { it.isNotBlank() }
+                        val savedOrder = uiState.categoryOrder.split(",").filter { it.isNotBlank() }
                         val allCategories = grouped.keys.toMutableList()
-                        orderList.forEach { if (allCategories.contains(it)) allCategories.remove(it) }
-                        val finalOrderList = orderList + allCategories
+                        
+                        // 强制置顶“最近观看”，并合并自定义排序和未排序的分类
+                        val finalOrderList = mutableListOf<String>()
+                        finalOrderList.add("最近观看")
+                        savedOrder.forEach { if (it != "最近观看" && !finalOrderList.contains(it)) finalOrderList.add(it) }
+                        allCategories.forEach { if (!finalOrderList.contains(it)) finalOrderList.add(it) }
 
                         LazyColumn(modifier = Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 16.dp)) {
                             item {
@@ -1093,31 +1096,34 @@ fun CategoryOrderDialog(
     viewModel: VideoScraperViewModel,
     onDismiss: () -> Unit
 ) {
-    val currentOrder = uiState.categoryOrder.split(",").filter { it.isNotBlank() }
+    val presetCategories = listOf("剧集", "电影", "动漫", "综艺")
     val existingCategories = uiState.seriesList.map { it.category }.filter { it.isNotBlank() }.distinct()
-
-    val orderList = remember(uiState.categoryOrder) {
+    
+    val orderList = remember(uiState.categoryOrder, existingCategories) {
         val list = mutableStateListOf<String>()
+        // 移除最近观看
+        val currentOrder = uiState.categoryOrder.split(",").filter { it.isNotBlank() && it != "最近观看" }
         list.addAll(currentOrder)
+        // 合并预设分类
+        presetCategories.forEach { if (!list.contains(it)) list.add(it) }
+        // 合并已有分类
         existingCategories.forEach { if (!list.contains(it)) list.add(it) }
-        if (!list.contains("最近观看")) list.add(0, "最近观看") else {
-            list.remove("最近观看")
-            list.add(0, "最近观看")
-        }
         list
     }
 
     val lazyListState = rememberLazyListState()
     val reorderableState = rememberReorderableLazyListState(lazyListState) { from, to ->
-        if (from.index == 0) return@rememberReorderableLazyListState
-        if (to.index > 0 && from.index != to.index) {
+        // 允许自由拖动，不再限制 index 0
+        if (to.index >= 0 && from.index != to.index) {
             val item = orderList.removeAt(from.index)
             orderList.add(to.index, item)
         }
     }
 
     Dialog(onDismissRequest = {
-        viewModel.saveCategoryOrder(orderList.joinToString(","))
+        // 保存时加上“最近观看”在最前面，确保首页展示逻辑正常
+        val finalOrder = "最近观看," + orderList.joinToString(",")
+        viewModel.saveCategoryOrder(finalOrder)
         onDismiss()
     }) {
         Surface(
@@ -1129,7 +1135,8 @@ fun CategoryOrderDialog(
                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                     AppText("拖动排序", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
                     TextButton(onClick = {
-                        viewModel.saveCategoryOrder(orderList.joinToString(","))
+                        val finalOrder = "最近观看," + orderList.joinToString(",")
+                        viewModel.saveCategoryOrder(finalOrder)
                         onDismiss()
                     }) { AppText("保存", fontWeight = FontWeight.Bold) }
                 }
@@ -1156,7 +1163,7 @@ fun CategoryOrderDialog(
                                         onClick = {},
                                         modifier = Modifier.draggableHandle()
                                     ) {
-                                        Icon(Icons.Default.Menu, contentDescription = "拖动排序", tint = if (item != "最近观看") Color.Gray else Color.LightGray)
+                                        Icon(Icons.Default.Menu, contentDescription = "拖动排序", tint = Color.Gray)
                                     }
                                 }
                             }
@@ -1316,7 +1323,6 @@ fun InternalVideoPlayer(
     val isLandscape = configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
     val videoSettingsRepository = koinInject<VideoSettingsRepository>()
 
-    // 实时获取最新数据以解决刮削完毕前无法切集的问题
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val latestSeries by rememberUpdatedState(
         uiState.seriesList.find { it.id == series.id || it.title == series.title } ?: series
@@ -2811,10 +2817,13 @@ fun MediaDetailScreen(
         item {
             Column(modifier = Modifier.fillMaxWidth().background(Color(0xFFF5F5F5)).padding(16.dp).padding(top = 24.dp)) {
                 AppText(text = "文件信息", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-                series.videos.firstOrNull()?.let { firstFile ->
+                // 修复点2：寻找层级最深的文件并补齐前导斜杠
+                val deepestFile = series.videos.maxByOrNull { it.folderPath.size } ?: series.videos.firstOrNull()
+                deepestFile?.let { firstFile ->
                     AppText(text = firstFile.name, style = MaterialTheme.typography.bodySmall, color = Color.Gray, modifier = Modifier.padding(top = 8.dp))
                     val pathStr = firstFile.folderPath.joinToString("/")
-                    AppText(text = "夸克网盘: /$pathStr", style = MaterialTheme.typography.bodySmall, color = Color.Gray, modifier = Modifier.padding(top = 4.dp))
+                    val displayPath = if (pathStr.startsWith("/")) pathStr else "/$pathStr"
+                    AppText(text = "夸克网盘: $displayPath", style = MaterialTheme.typography.bodySmall, color = Color.Gray, modifier = Modifier.padding(top = 4.dp))
                     val sizeMb = firstFile.size / (1024 * 1024)
                     AppText(text = "共 ${series.videos.size} 集 | ${sizeMb}MB (单集)", style = MaterialTheme.typography.bodySmall, color = Color.Gray, modifier = Modifier.padding(top = 4.dp))
                 }
