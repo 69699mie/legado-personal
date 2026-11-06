@@ -16,6 +16,7 @@ import android.content.res.Configuration
 import android.graphics.drawable.Icon
 import android.media.AudioManager
 import android.net.TrafficStats
+import android.net.Uri
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
@@ -63,6 +64,7 @@ import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
@@ -130,6 +132,9 @@ import okhttp3.OkHttpClient
 import org.json.JSONArray
 import org.koin.androidx.compose.koinViewModel
 import org.koin.compose.koinInject
+import sh.calvin.reorderable.ReorderableItem
+import sh.calvin.reorderable.draggableHandle
+import sh.calvin.reorderable.rememberReorderableLazyListState
 import java.util.Locale
 import java.util.concurrent.TimeUnit
 import kotlin.math.roundToInt
@@ -263,7 +268,7 @@ fun VideoScraperScreen(
             for (i in 0 until jsonArray.length()) {
                 val obj = jsonArray.getJSONObject(i)
                 val sTitle = obj.optString("seriesTitle")
-                // UI层强制去重
+                // UI层强制去重，保证同一个剧只显示一次
                 if (sTitle.isNotBlank() && !seenSeries.contains(sTitle)) {
                     seenSeries.add(sTitle)
                     list.add(
@@ -365,7 +370,7 @@ fun VideoScraperScreen(
                 LazyVerticalGrid(
                     columns = GridCells.Fixed(3),
                     modifier = Modifier.fillMaxSize(),
-                    contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = 16.dp), // 【修复编译报错】
+                    contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = 16.dp),
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                     verticalArrangement = Arrangement.spacedBy(16.dp)
                 ) {
@@ -448,6 +453,12 @@ fun VideoScraperScreen(
                     } else if (uiState.seriesList.isEmpty() && !uiState.isLoading) {
                         Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { AppText("没找到任何视频，点击右上角刷新") }
                     } else {
+                        val grouped = uiState.seriesList.groupBy { it.category }
+                        val orderList = uiState.categoryOrder.split(",").filter { it.isNotBlank() }
+                        val allCategories = grouped.keys.toMutableList()
+                        orderList.forEach { if (allCategories.contains(it)) allCategories.remove(it) }
+                        val finalOrderList = orderList + allCategories
+
                         LazyColumn(modifier = Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 16.dp)) {
                             // === 顶部轮播海报 ===
                             item {
@@ -466,63 +477,64 @@ fun VideoScraperScreen(
                                 }
                             }
 
-                            // === 最近观看 (首页横排) ===
-                            if (recentWatchedList.isNotEmpty()) {
-                                item {
-                                    Row(modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                                        AppText(text = "最近观看", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-                                        AppText(text = "全部 ${recentWatchedList.size} >", style = MaterialTheme.typography.bodySmall, color = Color.Gray, modifier = Modifier.clickable { showAllHistoryPage = true })
-                                    }
-                                }
-                                item {
-                                    LazyRow(contentPadding = PaddingValues(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                                        items(recentWatchedList.take(10)) { item ->
-                                            RecentWatchedCard(
-                                                item = item, 
-                                                onClick = {
-                                                    val series = uiState.seriesList.find { it.title == item.seriesTitle }
-                                                    val file = series?.videos?.find { it.fid == item.fid }
-                                                    if (series != null && file != null) {
-                                                        viewModel.playVideo(context, series, file)
-                                                    } else {
-                                                        val tempFile = QuarkFile(item.fid, item.title, false)
-                                                        val tempSeries = MediaSeries(
-                                                            id = "temp_${item.fid}",
-                                                            title = item.seriesTitle,
-                                                            originalParsedTitle = item.seriesTitle,
-                                                            year = null,
-                                                            category = "未分类",
-                                                            posterUrl = item.coverPath.ifBlank { null },
-                                                            videos = listOf(tempFile)
-                                                        )
-                                                        viewModel.playVideo(context, tempSeries, tempFile)
-                                                    }
+                            // === 根据自定义顺序遍历分类 ===
+                            finalOrderList.forEach { categoryName ->
+                                if (categoryName == "最近观看") {
+                                    if (recentWatchedList.isNotEmpty()) {
+                                        item {
+                                            Row(modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                                                AppText(text = "最近观看", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                                                AppText(text = "全部 ${recentWatchedList.size} >", style = MaterialTheme.typography.bodySmall, color = Color.Gray, modifier = Modifier.clickable { showAllHistoryPage = true })
+                                            }
+                                        }
+                                        item {
+                                            LazyRow(contentPadding = PaddingValues(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                                                items(recentWatchedList.take(10)) { item ->
+                                                    RecentWatchedCard(
+                                                        item = item, 
+                                                        onClick = {
+                                                            val series = uiState.seriesList.find { it.title == item.seriesTitle }
+                                                            val file = series?.videos?.find { it.fid == item.fid }
+                                                            if (series != null && file != null) {
+                                                                viewModel.playVideo(context, series, file)
+                                                            } else {
+                                                                val tempFile = QuarkFile(item.fid, item.title, false)
+                                                                val tempSeries = MediaSeries(
+                                                                    id = "temp_${item.fid}",
+                                                                    title = item.seriesTitle,
+                                                                    originalParsedTitle = item.seriesTitle,
+                                                                    year = null,
+                                                                    category = "未分类",
+                                                                    posterUrl = item.coverPath.ifBlank { null },
+                                                                    videos = listOf(tempFile)
+                                                                )
+                                                                viewModel.playVideo(context, tempSeries, tempFile)
+                                                            }
+                                                        }
+                                                    )
                                                 }
-                                            )
+                                            }
                                         }
                                     }
-                                }
-                            }
-
-                            // === 分类列表 ===
-                            val grouped = uiState.seriesList.groupBy { it.category }
-                            grouped.forEach { (categoryName, seriesList) ->
-                                if (seriesList.isNotEmpty()) {
-                                    item {
-                                        Row(modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                                            AppText(text = categoryName, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-                                            AppText(text = "全部 ${seriesList.size} 部 >", style = MaterialTheme.typography.bodySmall, color = Color.Gray, modifier = Modifier.clickable { viewAllCategory = categoryName })
+                                } else {
+                                    val seriesList = grouped[categoryName]
+                                    if (seriesList != null && seriesList.isNotEmpty()) {
+                                        item {
+                                            Row(modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                                                AppText(text = categoryName, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                                                AppText(text = "全部 ${seriesList.size} 部 >", style = MaterialTheme.typography.bodySmall, color = Color.Gray, modifier = Modifier.clickable { viewAllCategory = categoryName })
+                                            }
                                         }
-                                    }
-                                    item {
-                                        LazyRow(contentPadding = PaddingValues(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                                            items(seriesList) { series ->
-                                                SeriesPosterCard(
-                                                    series = series, 
-                                                    isScraping = uiState.isScraping,
-                                                    onClick = { viewModel.selectSeries(series) }, 
-                                                    onLongClick = { manualScrapeSeries = series; showManualScrapeDialog = true }
-                                                )
+                                        item {
+                                            LazyRow(contentPadding = PaddingValues(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                                                items(seriesList) { series ->
+                                                    SeriesPosterCard(
+                                                        series = series, 
+                                                        isScraping = uiState.isScraping,
+                                                        onClick = { viewModel.selectSeries(series) }, 
+                                                        onLongClick = { manualScrapeSeries = series; showManualScrapeDialog = true }
+                                                    )
+                                                }
                                             }
                                         }
                                     }
@@ -762,6 +774,7 @@ private fun SettingsDialog(
     
     var showThreadSelection by remember { mutableStateOf(false) }
     var showBannerLogicSelection by remember { mutableStateOf(false) }
+    var showCategoryOrderDialog by remember { mutableStateOf(false) }
 
     Dialog(onDismissRequest = onDismiss) {
         Surface(
@@ -855,6 +868,18 @@ private fun SettingsDialog(
                     }
                 }
 
+                // 分类排序入口
+                Row(
+                    modifier = Modifier.fillMaxWidth().clickable { showCategoryOrderDialog = true }.padding(vertical = 8.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    AppText("分类排序")
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(Icons.Default.KeyboardArrowRight, null, tint = Color.Gray)
+                    }
+                }
+
                 OutlinedButton(
                     onClick = {
                         viewModel.saveSettings(inputCookie, inputTmdbKey, inputTmdbUrl)
@@ -927,6 +952,102 @@ private fun SettingsDialog(
                 TextButton(onClick = { showBannerLogicSelection = false }) { AppText("取消") }
             }
         )
+    }
+
+    if (showCategoryOrderDialog) {
+        CategoryOrderDialog(uiState, viewModel, onDismiss = { showCategoryOrderDialog = false })
+    }
+}
+
+// 拖拽排序弹窗
+@Composable
+fun CategoryOrderDialog(
+    uiState: VideoUiState,
+    viewModel: VideoScraperViewModel,
+    onDismiss: () -> Unit
+) {
+    val currentOrder = uiState.categoryOrder.split(",").filter { it.isNotBlank() }
+    val existingCategories = uiState.seriesList.map { it.category }.filter { it.isNotBlank() }.distinct()
+    
+    val orderList = remember(uiState.categoryOrder) { 
+        val list = mutableStateListOf<String>()
+        list.addAll(currentOrder)
+        existingCategories.forEach { if (!list.contains(it)) list.add(it) }
+        // 强制保证“最近观看”在第一位
+        if (!list.contains("最近观看")) list.add(0, "最近观看") else {
+            list.remove("最近观看")
+            list.add(0, "最近观看")
+        }
+        list
+    }
+
+    val lazyListState = rememberLazyListState()
+    val reorderableState = rememberReorderableLazyListState(lazyListState) { from, to ->
+        // 防越界和防逻辑冲突：如果拖拽的是“最近观看”，或者是把它放到第一位，直接拦截
+        if (from.index == 0) return@rememberReorderableLazyListState
+        if (to.index > 0 && from.index != to.index) {
+            val item = orderList.removeAt(from.index)
+            orderList.add(to.index, item)
+        }
+    }
+
+    Dialog(onDismissRequest = {
+        viewModel.saveCategoryOrder(orderList.joinToString(","))
+        onDismiss()
+    }) {
+        Surface(
+            shape = RoundedCornerShape(16.dp),
+            color = Color.White,
+            modifier = Modifier.fillMaxWidth().heightIn(max = 500.dp)
+        ) {
+            Column(modifier = Modifier.padding(16.dp)) {
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                    AppText("拖动排序", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+                    TextButton(onClick = { 
+                        viewModel.saveCategoryOrder(orderList.joinToString(","))
+                        onDismiss() 
+                    }) { AppText("保存", fontWeight = FontWeight.Bold) }
+                }
+                Spacer(modifier = Modifier.height(8.dp))
+                
+                LazyColumn(state = lazyListState, modifier = Modifier.fillMaxWidth()) {
+                    itemsIndexed(orderList, key = { _, item -> item }) { index, item ->
+                        ReorderableItem(reorderableState, key = item) { isDragging ->
+                            val elevation = if (isDragging) 8.dp else 0.dp
+                            Surface(
+                                modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+                                shape = RoundedCornerShape(8.dp),
+                                shadowElevation = elevation,
+                                color = if (isDragging) Color(0xFFF0F0F0) else Color.White,
+                                border = BorderStroke(1.dp, Color(0xFFE0E0E0))
+                            ) {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    AppText(item, fontWeight = FontWeight.Medium)
+                                    
+                                    // 只有非“最近观看”才可以拖拽
+                                    if (item != "最近观看") {
+                                        IconButton(
+                                            onClick = {},
+                                            modifier = Modifier.draggableHandle()
+                                        ) {
+                                            Icon(Icons.Default.Menu, contentDescription = "拖动排序", tint = Color.Gray)
+                                        }
+                                    } else {
+                                        IconButton(onClick = {}) {
+                                            Icon(Icons.Default.Menu, contentDescription = "固定", tint = Color.LightGray)
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -1251,15 +1372,22 @@ fun InternalVideoPlayer(
 
     // 监听生命周期，处理小窗关闭和后台播放问题
     DisposableEffect(lifecycleOwner) {
+        var isPlayerReleased = false
         val observer = LifecycleEventObserver { _, event ->
             if (event == Lifecycle.Event.ON_PAUSE || event == Lifecycle.Event.ON_STOP) {
-                if (activity?.isInPictureInPictureMode != true) {
-                    exoPlayer.pause()
-                }
+                // 延迟复核，确保关闭小窗时，系统能准确把 isInPictureInPictureMode 置为 false
+                Handler(Looper.getMainLooper()).postDelayed({
+                    if (!isPlayerReleased && activity?.isInPictureInPictureMode != true) {
+                        exoPlayer.pause()
+                    }
+                }, 200)
             }
         }
         lifecycleOwner.lifecycle.addObserver(observer)
-        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+        onDispose { 
+            isPlayerReleased = true
+            lifecycleOwner.lifecycle.removeObserver(observer) 
+        }
     }
 
     // 用于判断当前是否处于画中画
@@ -1324,11 +1452,14 @@ fun InternalVideoPlayer(
             val handler = Handler(Looper.getMainLooper())
             handler.post {
                 try {
-                    val prevIntent = Intent("ACTION_PIP_PREV").setPackage(context.packageName)
+                    // 终极修复：通过绑带时间戳的 Data 和 requestCode，彻底打破部分国产 ROM 的 PendingIntent 缓存
+                    val timeStamp = System.currentTimeMillis()
+                    
+                    val prevIntent = Intent("ACTION_PIP_PREV").setPackage(context.packageName).setData(Uri.parse("pip://prev$timeStamp"))
                     val prevPendingIntent = PendingIntent.getBroadcast(context, 1, prevIntent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
                     val prevAction = RemoteAction(Icon.createWithResource(context, android.R.drawable.ic_media_previous), "上一集", "上一集", prevPendingIntent)
 
-                    val playPauseIntent = Intent("ACTION_PIP_PLAY_PAUSE").setPackage(context.packageName)
+                    val playPauseIntent = Intent("ACTION_PIP_PLAY_PAUSE").setPackage(context.packageName).setData(Uri.parse("pip://play$timeStamp"))
                     val playPauseRequestCode = if (isPlaying) 2 else 3
                     val playPausePendingIntent = PendingIntent.getBroadcast(context, playPauseRequestCode, playPauseIntent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
                     val playPauseAction = RemoteAction(
@@ -1338,7 +1469,7 @@ fun InternalVideoPlayer(
                         playPausePendingIntent
                     )
 
-                    val nextIntent = Intent("ACTION_PIP_NEXT").setPackage(context.packageName)
+                    val nextIntent = Intent("ACTION_PIP_NEXT").setPackage(context.packageName).setData(Uri.parse("pip://next$timeStamp"))
                     val nextPendingIntent = PendingIntent.getBroadcast(context, 4, nextIntent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
                     val nextAction = RemoteAction(Icon.createWithResource(context, android.R.drawable.ic_media_next), "下一集", "下一集", nextPendingIntent)
 
@@ -1688,11 +1819,13 @@ fun InternalVideoPlayer(
                         IconButton(onClick = {
                             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                                 try {
-                                    val prevIntent = Intent("ACTION_PIP_PREV").setPackage(context.packageName)
+                                    val timeStamp = System.currentTimeMillis()
+                                    
+                                    val prevIntent = Intent("ACTION_PIP_PREV").setPackage(context.packageName).setData(Uri.parse("pip://prev$timeStamp"))
                                     val prevPendingIntent = PendingIntent.getBroadcast(context, 1, prevIntent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
                                     val prevAction = RemoteAction(Icon.createWithResource(context, android.R.drawable.ic_media_previous), "上一集", "上一集", prevPendingIntent)
 
-                                    val playPauseIntent = Intent("ACTION_PIP_PLAY_PAUSE").setPackage(context.packageName)
+                                    val playPauseIntent = Intent("ACTION_PIP_PLAY_PAUSE").setPackage(context.packageName).setData(Uri.parse("pip://play$timeStamp"))
                                     val playPauseRequestCode = if (isPlaying) 2 else 3
                                     val playPausePendingIntent = PendingIntent.getBroadcast(context, playPauseRequestCode, playPauseIntent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
                                     val playPauseAction = RemoteAction(
@@ -1702,7 +1835,7 @@ fun InternalVideoPlayer(
                                         playPausePendingIntent
                                     )
 
-                                    val nextIntent = Intent("ACTION_PIP_NEXT").setPackage(context.packageName)
+                                    val nextIntent = Intent("ACTION_PIP_NEXT").setPackage(context.packageName).setData(Uri.parse("pip://next$timeStamp"))
                                     val nextPendingIntent = PendingIntent.getBroadcast(context, 4, nextIntent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
                                     val nextAction = RemoteAction(Icon.createWithResource(context, android.R.drawable.ic_media_next), "下一集", "下一集", nextPendingIntent)
 
