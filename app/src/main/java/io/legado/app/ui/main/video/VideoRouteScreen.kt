@@ -153,10 +153,10 @@ data class RecentWatchedItem(
     val timestamp: Long
 )
 
-// 全局统一背景色，解决分界线问题
+// 全局统一背景色
 val AppBackgroundColor = Color(0xFFF7F8FA)
 
-// 使用原生 Canvas 绘制 PiP 图标（必须全限定名，防止和 Compose Canvas 冲突）
+// 使用原生 Canvas 绘制 PiP 图标
 fun createPipIcon(type: String, context: Context): Bitmap {
     val size = 96 
     val bitmap = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)
@@ -214,7 +214,6 @@ fun VideoLibraryScreen(
         viewModel.goBack()
     }
 
-    // 统一背景色
     Column(modifier = modifier.fillMaxSize().background(AppBackgroundColor).statusBarsPadding()) {
         Row(
             modifier = Modifier
@@ -494,7 +493,6 @@ fun VideoScraperScreen(
                 }
             }
         } else {
-            // 主界面，去掉了分割线，全局同色
             Column(modifier = modifier.fillMaxSize().statusBarsPadding()) {
                 Row(modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
                     AppText(
@@ -830,9 +828,16 @@ private fun SettingsDialog(
     var showCategoryOrderDialog by remember { mutableStateOf(false) }
 
     Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
+        val view = LocalView.current
+        LaunchedEffect(Unit) {
+            val window = (view.parent as? DialogWindowProvider)?.window
+            window?.setDimAmount(0f)
+            window?.setBackgroundDrawableResource(android.R.color.transparent)
+        }
+
         Surface(
             shape = RoundedCornerShape(0.dp),
-            color = AppBackgroundColor, // 统一背景色
+            color = AppBackgroundColor, 
             modifier = Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding()
         ) {
             Column(
@@ -1258,7 +1263,6 @@ fun InternalVideoPlayer(
     var isLocked by remember { mutableStateOf(false) }
     val currentIsLocked by rememberUpdatedState(isLocked)
 
-    // 系统时间状态
     var currentSystemTime by remember { mutableStateOf("") }
 
     LaunchedEffect(Unit) {
@@ -1356,6 +1360,9 @@ fun InternalVideoPlayer(
     // 用于记录拖动进度条时的秒数差值
     var dragStartPosition by remember { mutableLongStateOf(0L) }
     var seekDeltaMillis by remember { mutableLongStateOf(0L) }
+    
+    // 用于双击快进/快退的提示文字
+    var seekMessage by remember { mutableStateOf<String?>(null) }
 
     val season = currentFile.parsedInfo?.season ?: 1
     var introSeconds by remember { mutableIntStateOf(0) }
@@ -1457,7 +1464,7 @@ fun InternalVideoPlayer(
         object : BroadcastReceiver() {
             override fun onReceive(ctx: Context?, intent: Intent?) {
                 when (intent?.action) {
-                    "ACTION_PIP_PREV" -> {
+                    "com.mie.reading.ACTION_PIP_PREV" -> {
                         val idx = series.videos.indexOfFirst { it.fid == currentFile.fid }
                         if (idx > 0) {
                             viewModel.playVideo(context, series, series.videos[idx - 1])
@@ -1465,7 +1472,7 @@ fun InternalVideoPlayer(
                             Toast.makeText(context, "已经是第一集了", Toast.LENGTH_SHORT).show()
                         }
                     }
-                    "ACTION_PIP_NEXT" -> {
+                    "com.mie.reading.ACTION_PIP_NEXT" -> {
                         val idx = series.videos.indexOfFirst { it.fid == currentFile.fid }
                         if (idx != -1 && idx < series.videos.size - 1) {
                             viewModel.playVideo(context, series, series.videos[idx + 1])
@@ -1473,7 +1480,7 @@ fun InternalVideoPlayer(
                             Toast.makeText(context, "已经是最后一集了", Toast.LENGTH_SHORT).show()
                         }
                     }
-                    "ACTION_PIP_PLAY_PAUSE" -> {
+                    "com.mie.reading.ACTION_PIP_PLAY_PAUSE" -> {
                         if (exoPlayer.isPlaying) exoPlayer.pause() else exoPlayer.play()
                     }
                 }
@@ -1483,9 +1490,9 @@ fun InternalVideoPlayer(
 
     DisposableEffect(Unit) {
         val filter = IntentFilter().apply {
-            addAction("ACTION_PIP_PREV")
-            addAction("ACTION_PIP_NEXT")
-            addAction("ACTION_PIP_PLAY_PAUSE")
+            addAction("com.mie.reading.ACTION_PIP_PREV")
+            addAction("com.mie.reading.ACTION_PIP_NEXT")
+            addAction("com.mie.reading.ACTION_PIP_PLAY_PAUSE")
         }
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             context.registerReceiver(pipActionReceiver, filter, Context.RECEIVER_EXPORTED)
@@ -1508,11 +1515,11 @@ fun InternalVideoPlayer(
                     val playPauseBitmap = createPipIcon(if (isPlaying) "pause" else "play", context)
                     val nextBitmap = createPipIcon("next", context)
 
-                    val prevIntent = Intent("ACTION_PIP_PREV").setPackage(context.packageName).setData(Uri.parse("pip://prev$timeStamp"))
+                    val prevIntent = Intent("com.mie.reading.ACTION_PIP_PREV").setPackage(context.packageName).setData(Uri.parse("pip://prev$timeStamp"))
                     val prevPendingIntent = PendingIntent.getBroadcast(context, 1, prevIntent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
                     val prevAction = RemoteAction(Icon.createWithBitmap(prevBitmap), "上一集", "上一集", prevPendingIntent)
 
-                    val playPauseIntent = Intent("ACTION_PIP_PLAY_PAUSE").setPackage(context.packageName).setData(Uri.parse("pip://play$timeStamp"))
+                    val playPauseIntent = Intent("com.mie.reading.ACTION_PIP_PLAY_PAUSE").setPackage(context.packageName).setData(Uri.parse("pip://play$timeStamp"))
                     val playPauseRequestCode = if (isPlaying) 2 else 3
                     val playPausePendingIntent = PendingIntent.getBroadcast(context, playPauseRequestCode, playPauseIntent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
                     val playPauseAction = RemoteAction(
@@ -1522,7 +1529,7 @@ fun InternalVideoPlayer(
                         playPausePendingIntent
                     )
 
-                    val nextIntent = Intent("ACTION_PIP_NEXT").setPackage(context.packageName).setData(Uri.parse("pip://next$timeStamp"))
+                    val nextIntent = Intent("com.mie.reading.ACTION_PIP_NEXT").setPackage(context.packageName).setData(Uri.parse("pip://next$timeStamp"))
                     val nextPendingIntent = PendingIntent.getBroadcast(context, 4, nextIntent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
                     val nextAction = RemoteAction(Icon.createWithBitmap(nextBitmap), "下一集", "下一集", nextPendingIntent)
 
@@ -1681,6 +1688,14 @@ fun InternalVideoPlayer(
         if (isLocked && showUnlockIcon) { delay(3000); showUnlockIcon = false }
     }
 
+    // 双击快进/快退提示自动消失
+    LaunchedEffect(seekMessage) {
+        if (seekMessage != null) {
+            delay(1500)
+            seekMessage = null
+        }
+    }
+
     BackHandler {
         if (isLocked) { showUnlockIcon = true }
         else if (showSettingsPanel) showSettingsPanel = false
@@ -1729,7 +1744,7 @@ fun InternalVideoPlayer(
                     return@pointerInput
                 }
                 
-                var gestureMode = "" // "seek", "brightness", "volume", "none"
+                var gestureMode = "" 
                 var startX = 0f
                 var startY = 0f
                 var startPos = 0L
@@ -1757,7 +1772,7 @@ fun InternalVideoPlayer(
                                 if (absX > absY) {
                                     gestureMode = "seek"
                                     isDraggingSeekBar = true
-                                    dragStartPosition = startPos // 记录起始位置
+                                    dragStartPosition = startPos 
                                     change.consume()
                                 } else {
                                     if (startX < size.width / 3f) {
@@ -1787,7 +1802,6 @@ fun InternalVideoPlayer(
                                 seekDeltaMillis = timeDeltaMs
                                 val target = (startPos + timeDeltaMs).coerceIn(0L, if (duration > 0) duration else Long.MAX_VALUE)
                                 currentPosition = target
-                                // 不调用 exoPlayer.seekTo()，松手才跳转
                             }
                             "brightness" -> {
                                 gestureValue = (startBrightness - (deltaY / size.height)).coerceIn(0f, 1f)
@@ -1803,14 +1817,22 @@ fun InternalVideoPlayer(
                     },
                     onDragEnd = { 
                         if (gestureMode == "seek") {
-                            exoPlayer.seekTo(currentPosition)
-                            if (isPlaying) exoPlayer.play()
+                            // 只有移动距离超过1秒才真正加载
+                            if (abs(currentPosition - dragStartPosition) > 1000L) {
+                                exoPlayer.seekTo(currentPosition)
+                                if (isPlaying) exoPlayer.play()
+                            } else {
+                                currentPosition = dragStartPosition
+                            }
                         }
                         gestureMode = "" 
                         gestureType = "" 
                         isDraggingSeekBar = false 
                     },
                     onDragCancel = { 
+                        if (gestureMode == "seek") {
+                            currentPosition = dragStartPosition
+                        }
                         gestureMode = "" 
                         gestureType = ""
                         isDraggingSeekBar = false 
@@ -1825,9 +1847,11 @@ fun InternalVideoPlayer(
                         when {
                             offset.x < size.width / 3 -> {
                                 exoPlayer.seekTo((exoPlayer.currentPosition - 10000).coerceAtLeast(0))
+                                seekMessage = "已快退 10 秒"
                             }
                             offset.x > size.width * 2 / 3 -> {
                                 exoPlayer.seekTo((exoPlayer.currentPosition + 10000).coerceAtMost(if (duration > 0) duration else Long.MAX_VALUE))
+                                seekMessage = "已快进 10 秒"
                             }
                             else -> { if (isPlaying) exoPlayer.pause() else exoPlayer.play() }
                         }
@@ -1899,7 +1923,6 @@ fun InternalVideoPlayer(
             }
         }
 
-        // 拖动进度条时的UI提示（居中） - 精准计算差值
         if (isDraggingSeekBar) {
             val deltaSec = (currentPosition - dragStartPosition) / 1000
             val deltaText = if (deltaSec >= 0) "+${formatDeltaTime(deltaSec)}" else "-${formatDeltaTime(abs(deltaSec))}"
@@ -1961,11 +1984,11 @@ fun InternalVideoPlayer(
                                     val playPauseBitmap = createPipIcon(if (isPlaying) "pause" else "play", context)
                                     val nextBitmap = createPipIcon("next", context)
 
-                                    val prevIntent = Intent("ACTION_PIP_PREV").setPackage(context.packageName).setData(Uri.parse("pip://prev$timeStamp"))
+                                    val prevIntent = Intent("com.mie.reading.ACTION_PIP_PREV").setPackage(context.packageName).setData(Uri.parse("pip://prev$timeStamp"))
                                     val prevPendingIntent = PendingIntent.getBroadcast(context, 1, prevIntent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
                                     val prevAction = RemoteAction(Icon.createWithBitmap(prevBitmap), "上一集", "上一集", prevPendingIntent)
 
-                                    val playPauseIntent = Intent("ACTION_PIP_PLAY_PAUSE").setPackage(context.packageName).setData(Uri.parse("pip://play$timeStamp"))
+                                    val playPauseIntent = Intent("com.mie.reading.ACTION_PIP_PLAY_PAUSE").setPackage(context.packageName).setData(Uri.parse("pip://play$timeStamp"))
                                     val playPauseRequestCode = if (isPlaying) 2 else 3
                                     val playPausePendingIntent = PendingIntent.getBroadcast(context, playPauseRequestCode, playPauseIntent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
                                     val playPauseAction = RemoteAction(
@@ -1975,7 +1998,7 @@ fun InternalVideoPlayer(
                                         playPausePendingIntent
                                     )
 
-                                    val nextIntent = Intent("ACTION_PIP_NEXT").setPackage(context.packageName).setData(Uri.parse("pip://next$timeStamp"))
+                                    val nextIntent = Intent("com.mie.reading.ACTION_PIP_NEXT").setPackage(context.packageName).setData(Uri.parse("pip://next$timeStamp"))
                                     val nextPendingIntent = PendingIntent.getBroadcast(context, 4, nextIntent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
                                     val nextAction = RemoteAction(Icon.createWithBitmap(nextBitmap), "下一集", "下一集", nextPendingIntent)
 
@@ -2018,10 +2041,10 @@ fun InternalVideoPlayer(
                         modifier = Modifier.weight(1f).padding(start = 8.dp, end = 16.dp).basicMarquee()
                     )
 
-                    // 顶部系统时间，网速和分辨率
+                    // 网速和时间位置互换
                     if (isLandscape) {
-                        AppText(text = currentSystemTime, color = Color.White, fontSize = 12.sp, modifier = Modifier.padding(end = 12.dp))
                         AppText(text = networkSpeed, color = Color.White, fontSize = 12.sp, modifier = Modifier.padding(end = 12.dp))
+                        AppText(text = currentSystemTime, color = Color.White, fontSize = 12.sp, modifier = Modifier.padding(end = 12.dp))
                     }
                     if (resolution.isNotBlank()) {
                         AppText(text = resolution, color = Color.White, fontSize = 12.sp, modifier = Modifier.padding(end = 16.dp))
@@ -2070,7 +2093,9 @@ fun InternalVideoPlayer(
                                                 if (duration > 0) {
                                                     val target = (offset.x / sliderWidth).coerceIn(0f, 1f)
                                                     val finalPos = (target * duration).toLong()
-                                                    exoPlayer.seekTo(finalPos)
+                                                    if (abs(finalPos - exoPlayer.currentPosition) > 1000L) {
+                                                        exoPlayer.seekTo(finalPos)
+                                                    }
                                                     isDraggingSeekBar = false
                                                 }
                                             }
@@ -2097,8 +2122,12 @@ fun InternalVideoPlayer(
                                             },
                                             onDragEnd = {
                                                 isDraggingSeekBar = false
-                                                exoPlayer.seekTo(currentPosition)
-                                                if (isPlaying) exoPlayer.play()
+                                                if (abs(currentPosition - dragStartPosition) > 1000L) {
+                                                    exoPlayer.seekTo(currentPosition)
+                                                    if (isPlaying) exoPlayer.play()
+                                                } else {
+                                                    currentPosition = dragStartPosition
+                                                }
                                             },
                                             onDragCancel = { isDraggingSeekBar = false }
                                         )
@@ -2209,11 +2238,26 @@ fun InternalVideoPlayer(
             }
         }
 
+        // 双击快退/快进提示
+        AnimatedVisibility(
+            visible = seekMessage != null,
+            enter = fadeIn(),
+            exit = fadeOut(),
+            modifier = Modifier.align(Alignment.TopCenter).padding(top = if (isLandscape) 40.dp else 60.dp)
+        ) {
+            Box(
+                modifier = Modifier
+                    .background(Color.Black.copy(alpha = 0.6f), RoundedCornerShape(8.dp))
+                    .padding(horizontal = 16.dp, vertical = 8.dp)
+            ) { AppText(text = seekMessage ?: "", color = Color.White, fontSize = 16.sp) }
+        }
+
+        // 2.0快进中位置往上调
         AnimatedVisibility(
             visible = isLongPressing,
             enter = fadeIn(),
             exit = fadeOut(),
-            modifier = Modifier.align(Alignment.TopCenter).padding(top = if (isLandscape) 80.dp else 120.dp)
+            modifier = Modifier.align(Alignment.TopCenter).padding(top = if (isLandscape) 40.dp else 60.dp)
         ) {
             Box(
                 modifier = Modifier
