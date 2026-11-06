@@ -126,6 +126,7 @@ import androidx.media3.exoplayer.DefaultLoadControl
 import androidx.media3.exoplayer.DefaultRenderersFactory
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.source.ProgressiveMediaSource
+import androidx.media3.session.MediaSession
 import androidx.media3.ui.PlayerView
 import coil3.compose.AsyncImage
 import io.legado.app.data.repository.VideoSettingsRepository
@@ -384,7 +385,6 @@ fun VideoScraperScreen(
 
     Box(modifier = Modifier.fillMaxSize().background(AppBackgroundColor)) {
         if (uiState.currentSeries != null) {
-            // 核心修复：实时从 seriesList 中查找最新的 currentSeries 数据，确保数据实时刷新
             val latestSeries = uiState.seriesList.find { it.id == uiState.currentSeries!!.id } ?: uiState.currentSeries!!
             
             MediaDetailScreen(
@@ -615,7 +615,7 @@ fun VideoScraperScreen(
             }
         }
 
-        // 核心修复：只在首页展示（没有进入详情页，且没有在播放）时，才显示悬浮窗
+        // 仅在首页（未进详情页，未播放）显示悬浮窗
         val showLoadingOverlay = (uiState.isLoading || uiState.isScraping) && 
                                   uiState.currentSeries == null && 
                                   uiState.playUrl == null && 
@@ -839,10 +839,8 @@ private fun SettingsDialog(
         LaunchedEffect(Unit) {
             val window = (view.parent as? DialogWindowProvider)?.window
             if (window != null) {
-                // 去除灰色蒙版
                 window.setDimAmount(0f)
                 window.setBackgroundDrawableResource(android.R.color.transparent)
-                // 核心修复：强制状态栏字体变为黑色
                 val controller = WindowCompat.getInsetsController(window, window.decorView)
                 controller.isAppearanceLightStatusBars = true
                 controller.isAppearanceLightNavigationBars = true
@@ -1447,6 +1445,16 @@ fun InternalVideoPlayer(
             }
     }
 
+    val mediaSession = remember {
+        MediaSession.Builder(context, exoPlayer).build()
+    }
+
+    DisposableEffect(mediaSession) {
+        onDispose {
+            mediaSession.release()
+        }
+    }
+
     DisposableEffect(lifecycleOwner) {
         var isPlayerReleased = false
         val observer = LifecycleEventObserver { _, event ->
@@ -1528,8 +1536,7 @@ fun InternalVideoPlayer(
                     val nextBitmap = createPipIcon("next", context)
 
                     val prevIntent = Intent("com.mie.reading.ACTION_PIP_PREV").setPackage(context.packageName).setData(Uri.parse("pip://prev$timeStamp"))
-                    // 核心修复：小窗的 PendingIntent 必须使用 FLAG_MUTABLE，否则系统无法传递点击事件
-                    val prevPendingIntent = PendingIntent.getBroadcast(context, 1, prevIntent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_MUTABLE)
+                    val prevPendingIntent = PendingIntent.getBroadcast(context, 0, prevIntent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_MUTABLE)
                     val prevAction = RemoteAction(Icon.createWithBitmap(prevBitmap), "上一集", "上一集", prevPendingIntent)
 
                     val playPauseIntent = Intent("com.mie.reading.ACTION_PIP_PLAY_PAUSE").setPackage(context.packageName).setData(Uri.parse("pip://play$timeStamp"))
@@ -1543,7 +1550,7 @@ fun InternalVideoPlayer(
                     )
 
                     val nextIntent = Intent("com.mie.reading.ACTION_PIP_NEXT").setPackage(context.packageName).setData(Uri.parse("pip://next$timeStamp"))
-                    val nextPendingIntent = PendingIntent.getBroadcast(context, 4, nextIntent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_MUTABLE)
+                    val nextPendingIntent = PendingIntent.getBroadcast(context, 0, nextIntent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_MUTABLE)
                     val nextAction = RemoteAction(Icon.createWithBitmap(nextBitmap), "下一集", "下一集", nextPendingIntent)
 
                     val params = PictureInPictureParams.Builder()
@@ -1939,7 +1946,8 @@ fun InternalVideoPlayer(
             val deltaText = if (deltaSec >= 0) "+${formatDeltaTime(deltaSec)}" else "-${formatDeltaTime(abs(deltaSec))}"
             Box(
                 modifier = Modifier
-                    .align(Alignment.Center)
+                    .align(Alignment.TopCenter)
+                    .padding(top = if (isLandscape) 40.dp else 60.dp)
                     .background(Color.Black.copy(alpha = 0.6f), RoundedCornerShape(12.dp))
                     .padding(horizontal = 24.dp, vertical = 16.dp)
             ) {
@@ -1996,7 +2004,7 @@ fun InternalVideoPlayer(
                                     val nextBitmap = createPipIcon("next", context)
 
                                     val prevIntent = Intent("com.mie.reading.ACTION_PIP_PREV").setPackage(context.packageName).setData(Uri.parse("pip://prev$timeStamp"))
-                                    val prevPendingIntent = PendingIntent.getBroadcast(context, 1, prevIntent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_MUTABLE)
+                                    val prevPendingIntent = PendingIntent.getBroadcast(context, 0, prevIntent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_MUTABLE)
                                     val prevAction = RemoteAction(Icon.createWithBitmap(prevBitmap), "上一集", "上一集", prevPendingIntent)
 
                                     val playPauseIntent = Intent("com.mie.reading.ACTION_PIP_PLAY_PAUSE").setPackage(context.packageName).setData(Uri.parse("pip://play$timeStamp"))
@@ -2010,7 +2018,7 @@ fun InternalVideoPlayer(
                                     )
 
                                     val nextIntent = Intent("com.mie.reading.ACTION_PIP_NEXT").setPackage(context.packageName).setData(Uri.parse("pip://next$timeStamp"))
-                                    val nextPendingIntent = PendingIntent.getBroadcast(context, 4, nextIntent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_MUTABLE)
+                                    val nextPendingIntent = PendingIntent.getBroadcast(context, 0, nextIntent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_MUTABLE)
                                     val nextAction = RemoteAction(Icon.createWithBitmap(nextBitmap), "下一集", "下一集", nextPendingIntent)
 
                                     val params = PictureInPictureParams.Builder()
