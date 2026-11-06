@@ -1270,7 +1270,8 @@ fun InternalVideoPlayer(
     val isLandscape = configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
     val videoSettingsRepository = koinInject<VideoSettingsRepository>()
 
-    val isInPip = remember { mutableStateOf(false) }
+    // 修复点1：使用 Activity 真实状态作为兜底，防止重组时状态丢失
+    val isInPip = remember { mutableStateOf(activity?.isInPictureInPictureMode == true) }
     val lifecycleOwner = LocalLifecycleOwner.current
 
     var errorDialogMsg by remember { mutableStateOf<String?>(null) }
@@ -1448,7 +1449,6 @@ fun InternalVideoPlayer(
             }
     }
 
-    // 移除 MediaSession.Callback，避免与 BroadcastReceiver 抢焦点
     val mediaSession = remember {
         MediaSession.Builder(context, exoPlayer).build()
     }
@@ -1522,13 +1522,14 @@ fun InternalVideoPlayer(
             context,
             pipActionReceiver,
             filter,
-            ContextCompat.RECEIVER_NOT_EXPORTED // 官方推荐：内部广播使用 NOT_EXPORTED
+            ContextCompat.RECEIVER_NOT_EXPORTED
         )
         onDispose {
             context.unregisterReceiver(pipActionReceiver)
         }
     }
 
+    // 修复点2：加入时间戳强制系统刷新图标缓存
     LaunchedEffect(isPlaying, isInPip.value) {
         if (isInPip.value && Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             val handler = Handler(Looper.getMainLooper())
@@ -1538,12 +1539,11 @@ fun InternalVideoPlayer(
                     val playPauseBitmap = createPipIcon(if (isPlaying) "pause" else "play", context)
                     val nextBitmap = createPipIcon("next", context)
 
-                    // 关键修复点：使用唯一的 requestCode 和 FLAG_IMMUTABLE，去掉无用的 data
-                    val prevIntent = Intent("com.mie.reading.ACTION_PIP_PREV").setPackage(context.packageName)
+                    val prevIntent = Intent("com.mie.reading.ACTION_PIP_PREV").setPackage(context.packageName).setData(Uri.parse("pip://prev_${System.currentTimeMillis()}"))
                     val prevPendingIntent = PendingIntent.getBroadcast(context, 100, prevIntent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
                     val prevAction = RemoteAction(Icon.createWithBitmap(prevBitmap), "上一集", "上一集", prevPendingIntent)
 
-                    val playPauseIntent = Intent("com.mie.reading.ACTION_PIP_PLAY_PAUSE").setPackage(context.packageName)
+                    val playPauseIntent = Intent("com.mie.reading.ACTION_PIP_PLAY_PAUSE").setPackage(context.packageName).setData(Uri.parse("pip://play_pause_${isPlaying}_${System.currentTimeMillis()}"))
                     val playPausePendingIntent = PendingIntent.getBroadcast(context, 101, playPauseIntent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
                     val playPauseAction = RemoteAction(
                         Icon.createWithBitmap(playPauseBitmap),
@@ -1552,7 +1552,7 @@ fun InternalVideoPlayer(
                         playPausePendingIntent
                     )
 
-                    val nextIntent = Intent("com.mie.reading.ACTION_PIP_NEXT").setPackage(context.packageName)
+                    val nextIntent = Intent("com.mie.reading.ACTION_PIP_NEXT").setPackage(context.packageName).setData(Uri.parse("pip://next_${System.currentTimeMillis()}"))
                     val nextPendingIntent = PendingIntent.getBroadcast(context, 102, nextIntent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
                     val nextAction = RemoteAction(Icon.createWithBitmap(nextBitmap), "下一集", "下一集", nextPendingIntent)
 
@@ -1903,9 +1903,10 @@ fun InternalVideoPlayer(
             }
         )
 
-        if (isInPip.value) {
+        // 修复点3：双重判断拦截全屏UI（防止重组时泄漏）
+        if (activity?.isInPictureInPictureMode == true || isInPip.value) {
             Box(modifier = Modifier.fillMaxSize()) {
-                // 系统级按钮，不显示 Compose UI
+                // 纯黑背景，不显示 Compose UI
             }
             return@Box
         }
@@ -2004,12 +2005,12 @@ fun InternalVideoPlayer(
                                     val playPauseBitmap = createPipIcon(if (isPlaying) "pause" else "play", context)
                                     val nextBitmap = createPipIcon("next", context)
 
-                                    // 关键修复点：与上面保持一致
-                                    val prevIntent = Intent("com.mie.reading.ACTION_PIP_PREV").setPackage(context.packageName)
+                                    // 修复点4：进入小窗时同样使用带时间戳的 PendingIntent
+                                    val prevIntent = Intent("com.mie.reading.ACTION_PIP_PREV").setPackage(context.packageName).setData(Uri.parse("pip://prev_${System.currentTimeMillis()}"))
                                     val prevPendingIntent = PendingIntent.getBroadcast(context, 100, prevIntent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
                                     val prevAction = RemoteAction(Icon.createWithBitmap(prevBitmap), "上一集", "上一集", prevPendingIntent)
 
-                                    val playPauseIntent = Intent("com.mie.reading.ACTION_PIP_PLAY_PAUSE").setPackage(context.packageName)
+                                    val playPauseIntent = Intent("com.mie.reading.ACTION_PIP_PLAY_PAUSE").setPackage(context.packageName).setData(Uri.parse("pip://play_pause_${isPlaying}_${System.currentTimeMillis()}"))
                                     val playPausePendingIntent = PendingIntent.getBroadcast(context, 101, playPauseIntent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
                                     val playPauseAction = RemoteAction(
                                         Icon.createWithBitmap(playPauseBitmap),
@@ -2018,7 +2019,7 @@ fun InternalVideoPlayer(
                                         playPausePendingIntent
                                     )
 
-                                    val nextIntent = Intent("com.mie.reading.ACTION_PIP_NEXT").setPackage(context.packageName)
+                                    val nextIntent = Intent("com.mie.reading.ACTION_PIP_NEXT").setPackage(context.packageName).setData(Uri.parse("pip://next_${System.currentTimeMillis()}"))
                                     val nextPendingIntent = PendingIntent.getBroadcast(context, 102, nextIntent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
                                     val nextAction = RemoteAction(Icon.createWithBitmap(nextBitmap), "下一集", "下一集", nextPendingIntent)
 
