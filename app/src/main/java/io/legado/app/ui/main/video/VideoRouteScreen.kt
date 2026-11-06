@@ -145,7 +145,6 @@ import java.util.concurrent.TimeUnit
 import kotlin.math.abs
 import kotlin.math.roundToInt
 
-// 用于解析最近观看的历史记录
 data class RecentWatchedItem(
     val fid: String,
     val title: String,
@@ -154,10 +153,8 @@ data class RecentWatchedItem(
     val timestamp: Long
 )
 
-// 全局统一背景色
 val AppBackgroundColor = Color(0xFFF7F8FA)
 
-// 使用原生 Canvas 绘制 PiP 图标
 fun createPipIcon(type: String, context: Context): Bitmap {
     val size = 96 
     val bitmap = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)
@@ -197,9 +194,6 @@ fun createPipIcon(type: String, context: Context): Bitmap {
     return bitmap
 }
 
-// ==========================================
-// 1. 资源库独立页面
-// ==========================================
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
 fun VideoLibraryScreen(
@@ -305,10 +299,6 @@ fun VideoLibraryScreen(
     }
 }
 
-
-// ==========================================
-// 2. 影视库独立页面
-// ==========================================
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
 fun VideoScraperScreen(
@@ -615,7 +605,6 @@ fun VideoScraperScreen(
             }
         }
 
-        // 仅在首页（未进详情页，未播放）显示悬浮窗
         val showLoadingOverlay = (uiState.isLoading || uiState.isScraping) && 
                                   uiState.currentSeries == null && 
                                   uiState.playUrl == null && 
@@ -813,9 +802,6 @@ fun RecentWatchedGridCard(
     }
 }
 
-// ==========================================
-// 辅助组件：设置弹窗、手动刮削弹窗
-// ==========================================
 @Composable
 private fun SettingsDialog(
     uiState: VideoUiState,
@@ -841,6 +827,7 @@ private fun SettingsDialog(
             if (window != null) {
                 window.setDimAmount(0f)
                 window.setBackgroundDrawableResource(android.R.color.transparent)
+                window.statusBarColor = android.graphics.Color.TRANSPARENT
                 val controller = WindowCompat.getInsetsController(window, window.decorView)
                 controller.isAppearanceLightStatusBars = true
                 controller.isAppearanceLightNavigationBars = true
@@ -1164,10 +1151,6 @@ private fun ManualScrapeDialog(
     }
 }
 
-
-// ==========================================
-// 播放器与登录页面
-// ==========================================
 @SuppressLint("SetJavaScriptEnabled")
 @Composable
 fun WebLoginView(onLoginSuccess: (String) -> Unit, onCancel: () -> Unit) {
@@ -1946,8 +1929,8 @@ fun InternalVideoPlayer(
             val deltaText = if (deltaSec >= 0) "+${formatDeltaTime(deltaSec)}" else "-${formatDeltaTime(abs(deltaSec))}"
             Box(
                 modifier = Modifier
-                    .align(Alignment.TopCenter)
-                    .padding(top = if (isLandscape) 40.dp else 60.dp)
+                    .align(Alignment.Center)
+                    .padding(bottom = 140.dp) // 核心修复：居中偏上，完美避开人脸
                     .background(Color.Black.copy(alpha = 0.6f), RoundedCornerShape(12.dp))
                     .padding(horizontal = 24.dp, vertical = 16.dp)
             ) {
