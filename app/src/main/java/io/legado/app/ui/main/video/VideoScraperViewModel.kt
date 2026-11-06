@@ -699,8 +699,17 @@ class VideoScraperViewModel(
                 val currentList = _uiState.value.seriesList.map { old ->
                     scrapedList.find { it.id == old.id } ?: old
                 }
+                
+                // === 修复点：同步更新 currentSeries ===
+                val oldCurrent = _uiState.value.currentSeries
+                val newCurrent = if (oldCurrent != null) {
+                    currentList.find { it.id == oldCurrent.id } 
+                        ?: currentList.find { it.title == oldCurrent.title }
+                        ?: oldCurrent
+                } else null
+
                 hasLoadedLibrary = true
-                _uiState.update { it.copy(isLoading = false, isScraping = false, seriesList = currentList) }
+                _uiState.update { it.copy(isLoading = false, isScraping = false, seriesList = currentList, currentSeries = newCurrent) }
                 
                 handlePendingPlayRequest()
             }
@@ -918,29 +927,34 @@ class VideoScraperViewModel(
     }
 
     fun playVideo(context: Context, series: MediaSeries, file: QuarkFile) {
+        // === 修复点：如果传入的是临时拼装对象，强制从缓存列表拦截并替换为真实完整对象 ===
+        val realSeries = if (series.id.startsWith("temp_")) {
+            _uiState.value.seriesList.find { s -> s.videos.any { it.fid == file.fid } } ?: series
+        } else series
+
         val cookie = _uiState.value.cookie
         val epNum = file.parsedInfo?.episode
         val season = file.parsedInfo?.season ?: 1
-        val titleText = if (epNum != null && series.category != "电影" && series.videos.size > 1) {
-            val tmdbEpTitle = series.seasonEpisodeTitles["${season}_${epNum}"] ?: series.episodeTitles[epNum]
-            if (!tmdbEpTitle.isNullOrBlank()) "${series.title} 第${epNum}集 $tmdbEpTitle"
-            else "${series.title} 第${epNum}集"
-        } else { series.title }
+        val titleText = if (epNum != null && realSeries.category != "电影" && realSeries.videos.size > 1) {
+            val tmdbEpTitle = realSeries.seasonEpisodeTitles["${season}_${epNum}"] ?: realSeries.episodeTitles[epNum]
+            if (!tmdbEpTitle.isNullOrBlank()) "${realSeries.title} 第${epNum}集 $tmdbEpTitle"
+            else "${realSeries.title} 第${epNum}集"
+        } else { realSeries.title }
 
         try {
             val jsonArray = JSONArray(videoSettingsRepository.recentWatchedVideos)
             val newList = mutableListOf<JSONObject>()
             for (i in 0 until jsonArray.length()) {
                 val obj = jsonArray.getJSONObject(i)
-                if (obj.optString("seriesTitle") != series.title) {
+                if (obj.optString("seriesTitle") != realSeries.title) {
                     newList.add(obj)
                 }
             }
             val newObj = JSONObject().apply {
                 put("fid", file.fid)
                 put("title", titleText)
-                put("seriesTitle", series.title)
-                put("coverPath", series.posterUrl ?: "")
+                put("seriesTitle", realSeries.title)
+                put("coverPath", realSeries.posterUrl ?: "")
                 put("timestamp", System.currentTimeMillis())
             }
             newList.add(0, newObj)
@@ -950,7 +964,7 @@ class VideoScraperViewModel(
             videoSettingsRepository.recentWatchedVideos = resultArray.toString()
         } catch (e: Exception) { e.printStackTrace() }
 
-        _uiState.update { it.copy(playUrl = null, playTitle = titleText, currentSeries = series, currentPlayFile = file, isDirectPlay = false) }
+        _uiState.update { it.copy(playUrl = null, playTitle = titleText, currentSeries = realSeries, currentPlayFile = file, isDirectPlay = false) }
 
         viewModelScope.launch {
             val url = withContext(Dispatchers.IO) {
