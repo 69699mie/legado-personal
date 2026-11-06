@@ -376,7 +376,7 @@ fun VideoScraperScreen(
 
     Box(modifier = Modifier.fillMaxSize().background(AppBackgroundColor)) {
         if (uiState.currentSeries != null) {
-            // 修复点：加强匹配逻辑，确保拿到最新最全的数据
+            // 修复核心点：增强匹配逻辑，确保拿到最新最全的数据
             val latestSeries = remember(uiState.seriesList, uiState.currentSeries, uiState.currentPlayFile) {
                 val current = uiState.currentSeries
                 val byId = current?.let { c -> uiState.seriesList.find { it.id == c.id } }
@@ -1448,10 +1448,9 @@ fun InternalVideoPlayer(
             }
     }
 
+    // 修复点：移除不兼容的 isActive 属性，Media3 中 Session 会随 ExoPlayer 自动激活
     val mediaSession = remember {
-        MediaSession.Builder(context, exoPlayer).build().apply {
-            isActive = true // 修复点：激活 MediaSession
-        }
+        MediaSession.Builder(context, exoPlayer).build()
     }
 
     DisposableEffect(mediaSession) {
@@ -2628,14 +2627,18 @@ fun MediaDetailScreen(
         currentSeasonVideos.firstOrNull()
     }
 
-    val playBtnText = if (targetPlayFile != null && viewModel.getVideoProgress(targetPlayFile.fid) > 0) {
-        val ep = targetPlayFile.parsedInfo?.episode
-        if (ep != null && series.category != "电影" && series.videos.size > 1) "继续播放 第${ep}集" else "继续播放"
-    } else {
-        "播放"
+    val playBtnText = remember(targetPlayFile, series) {
+        if (targetPlayFile != null && viewModel.getVideoProgress(targetPlayFile.fid) > 0) {
+            val ep = targetPlayFile.parsedInfo?.episode
+            if (ep != null && series.category != "电影" && series.videos.size > 1) "继续播放 第${ep}集" else "继续播放"
+        } else {
+            "播放"
+        }
     }
 
-    LazyColumn(modifier = Modifier.fillMaxSize().background(Color.White)) {
+    val listState = rememberLazyListState()
+
+    LazyColumn(state = listState, modifier = Modifier.fillMaxSize().background(Color.White)) {
         item {
             Box(modifier = Modifier.fillMaxWidth().height(350.dp)) {
                 if (series.posterUrl != null) {
@@ -2684,25 +2687,31 @@ fun MediaDetailScreen(
         }
 
         item {
-            LazyRow(contentPadding = PaddingValues(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                items(currentSeasonVideos) { file ->
-                    val e = file.parsedInfo?.episode
-                    val s = file.parsedInfo?.season ?: 1
-                    val tmdbTitle = if (e != null) series.seasonEpisodeTitles["${s}_${e}"] ?: series.episodeTitles[e] else null
-                    val stillUrl = if (e != null) series.seasonEpisodeStills["${s}_${e}"] ?: series.episodeStills[e] else null
+            if (currentSeasonVideos.isEmpty() && !isScraping) {
+                Box(modifier = Modifier.fillMaxWidth().padding(32.dp), contentAlignment = Alignment.Center) {
+                    AppText("暂无可用视频源或解析失败", color = Color.Gray)
+                }
+            } else {
+                LazyRow(contentPadding = PaddingValues(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    items(currentSeasonVideos) { file ->
+                        val e = file.parsedInfo?.episode
+                        val s = file.parsedInfo?.season ?: 1
+                        val tmdbTitle = if (e != null) series.seasonEpisodeTitles["${s}_${e}"] ?: series.episodeTitles[e] else null
+                        val stillUrl = if (e != null) series.seasonEpisodeStills["${s}_${e}"] ?: series.episodeStills[e] else null
 
-                    val label = if (e != null && series.category != "电影" && series.videos.size > 1) {
-                        "第${e}集" + if (!tmdbTitle.isNullOrBlank()) " $tmdbTitle" else ""
-                    } else {
-                        if (series.videos.size == 1) series.title else (file.folderPath.lastOrNull() ?: file.name.substringBeforeLast("."))
-                    }
-
-                    Column(modifier = Modifier.width(160.dp).clickable { onPlay(series, file) }) {
-                        Box(modifier = Modifier.fillMaxWidth().aspectRatio(16f / 9f).clip(RoundedCornerShape(8.dp)).background(Color(0xFFE0E0E0)), contentAlignment = Alignment.Center) {
-                            if (stillUrl != null) AsyncImage(model = stillUrl, contentDescription = null, modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
-                            else Icon(Icons.Default.PlayArrow, null, tint = Color.White)
+                        val label = if (e != null && series.category != "电影" && series.videos.size > 1) {
+                            "第${e}集" + if (!tmdbTitle.isNullOrBlank()) " $tmdbTitle" else ""
+                        } else {
+                            if (series.videos.size == 1) series.title else (file.folderPath.lastOrNull() ?: file.name.substringBeforeLast("."))
                         }
-                        AppText(text = label, maxLines = 1, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(top = 4.dp), fontWeight = FontWeight.Bold)
+
+                        Column(modifier = Modifier.width(160.dp).clickable { onPlay(series, file) }) {
+                            Box(modifier = Modifier.fillMaxWidth().aspectRatio(16f / 9f).clip(RoundedCornerShape(8.dp)).background(Color(0xFFE0E0E0)), contentAlignment = Alignment.Center) {
+                                if (stillUrl != null) AsyncImage(model = stillUrl, contentDescription = null, modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
+                                else Icon(Icons.Default.PlayArrow, null, tint = Color.White)
+                            }
+                            AppText(text = label, maxLines = 1, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(top = 4.dp), fontWeight = FontWeight.Bold)
+                        }
                     }
                 }
             }
