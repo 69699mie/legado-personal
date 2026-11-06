@@ -369,9 +369,10 @@ class VideoScraperViewModel(
 
                 val needScrapeList = mutableListOf<MediaSeries>()
                 val finalSeriesList = groupedSeries.map { series ->
+                    // 核心修复：只用纯名字、季、集拼接，彻底剔除 fid 防止夸克乱序导致指纹变动
                     val sortedVideos = series.videos.sortedBy { it.name }
                     val newSignature = sortedVideos.joinToString("|") { 
-                        "${it.fid}_${it.parsedInfo?.season}_${it.parsedInfo?.episode}_${it.name}" 
+                        "${it.name}_${it.parsedInfo?.season ?: 1}_${it.parsedInfo?.episode ?: 0}" 
                     }
                     
                     val cached = scrapedCache[series.id]
@@ -394,6 +395,7 @@ class VideoScraperViewModel(
                             )
                         }
 
+                        // 如果新指纹和老指纹一模一样（哪怕只是顺序不同），绝对不发网络请求
                         if (newSignature != cached.fileListSignature) {
                             needScrapeList.add(series)
                             series.copy(
@@ -432,6 +434,7 @@ class VideoScraperViewModel(
                     }
                 }
 
+                // 必须先把完整的数据（包含集数列表）推给 UI，保证详情页秒开
                 _uiState.update { it.copy(seriesList = finalSeriesList) }
 
                 if (apiKey.isNotBlank() && needScrapeList.isNotEmpty()) {
@@ -657,7 +660,7 @@ class VideoScraperViewModel(
 
                     val sortedVideos = newSeries.videos.sortedBy { it.name }
                     val newSignature = sortedVideos.joinToString("|") { 
-                        "${it.fid}_${it.parsedInfo?.season}_${it.parsedInfo?.episode}_${it.name}" 
+                        "${it.name}_${it.parsedInfo?.season ?: 1}_${it.parsedInfo?.episode ?: 0}" 
                     }
 
                     scrapedCache[newSeries.id] = ScrapeCacheItem(
@@ -680,7 +683,7 @@ class VideoScraperViewModel(
                 } else {
                     val sortedVideos = series.videos.sortedBy { it.name }
                     val newSignature = sortedVideos.joinToString("|") { 
-                        "${it.fid}_${it.parsedInfo?.season}_${it.parsedInfo?.episode}_${it.name}" 
+                        "${it.name}_${it.parsedInfo?.season ?: 1}_${it.parsedInfo?.episode ?: 0}" 
                     }
                     val oldCached = scrapedCache[series.id]
                     if (oldCached == null) {
@@ -895,7 +898,7 @@ class VideoScraperViewModel(
         if (updatedSeries != null) {
             val sortedVideos = updatedSeries.videos.sortedBy { it.name }
             val newSignature = sortedVideos.joinToString("|") { 
-                "${it.fid}_${it.parsedInfo?.season}_${it.parsedInfo?.episode}_${it.name}" 
+                "${it.name}_${it.parsedInfo?.season ?: 1}_${it.parsedInfo?.episode ?: 0}" 
             }
             scrapedCache[seriesId] = ScrapeCacheItem(
                 title = updatedSeries.title,
