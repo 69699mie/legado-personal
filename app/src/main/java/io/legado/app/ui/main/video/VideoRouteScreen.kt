@@ -136,6 +136,7 @@ import sh.calvin.reorderable.ReorderableItem
 import sh.calvin.reorderable.rememberReorderableLazyListState
 import java.util.Locale
 import java.util.concurrent.TimeUnit
+import kotlin.math.abs
 import kotlin.math.roundToInt
 
 // 用于解析最近观看的历史记录
@@ -775,19 +776,26 @@ private fun SettingsDialog(
     var showBannerLogicSelection by remember { mutableStateOf(false) }
     var showCategoryOrderDialog by remember { mutableStateOf(false) }
 
-    Dialog(onDismissRequest = onDismiss) {
+    Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
         Surface(
-            shape = RoundedCornerShape(24.dp),
-            color = Color.White.copy(alpha = 0.96f), 
-            border = BorderStroke(1.dp, Color(0xFFE0E0E0)), 
-            modifier = Modifier.fillMaxWidth().padding(16.dp).heightIn(max = 560.dp) 
+            shape = RoundedCornerShape(0.dp), // 改为全屏不需要圆角
+            color = Color.White, 
+            modifier = Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding()
         ) {
             Column(
                 modifier = Modifier
                     .padding(24.dp)
-                    .fillMaxWidth()
+                    .fillMaxSize()
                     .verticalScroll(rememberScrollState()) 
             ) {
+                // 顶部标题栏 + 关闭按钮
+                Row(modifier = Modifier.fillMaxWidth().padding(bottom = 16.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                    AppText(text = "设置", fontWeight = FontWeight.Bold, fontSize = 20.sp)
+                    IconButton(onClick = onDismiss) {
+                        Icon(Icons.Default.Close, contentDescription = "关闭")
+                    }
+                }
+
                 Row(modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                     AppText(text = "夸克登录状态", fontWeight = FontWeight.Bold, fontSize = 18.sp)
                     if (onWebLoginClick != null) {
@@ -839,7 +847,7 @@ private fun SettingsDialog(
                 )
 
                 AppText(text = "TMDB API 代理地址")
-                OutlinedTextField(value = inputTmdbUrl, onValueChange = { inputTmdbUrl = it }, modifier = Modifier.padding(vertical = 8.dp), maxLines = 1)
+                OutlinedTextField(value = inputTmdbUrl, onValueChange = { inputTmdbUrl = it }, modifier = Modifier.padding(vertical = 8.dp).fillMaxWidth(), maxLines = 1)
                 
                 HorizontalDivider(modifier = Modifier.padding(vertical = 12.dp))
                 
@@ -886,10 +894,10 @@ private fun SettingsDialog(
                     }, 
                     shape = RoundedCornerShape(20.dp),
                     contentPadding = PaddingValues(horizontal = 24.dp, vertical = 8.dp),
-                    modifier = Modifier.align(Alignment.End).padding(top = 16.dp),
+                    modifier = Modifier.fillMaxWidth().padding(top = 24.dp),
                     border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.5f))
                 ) { 
-                    AppText("确认", fontWeight = FontWeight.Bold) 
+                    AppText("确认保存", fontWeight = FontWeight.Bold) 
                 }
             }
         }
@@ -1027,8 +1035,11 @@ fun CategoryOrderDialog(
                                 ) {
                                     AppText(item, fontWeight = FontWeight.Medium)
                                     
-                                    // 移除了 draggableHandle，整个卡片区域长按即可拖拽
-                                    IconButton(onClick = {}) {
+                                    // 此处添加 Modifier.draggableHandle() 修复无法拖拽问题
+                                    IconButton(
+                                        onClick = {},
+                                        modifier = Modifier.draggableHandle()
+                                    ) {
                                         Icon(Icons.Default.Menu, contentDescription = "拖动排序", tint = if (item != "最近观看") Color.Gray else Color.LightGray)
                                     }
                                 }
@@ -1309,6 +1320,7 @@ fun InternalVideoPlayer(
 
     var audioTracks by remember { mutableStateOf<List<Tracks.Group>>(emptyList()) }
     var textTracks by remember { mutableStateOf<List<Tracks.Group>>(emptyList()) }
+    var trackSelectionVersion by remember { mutableIntStateOf(0) } // 用于强制刷新音频高亮状态
 
     val episodeListState = rememberLazyListState()
 
@@ -1360,7 +1372,7 @@ fun InternalVideoPlayer(
             }
     }
 
-    // 监听生命周期，处理小窗关闭和后台播放问题
+    // 监听生命周期，处理小窗关闭、后台播放、以及 PiP UI 同步
     DisposableEffect(lifecycleOwner) {
         var isPlayerReleased = false
         val observer = LifecycleEventObserver { _, event ->
@@ -1370,7 +1382,15 @@ fun InternalVideoPlayer(
                     if (!isPlayerReleased && activity?.isInPictureInPictureMode != true) {
                         exoPlayer.pause()
                     }
-                }, 200)
+                    // 如果刚进入小窗，立刻同步 UI 状态，防止残留
+                    if (activity?.isInPictureInPictureMode == true) {
+                        isInPip.value = true
+                    }
+                }, 100)
+            } else if (event == Lifecycle.Event.ON_RESUME) {
+                if (activity?.isInPictureInPictureMode != true) {
+                    isInPip.value = false
+                }
             }
         }
         lifecycleOwner.lifecycle.addObserver(observer)
@@ -1378,17 +1398,6 @@ fun InternalVideoPlayer(
             isPlayerReleased = true
             lifecycleOwner.lifecycle.removeObserver(observer) 
         }
-    }
-
-    // 用于判断当前是否处于画中画
-    DisposableEffect(lifecycleOwner) {
-        val observer = LifecycleEventObserver { _, event ->
-            if (event == Lifecycle.Event.ON_RESUME) {
-                isInPip.value = activity?.isInPictureInPictureMode == true
-            }
-        }
-        lifecycleOwner.lifecycle.addObserver(observer)
-        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
     }
 
     // 动态注册广播接收器，处理小窗原生按钮点击
@@ -1426,8 +1435,9 @@ fun InternalVideoPlayer(
             addAction("ACTION_PIP_NEXT")
             addAction("ACTION_PIP_PLAY_PAUSE")
         }
+        // 修复小窗点击无响应：Android 13+ 需要 Context.RECEIVER_EXPORTED
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            context.registerReceiver(pipActionReceiver, filter, Context.RECEIVER_NOT_EXPORTED)
+            context.registerReceiver(pipActionReceiver, filter, Context.RECEIVER_EXPORTED)
         } else {
             context.registerReceiver(pipActionReceiver, filter)
         }
@@ -1670,30 +1680,67 @@ fun InternalVideoPlayer(
                     }
                     return@pointerInput
                 }
+                
+                var dragDirection = "" // "seek", "brightness", "volume"
+                var startPos = 0L
+                var accumulatedX = 0f
+                
                 detectDragGestures(
                     onDragStart = { offset ->
-                        if (offset.x < size.width / 2) {
-                            gestureType = "brightness"
-                            val currentB = activity?.window?.attributes?.screenBrightness ?: 0.5f
-                            gestureValue = if (currentB < 0) 0.5f else currentB
-                        } else {
-                            gestureType = "volume"
-                            gestureValue = audioManager.getStreamVolume(AudioManager.STREAM_MUSIC).toFloat() / audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC)
-                        }
+                        dragDirection = ""
+                        accumulatedX = 0f
+                        startPos = exoPlayer.currentPosition
                     },
                     onDrag = { change, dragAmount ->
                         change.consume()
-                        if (gestureType == "brightness") {
+                        accumulatedX += dragAmount.x
+                        
+                        if (dragDirection.isEmpty()) {
+                            // 判定阈值 15px，判断方向
+                            if (abs(accumulatedX) > 15f || abs(dragAmount.y) > 15f) {
+                                if (abs(accumulatedX) > abs(dragAmount.y)) {
+                                    dragDirection = "seek"
+                                    isDraggingSeekBar = true
+                                } else {
+                                    dragDirection = if (change.position.x < size.width / 2) "brightness" else "volume"
+                                    gestureType = dragDirection
+                                    if (dragDirection == "brightness") {
+                                        val currentB = activity?.window?.attributes?.screenBrightness ?: 0.5f
+                                        gestureValue = if (currentB < 0) 0.5f else currentB
+                                    } else {
+                                        gestureValue = audioManager.getStreamVolume(AudioManager.STREAM_MUSIC).toFloat() / audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC)
+                                    }
+                                }
+                            }
+                        }
+                        
+                        if (dragDirection == "seek") {
+                            // 滑动满屏代表 300 秒
+                            val timeDeltaMs = (accumulatedX / size.width) * 300 * 1000
+                            val target = (startPos + timeDeltaMs.toLong()).coerceIn(0L, if (duration > 0) duration else Long.MAX_VALUE)
+                            currentPosition = target
+                            exoPlayer.seekTo(target)
+                            val diffSec = (timeDeltaMs / 1000).toInt()
+                            seekMessage = if (diffSec >= 0) "快进 +${diffSec}秒" else "快退 ${diffSec}秒"
+                        } else if (dragDirection == "brightness") {
                             gestureValue = (gestureValue - dragAmount.y / size.height).coerceIn(0f, 1f)
                             activity?.window?.let { val params = it.attributes; params.screenBrightness = gestureValue; it.attributes = params }
-                        } else if (gestureType == "volume") {
+                        } else if (dragDirection == "volume") {
                             gestureValue = (gestureValue - dragAmount.y / size.height).coerceIn(0f, 1f)
                             val maxVol = audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC)
                             audioManager.setStreamVolume(AudioManager.STREAM_MUSIC, (gestureValue * maxVol).roundToInt(), 0)
                         }
                     },
-                    onDragEnd = { gestureType = "" },
-                    onDragCancel = { gestureType = "" }
+                    onDragEnd = { 
+                        dragDirection = "" 
+                        gestureType = "" 
+                        isDraggingSeekBar = false 
+                    },
+                    onDragCancel = { 
+                        dragDirection = "" 
+                        gestureType = ""
+                        isDraggingSeekBar = false 
+                    }
                 )
             }
             .pointerInput(isLocked, showControls, showSettingsPanel, showEpisodeDrawer, isInPip.value) {
@@ -1834,6 +1881,7 @@ fun InternalVideoPlayer(
                                         .setActions(listOf(prevAction, playPauseAction, nextAction))
                                         .build()
                                     activity?.enterPictureInPictureMode(params)
+                                    isInPip.value = true // 立刻进入UI清理状态
                                 } catch (e: Exception) {
                                     Toast.makeText(context, "设备不支持画中画", Toast.LENGTH_SHORT).show()
                                 }
@@ -2042,16 +2090,31 @@ fun InternalVideoPlayer(
             }
         }
 
-        if (isLongPressing) {
+        // 长按快进与快进快退提示：移至顶部居中并加上淡入淡出
+        AnimatedVisibility(
+            visible = isLongPressing,
+            enter = fadeIn(),
+            exit = fadeOut(),
+            modifier = Modifier.align(Alignment.TopCenter).padding(top = if (isLandscape) 80.dp else 120.dp)
+        ) {
             Box(
-                modifier = Modifier.align(Alignment.TopCenter).padding(top = if (isLandscape) 80.dp else 120.dp)
-                    .background(Color.Black.copy(alpha = 0.6f), RoundedCornerShape(8.dp)).padding(horizontal = 16.dp, vertical = 8.dp)
+                modifier = Modifier
+                    .background(Color.Black.copy(alpha = 0.6f), RoundedCornerShape(8.dp))
+                    .padding(horizontal = 16.dp, vertical = 8.dp)
             ) { AppText(text = "2.0x快进中", color = Color.White, fontSize = 16.sp) }
-        } else if (seekMessage != null) {
+        }
+
+        AnimatedVisibility(
+            visible = seekMessage != null,
+            enter = fadeIn(),
+            exit = fadeOut(),
+            modifier = Modifier.align(Alignment.TopCenter).padding(top = if (isLandscape) 80.dp else 120.dp)
+        ) {
             Box(
-                modifier = Modifier.align(Alignment.TopCenter).padding(top = if (isLandscape) 80.dp else 120.dp)
-                    .background(Color.Black.copy(alpha = 0.6f), RoundedCornerShape(8.dp)).padding(horizontal = 16.dp, vertical = 8.dp)
-            ) { AppText(text = seekMessage!!, color = Color.White, fontSize = 16.sp) }
+                modifier = Modifier
+                    .background(Color.Black.copy(alpha = 0.6f), RoundedCornerShape(8.dp))
+                    .padding(horizontal = 16.dp, vertical = 8.dp)
+            ) { AppText(text = seekMessage ?: "", color = Color.White, fontSize = 16.sp) }
         }
 
         if (showEpisodeDrawer) {
@@ -2132,15 +2195,19 @@ fun InternalVideoPlayer(
                         audioTracks.forEachIndexed { index, trackGroup ->
                             val format = trackGroup.getTrackFormat(0)
                             val label = format.label ?: format.language ?: "音轨 ${index + 1}"
+                            // 使用 trackSelectionVersion 强制刷新监听
+                            val isSelected = remember(trackSelectionVersion, audioTracks) { trackGroup.isTrackSelected(0) }
                             Row(
                                 modifier = Modifier.fillMaxWidth().clickable {
                                     exoPlayer.trackSelectionParameters = exoPlayer.trackSelectionParameters.buildUpon()
                                         .setOverrideForType(TrackSelectionOverride(trackGroup.mediaTrackGroup, 0)).build()
+                                    trackSelectionVersion++
                                     Toast.makeText(context, "已切换至 $label", Toast.LENGTH_SHORT).show()
                                 }.padding(vertical = 12.dp),
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
-                                AppText(label, color = Color.White, fontSize = 15.sp, modifier = Modifier.weight(1f))
+                                // 选中纯白，未选中灰色，不加背景色块
+                                AppText(label, color = if (isSelected) Color.White else Color.Gray, fontSize = 15.sp, modifier = Modifier.weight(1f))
                             }
                         }
 
@@ -2149,15 +2216,17 @@ fun InternalVideoPlayer(
                         textTracks.forEachIndexed { index, trackGroup ->
                             val format = trackGroup.getTrackFormat(0)
                             val label = format.label ?: format.language ?: "字幕 ${index + 1}"
+                            val isSelected = remember(trackSelectionVersion, textTracks) { trackGroup.isTrackSelected(0) }
                             Row(
                                 modifier = Modifier.fillMaxWidth().clickable {
                                     exoPlayer.trackSelectionParameters = exoPlayer.trackSelectionParameters.buildUpon()
                                         .setOverrideForType(TrackSelectionOverride(trackGroup.mediaTrackGroup, 0)).build()
+                                    trackSelectionVersion++
                                     Toast.makeText(context, "已切换至 $label", Toast.LENGTH_SHORT).show()
                                 }.padding(vertical = 12.dp),
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
-                                AppText(label, color = Color.White, fontSize = 15.sp, modifier = Modifier.weight(1f))
+                                AppText(label, color = if (isSelected) Color.White else Color.Gray, fontSize = 15.sp, modifier = Modifier.weight(1f))
                             }
                         }
                     }
