@@ -310,7 +310,6 @@ fun VideoScraperScreen(
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val context = LocalContext.current
-    val activity = context.findActivity()
     val videoSettingsRepository = koinInject<VideoSettingsRepository>()
 
     var showSettingsDialog by remember { mutableStateOf(false) }
@@ -377,16 +376,32 @@ fun VideoScraperScreen(
 
     Box(modifier = Modifier.fillMaxSize().background(AppBackgroundColor)) {
         if (uiState.currentSeries != null) {
-            val latestSeries = uiState.seriesList.find { it.id == uiState.currentSeries!!.id } ?: uiState.currentSeries!!
+            // 修复点：加强匹配逻辑，确保拿到最新最全的数据
+            val latestSeries = remember(uiState.seriesList, uiState.currentSeries, uiState.currentPlayFile) {
+                val current = uiState.currentSeries
+                val byId = current?.let { c -> uiState.seriesList.find { it.id == c.id } }
+                if (byId != null) return@remember byId
+                
+                val byTitle = current?.let { c -> uiState.seriesList.find { it.title == c.title && it.videos.isNotEmpty() } }
+                if (byTitle != null) return@remember byTitle
+                
+                val byFid = uiState.currentPlayFile?.let { f -> uiState.seriesList.find { s -> s.videos.any { it.fid == f.fid } } }
+                if (byFid != null) return@remember byFid
+                
+                current
+            }
 
-            MediaDetailScreen(
-                series = latestSeries,
-                allSeries = uiState.seriesList,
-                onBack = { viewModel.selectSeries(null) },
-                onPlay = { series, file -> viewModel.playVideo(context, series, file) },
-                onLongClickPoster = { manualScrapeSeries = it; showManualScrapeDialog = true },
-                onSelectSeries = { viewModel.selectSeries(it) }
-            )
+            if (latestSeries != null) {
+                MediaDetailScreen(
+                    series = latestSeries,
+                    allSeries = uiState.seriesList,
+                    isScraping = uiState.isScraping,
+                    onBack = { viewModel.selectSeries(null) },
+                    onPlay = { series, file -> viewModel.playVideo(context, series, file) },
+                    onLongClickPoster = { manualScrapeSeries = it; showManualScrapeDialog = true },
+                    onSelectSeries = { viewModel.selectSeries(it) }
+                )
+            }
         } else if (viewAllCategory != null) {
             val categorySeries = uiState.seriesList.filter { it.category == viewAllCategory }
             Column(modifier = Modifier.fillMaxSize().statusBarsPadding().background(AppBackgroundColor)) {
@@ -1433,17 +1448,10 @@ fun InternalVideoPlayer(
             }
     }
 
-    // ============================================================
-    // 修复点：Media3 的 MediaSession 必须在 Builder 阶段设置 Callback，
-    // 且 Callback 中不能重写无参 onPlay/onPause/onSkipToNext/onSkipToPrevious
-    // （那是旧版 android.media.session 的 API）。
-    // 播放 / 暂停会自动由 ExoPlayer 同步到 MediaSession；
-    // 上一集 / 下一集 的 PIP 遥控已由下面的 BroadcastReceiver 处理，
-    // 因此 MediaSession 不再需要 Callback，只需保证实例存在用于系统媒体控制。
-    // 另外当前 Media3 版本没有 setActive(...) 方法，已移除。
-    // ============================================================
     val mediaSession = remember {
-        MediaSession.Builder(context, exoPlayer).build()
+        MediaSession.Builder(context, exoPlayer).build().apply {
+            isActive = true // 修复点：激活 MediaSession
+        }
     }
 
     DisposableEffect(mediaSession) {
@@ -1515,7 +1523,7 @@ fun InternalVideoPlayer(
             context,
             pipActionReceiver,
             filter,
-            ContextCompat.RECEIVER_EXPORTED
+            ContextCompat.RECEIVER_NOT_EXPORTED // 修复点：改为 NOT_EXPORTED 提高安全性和兼容性
         )
         onDispose {
             context.unregisterReceiver(pipActionReceiver)
@@ -2583,12 +2591,20 @@ fun SeriesPosterCard(
 fun MediaDetailScreen(
     series: MediaSeries,
     allSeries: List<MediaSeries>,
+    isScraping: Boolean = false,
     onBack: () -> Unit,
     onPlay: (MediaSeries, QuarkFile) -> Unit,
     onLongClickPoster: (MediaSeries) -> Unit,
     onSelectSeries: (MediaSeries) -> Unit
 ) {
     val viewModel: VideoScraperViewModel = koinViewModel()
+
+    if (series.videos.isEmpty() && isScraping) {
+        Box(modifier = Modifier.fillMaxSize().background(Color.White), contentAlignment = Alignment.Center) {
+            CircularProgressIndicator()
+        }
+        return
+    }
 
     val relatedSeries = remember(series, allSeries) {
         if (series.groupName.isNullOrBlank()) emptyList()
@@ -2599,8 +2615,12 @@ fun MediaDetailScreen(
         series.videos.sortedWith(compareBy<QuarkFile> { it.parsedInfo?.season ?: 1 }.thenBy { it.parsedInfo?.episode ?: 0 }.thenBy { it.name })
     }
 
-    val latestWatchedInCurrentSeason = currentSeasonVideos.maxByOrNull { viewModel.getVideoProgress(it.fid) }
-    val hasProgressInCurrentSeason = latestWatchedInCurrentSeason != null && viewModel.getVideoProgress(latestWatchedInCurrentSeason.fid) > 0
+    val latestWatchedInCurrentSeason = remember(currentSeasonVideos) {
+        currentSeasonVideos.maxByOrNull { viewModel.getVideoProgress(it.fid) }
+    }
+    val hasProgressInCurrentSeason = remember(latestWatchedInCurrentSeason) {
+        latestWatchedInCurrentSeason != null && viewModel.getVideoProgress(latestWatchedInCurrentSeason.fid) > 0
+    }
 
     val targetPlayFile = if (hasProgressInCurrentSeason && latestWatchedInCurrentSeason != null) {
         latestWatchedInCurrentSeason
@@ -2678,7 +2698,7 @@ fun MediaDetailScreen(
                     }
 
                     Column(modifier = Modifier.width(160.dp).clickable { onPlay(series, file) }) {
-                        Box(modifier = Modifier.fillMaxWidth().aspectRatio(16f / 9f).clip(RoundedCornerShape(8.dp)).background(Color.DarkGray), contentAlignment = Alignment.Center) {
+                        Box(modifier = Modifier.fillMaxWidth().aspectRatio(16f / 9f).clip(RoundedCornerShape(8.dp)).background(Color(0xFFE0E0E0)), contentAlignment = Alignment.Center) {
                             if (stillUrl != null) AsyncImage(model = stillUrl, contentDescription = null, modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
                             else Icon(Icons.Default.PlayArrow, null, tint = Color.White)
                         }
