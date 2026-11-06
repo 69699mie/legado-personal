@@ -211,6 +211,7 @@ dependencies {
     implementation(libs.media3.datasource.okhttp)
     implementation("androidx.media3:media3-ui:1.11.0")
     implementation("androidx.media3:media3-exoplayer-hls:1.11.0")
+    implementation("androidx.media3:media3-session:1.11.0") // 👈 新增：用于解决画中画响应
     // FFmpeg 扩展已移除（Maven 无可用制品，且许可证合规性待定）
     // =====================
 
