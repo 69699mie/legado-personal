@@ -1448,38 +1448,9 @@ fun InternalVideoPlayer(
             }
     }
 
-    // 修复：加入 setCallback 拦截系统的媒体按键（防某些 ROM 小窗直接调用系统媒体接口）
+    // 移除 MediaSession.Callback，避免与 BroadcastReceiver 抢焦点
     val mediaSession = remember {
-        MediaSession.Builder(context, exoPlayer)
-            .setCallback(object : MediaSession.Callback {
-                override fun onMediaButtonEvent(
-                    session: MediaSession,
-                    controller: MediaSession.ControllerInfo,
-                    intent: Intent
-                ): Boolean {
-                    val keyEvent = intent.getParcelableExtra<android.view.KeyEvent>(Intent.EXTRA_KEY_EVENT)
-                    if (keyEvent?.action == android.view.KeyEvent.ACTION_DOWN) {
-                        when (keyEvent.keyCode) {
-                            android.view.KeyEvent.KEYCODE_MEDIA_NEXT -> {
-                                val idx = series.videos.indexOfFirst { it.fid == currentFile.fid }
-                                if (idx != -1 && idx < series.videos.size - 1) {
-                                    viewModel.playVideo(context, series, series.videos[idx + 1])
-                                    return true
-                                }
-                            }
-                            android.view.KeyEvent.KEYCODE_MEDIA_PREVIOUS -> {
-                                val idx = series.videos.indexOfFirst { it.fid == currentFile.fid }
-                                if (idx > 0) {
-                                    viewModel.playVideo(context, series, series.videos[idx - 1])
-                                    return true
-                                }
-                            }
-                        }
-                    }
-                    return super.onMediaButtonEvent(session, controller, intent)
-                }
-            })
-            .build()
+        MediaSession.Builder(context, exoPlayer).build()
     }
 
     DisposableEffect(mediaSession) {
@@ -1551,7 +1522,7 @@ fun InternalVideoPlayer(
             context,
             pipActionReceiver,
             filter,
-            ContextCompat.RECEIVER_EXPORTED // ✅ 修复：改回 EXPORTED，允许系统 SystemUI 代发点击事件
+            ContextCompat.RECEIVER_NOT_EXPORTED // 官方推荐：内部广播使用 NOT_EXPORTED
         )
         onDispose {
             context.unregisterReceiver(pipActionReceiver)
@@ -1563,19 +1534,17 @@ fun InternalVideoPlayer(
             val handler = Handler(Looper.getMainLooper())
             handler.post {
                 try {
-                    val timeStamp = System.currentTimeMillis()
-
                     val prevBitmap = createPipIcon("prev", context)
                     val playPauseBitmap = createPipIcon(if (isPlaying) "pause" else "play", context)
                     val nextBitmap = createPipIcon("next", context)
 
-                    val prevIntent = Intent("com.mie.reading.ACTION_PIP_PREV").setPackage(context.packageName).setData(Uri.parse("pip://prev$timeStamp"))
-                    val prevPendingIntent = PendingIntent.getBroadcast(context, 0, prevIntent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_MUTABLE)
+                    // 关键修复点：使用唯一的 requestCode 和 FLAG_IMMUTABLE，去掉无用的 data
+                    val prevIntent = Intent("com.mie.reading.ACTION_PIP_PREV").setPackage(context.packageName)
+                    val prevPendingIntent = PendingIntent.getBroadcast(context, 100, prevIntent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
                     val prevAction = RemoteAction(Icon.createWithBitmap(prevBitmap), "上一集", "上一集", prevPendingIntent)
 
-                    val playPauseIntent = Intent("com.mie.reading.ACTION_PIP_PLAY_PAUSE").setPackage(context.packageName).setData(Uri.parse("pip://play$timeStamp"))
-                    val playPauseRequestCode = if (isPlaying) 2 else 3
-                    val playPausePendingIntent = PendingIntent.getBroadcast(context, playPauseRequestCode, playPauseIntent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_MUTABLE)
+                    val playPauseIntent = Intent("com.mie.reading.ACTION_PIP_PLAY_PAUSE").setPackage(context.packageName)
+                    val playPausePendingIntent = PendingIntent.getBroadcast(context, 101, playPauseIntent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
                     val playPauseAction = RemoteAction(
                         Icon.createWithBitmap(playPauseBitmap),
                         if (isPlaying) "暂停" else "播放",
@@ -1583,8 +1552,8 @@ fun InternalVideoPlayer(
                         playPausePendingIntent
                     )
 
-                    val nextIntent = Intent("com.mie.reading.ACTION_PIP_NEXT").setPackage(context.packageName).setData(Uri.parse("pip://next$timeStamp"))
-                    val nextPendingIntent = PendingIntent.getBroadcast(context, 0, nextIntent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_MUTABLE)
+                    val nextIntent = Intent("com.mie.reading.ACTION_PIP_NEXT").setPackage(context.packageName)
+                    val nextPendingIntent = PendingIntent.getBroadcast(context, 102, nextIntent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
                     val nextAction = RemoteAction(Icon.createWithBitmap(nextBitmap), "下一集", "下一集", nextPendingIntent)
 
                     val params = PictureInPictureParams.Builder()
@@ -2031,19 +2000,17 @@ fun InternalVideoPlayer(
                         IconButton(onClick = {
                             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                                 try {
-                                    val timeStamp = System.currentTimeMillis()
-
                                     val prevBitmap = createPipIcon("prev", context)
                                     val playPauseBitmap = createPipIcon(if (isPlaying) "pause" else "play", context)
                                     val nextBitmap = createPipIcon("next", context)
 
-                                    val prevIntent = Intent("com.mie.reading.ACTION_PIP_PREV").setPackage(context.packageName).setData(Uri.parse("pip://prev$timeStamp"))
-                                    val prevPendingIntent = PendingIntent.getBroadcast(context, 0, prevIntent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_MUTABLE)
+                                    // 关键修复点：与上面保持一致
+                                    val prevIntent = Intent("com.mie.reading.ACTION_PIP_PREV").setPackage(context.packageName)
+                                    val prevPendingIntent = PendingIntent.getBroadcast(context, 100, prevIntent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
                                     val prevAction = RemoteAction(Icon.createWithBitmap(prevBitmap), "上一集", "上一集", prevPendingIntent)
 
-                                    val playPauseIntent = Intent("com.mie.reading.ACTION_PIP_PLAY_PAUSE").setPackage(context.packageName).setData(Uri.parse("pip://play$timeStamp"))
-                                    val playPauseRequestCode = if (isPlaying) 2 else 3
-                                    val playPausePendingIntent = PendingIntent.getBroadcast(context, playPauseRequestCode, playPauseIntent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_MUTABLE)
+                                    val playPauseIntent = Intent("com.mie.reading.ACTION_PIP_PLAY_PAUSE").setPackage(context.packageName)
+                                    val playPausePendingIntent = PendingIntent.getBroadcast(context, 101, playPauseIntent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
                                     val playPauseAction = RemoteAction(
                                         Icon.createWithBitmap(playPauseBitmap),
                                         if (isPlaying) "暂停" else "播放",
@@ -2051,8 +2018,8 @@ fun InternalVideoPlayer(
                                         playPausePendingIntent
                                     )
 
-                                    val nextIntent = Intent("com.mie.reading.ACTION_PIP_NEXT").setPackage(context.packageName).setData(Uri.parse("pip://next$timeStamp"))
-                                    val nextPendingIntent = PendingIntent.getBroadcast(context, 0, nextIntent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_MUTABLE)
+                                    val nextIntent = Intent("com.mie.reading.ACTION_PIP_NEXT").setPackage(context.packageName)
+                                    val nextPendingIntent = PendingIntent.getBroadcast(context, 102, nextIntent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
                                     val nextAction = RemoteAction(Icon.createWithBitmap(nextBitmap), "下一集", "下一集", nextPendingIntent)
 
                                     val params = PictureInPictureParams.Builder()
