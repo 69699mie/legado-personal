@@ -157,7 +157,7 @@ data class RecentWatchedItem(
 val AppBackgroundColor = Color(0xFFF7F8FA)
 
 fun createPipIcon(type: String, context: Context): Bitmap {
-    val size = 96 
+    val size = 96
     val bitmap = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)
     val canvas = android.graphics.Canvas(bitmap)
     val paint = Paint().apply {
@@ -214,12 +214,12 @@ fun VideoLibraryScreen(
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 16.dp, vertical = 12.dp), 
+                .padding(horizontal = 16.dp, vertical = 12.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
             if (uiState.currentFid != "0") {
-                IconButton(onClick = { viewModel.goBack() }, modifier = Modifier.padding(end = 8.dp)) { 
-                    Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "返回") 
+                IconButton(onClick = { viewModel.goBack() }, modifier = Modifier.padding(end = 8.dp)) {
+                    Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "返回")
                 }
             }
             AppText(
@@ -228,8 +228,8 @@ fun VideoLibraryScreen(
                 fontWeight = FontWeight.ExtraBold,
                 modifier = Modifier.weight(1f).padding(start = if (uiState.currentFid == "0") 8.dp else 0.dp)
             )
-            IconButton(onClick = { showSettingsDialog = true }) { 
-                Icon(Icons.Default.Settings, contentDescription = "设置", tint = Color.DarkGray) 
+            IconButton(onClick = { showSettingsDialog = true }) {
+                Icon(Icons.Default.Settings, contentDescription = "设置", tint = Color.DarkGray)
             }
         }
 
@@ -246,8 +246,8 @@ fun VideoLibraryScreen(
                 Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { AppText("当前文件夹为空", color = Color.Gray) }
             } else {
                 LazyColumn(
-                    modifier = Modifier.fillMaxSize(), 
-                    contentPadding = PaddingValues(16.dp), 
+                    modifier = Modifier.fillMaxSize(),
+                    contentPadding = PaddingValues(16.dp),
                     verticalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
                     items(uiState.fileList) { file ->
@@ -255,29 +255,29 @@ fun VideoLibraryScreen(
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .clip(RoundedCornerShape(12.dp))
-                                .background(Color.White) 
-                                .clickable(enabled = file.isFolder) { 
-                                    if (file.isFolder) viewModel.fetchQuarkFiles(file.fid, folderName = file.name) 
+                                .background(Color.White)
+                                .clickable(enabled = file.isFolder) {
+                                    if (file.isFolder) viewModel.fetchQuarkFiles(file.fid, folderName = file.name)
                                 }
                                 .padding(horizontal = 12.dp, vertical = 14.dp),
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             Icon(
-                                if (file.isFolder) Icons.Default.Folder else Icons.Default.Movie, 
-                                null, 
+                                if (file.isFolder) Icons.Default.Folder else Icons.Default.Movie,
+                                null,
                                 tint = if (file.isFolder) Color(0xFFFFB300) else Color.Gray,
                                 modifier = Modifier.size(28.dp)
                             )
-                            Column(modifier = Modifier.padding(start = 16.dp).weight(1f)) { 
-                                AppText(text = file.name, maxLines = 1, overflow = TextOverflow.Ellipsis, fontWeight = FontWeight.Medium) 
+                            Column(modifier = Modifier.padding(start = 16.dp).weight(1f)) {
+                                AppText(text = file.name, maxLines = 1, overflow = TextOverflow.Ellipsis, fontWeight = FontWeight.Medium)
                             }
                             if (file.isFolder) {
-                                IconButton(onClick = { 
+                                IconButton(onClick = {
                                     val fullPath = (viewModel.browsePath + file.name).joinToString("/")
-                                    viewModel.toggleLibrary(file.fid, fullPath) 
+                                    viewModel.toggleLibrary(file.fid, fullPath)
                                 }) {
                                     Icon(
-                                        if (uiState.selectedLibraryFids.contains(file.fid)) Icons.Default.Star else Icons.Outlined.StarBorder, 
+                                        if (uiState.selectedLibraryFids.contains(file.fid)) Icons.Default.Star else Icons.Outlined.StarBorder,
                                         "加入影视库",
                                         tint = if (uiState.selectedLibraryFids.contains(file.fid)) Color(0xFFFFB300) else Color.LightGray
                                     )
@@ -317,12 +317,12 @@ fun VideoScraperScreen(
     var showWebLoginDialog by remember { mutableStateOf(false) }
     var showLoginConfirmDialog by remember { mutableStateOf(false) }
     var showManualScrapeDialog by remember { mutableStateOf(false) }
-    
+
     var showAllHistoryPage by remember { mutableStateOf(false) }
     var isSelectionMode by remember { mutableStateOf(false) }
     val selectedTitles = remember { mutableStateListOf<String>() }
     var viewAllCategory by remember { mutableStateOf<String?>(null) }
-    
+
     var manualScrapeSeries by remember { mutableStateOf<MediaSeries?>(null) }
     var showClearHistoryConfirm by remember { mutableStateOf(false) }
 
@@ -378,7 +378,7 @@ fun VideoScraperScreen(
     Box(modifier = Modifier.fillMaxSize().background(AppBackgroundColor)) {
         if (uiState.currentSeries != null) {
             val latestSeries = uiState.seriesList.find { it.id == uiState.currentSeries!!.id } ?: uiState.currentSeries!!
-            
+
             MediaDetailScreen(
                 series = latestSeries,
                 allSeries = uiState.seriesList,
@@ -407,11 +407,11 @@ fun VideoScraperScreen(
             Column(modifier = Modifier.fillMaxSize().statusBarsPadding().background(AppBackgroundColor)) {
                 Row(modifier = Modifier.fillMaxWidth().padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
                     if (isSelectionMode) {
-                        IconButton(onClick = { isSelectionMode = false; selectedTitles.clear() }) { 
-                            Icon(Icons.Default.Close, contentDescription = "取消", tint = Color.Black) 
+                        IconButton(onClick = { isSelectionMode = false; selectedTitles.clear() }) {
+                            Icon(Icons.Default.Close, contentDescription = "取消", tint = Color.Black)
                         }
                         AppText(text = "已选 ${selectedTitles.size} 项", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f).padding(start = 8.dp))
-                        IconButton(onClick = { 
+                        IconButton(onClick = {
                             if (selectedTitles.isNotEmpty()) {
                                 viewModel.removeRecentWatchedBatch(selectedTitles.toSet())
                                 selectedTitles.clear()
@@ -431,7 +431,7 @@ fun VideoScraperScreen(
                         }
                     }
                 }
-                
+
                 LazyVerticalGrid(
                     columns = GridCells.Fixed(3),
                     modifier = Modifier.fillMaxSize(),
@@ -451,7 +451,7 @@ fun VideoScraperScreen(
                             }
                             items(items) { historyItem ->
                                 RecentWatchedGridCard(
-                                    item = historyItem, 
+                                    item = historyItem,
                                     isSelectionMode = isSelectionMode,
                                     isSelected = selectedTitles.contains(historyItem.seriesTitle),
                                     onClick = {
@@ -527,11 +527,11 @@ fun VideoScraperScreen(
                                 val bannerList = remember(uiState.seriesList, uiState.bannerLogic) {
                                     val list = uiState.seriesList.filter { !it.backdropUrl.isNullOrBlank() }
                                     when (uiState.bannerLogic) {
-                                        "最近播放" -> list.sortedByDescending { s -> 
-                                            recentWatchedList.find { it.seriesTitle == s.title }?.timestamp ?: 0L 
+                                        "最近播放" -> list.sortedByDescending { s ->
+                                            recentWatchedList.find { it.seriesTitle == s.title }?.timestamp ?: 0L
                                         }
                                         "最近新增" -> list
-                                        else -> list.shuffled() 
+                                        else -> list.shuffled()
                                     }.take(10)
                                 }
                                 if (bannerList.isNotEmpty()) {
@@ -552,7 +552,7 @@ fun VideoScraperScreen(
                                             LazyRow(contentPadding = PaddingValues(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                                                 items(recentWatchedList.take(10)) { item ->
                                                     RecentWatchedCard(
-                                                        item = item, 
+                                                        item = item,
                                                         onClick = {
                                                             val series = uiState.seriesList.find { it.title == item.seriesTitle }
                                                             val file = series?.videos?.find { it.fid == item.fid }
@@ -590,9 +590,9 @@ fun VideoScraperScreen(
                                             LazyRow(contentPadding = PaddingValues(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                                                 items(seriesList) { series ->
                                                     SeriesPosterCard(
-                                                        series = series, 
+                                                        series = series,
                                                         isScraping = uiState.isScraping,
-                                                        onClick = { viewModel.selectSeries(series) }, 
+                                                        onClick = { viewModel.selectSeries(series) },
                                                         onLongClick = { manualScrapeSeries = series; showManualScrapeDialog = true }
                                                     )
                                                 }
@@ -607,11 +607,11 @@ fun VideoScraperScreen(
             }
         }
 
-        val showLoadingOverlay = (uiState.isLoading || uiState.isScraping) && 
-                                  uiState.currentSeries == null && 
-                                  uiState.playUrl == null && 
-                                  uiState.currentPlayFile == null && 
-                                  !uiState.isDirectPlay
+        val showLoadingOverlay = (uiState.isLoading || uiState.isScraping) &&
+                uiState.currentSeries == null &&
+                uiState.playUrl == null &&
+                uiState.currentPlayFile == null &&
+                !uiState.isDirectPlay
 
         if (showLoadingOverlay) {
             Box(
@@ -623,8 +623,8 @@ fun VideoScraperScreen(
                     .padding(horizontal = 24.dp, vertical = 12.dp)
             ) {
                 AnimatedLoadingDots(
-                    color = Color.Black, 
-                    fontSize = 14.sp, 
+                    color = Color.Black,
+                    fontSize = 14.sp,
                     text = if (uiState.isScraping) "正在刮削数据" else "正在刷新列表"
                 )
             }
@@ -633,9 +633,9 @@ fun VideoScraperScreen(
 
     if (showSettingsDialog) {
         SettingsDialog(
-            uiState = uiState, 
-            viewModel = viewModel, 
-            onDismiss = { showSettingsDialog = false }, 
+            uiState = uiState,
+            viewModel = viewModel,
+            onDismiss = { showSettingsDialog = false },
             onWebLoginClick = { showLoginConfirmDialog = true }
         )
     }
@@ -702,7 +702,7 @@ fun VideoScraperScreen(
 @Composable
 fun BannerCarousel(seriesList: List<MediaSeries>, onSelect: (MediaSeries) -> Unit) {
     val pagerState = rememberPagerState(pageCount = { seriesList.size })
-    
+
     LaunchedEffect(pagerState, seriesList.size) {
         if (seriesList.size > 1) {
             while (true) {
@@ -737,7 +737,7 @@ fun BannerCarousel(seriesList: List<MediaSeries>, onSelect: (MediaSeries) -> Uni
                 }
             }
         }
-        
+
         Row(
             Modifier.align(Alignment.BottomCenter).padding(bottom = 16.dp),
             horizontalArrangement = Arrangement.Center
@@ -772,7 +772,7 @@ fun RecentWatchedCard(item: RecentWatchedItem, onClick: () -> Unit) {
 
 @Composable
 fun RecentWatchedGridCard(
-    item: RecentWatchedItem, 
+    item: RecentWatchedItem,
     isSelectionMode: Boolean,
     isSelected: Boolean,
     onClick: () -> Unit
@@ -814,10 +814,10 @@ private fun SettingsDialog(
     var inputCookie by remember { mutableStateOf(uiState.cookie) }
     var inputTmdbKey by remember { mutableStateOf(uiState.tmdbApiKey) }
     var inputTmdbUrl by remember { mutableStateOf(uiState.tmdbBaseUrl) }
-    
+
     var isCookieVisible by remember { mutableStateOf(false) }
     var isTmdbKeyVisible by remember { mutableStateOf(false) }
-    
+
     var showThreadSelection by remember { mutableStateOf(false) }
     var showBannerLogicSelection by remember { mutableStateOf(false) }
     var showCategoryOrderDialog by remember { mutableStateOf(false) }
@@ -839,7 +839,7 @@ private fun SettingsDialog(
 
         Surface(
             shape = RoundedCornerShape(0.dp),
-            color = AppBackgroundColor, 
+            color = AppBackgroundColor,
             modifier = Modifier.fillMaxSize()
         ) {
             Column(
@@ -848,7 +848,7 @@ private fun SettingsDialog(
                     .statusBarsPadding()
                     .navigationBarsPadding()
                     .padding(24.dp)
-                    .verticalScroll(rememberScrollState()) 
+                    .verticalScroll(rememberScrollState())
             ) {
                 Row(modifier = Modifier.fillMaxWidth().padding(bottom = 16.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                     AppText(text = "设置", fontWeight = FontWeight.Bold, fontSize = 20.sp, color = Color.Black)
@@ -871,7 +871,7 @@ private fun SettingsDialog(
                         }
                     }
                 }
-                
+
                 OutlinedTextField(
                     value = inputCookie,
                     onValueChange = { inputCookie = it },
@@ -888,9 +888,9 @@ private fun SettingsDialog(
                         }
                     }
                 )
-                
+
                 AppText(text = "TMDB API Key (v3 auth)", modifier = Modifier.padding(top = 8.dp), color = Color.Black)
-                
+
                 OutlinedTextField(
                     value = inputTmdbKey,
                     onValueChange = { inputTmdbKey = it },
@@ -909,9 +909,9 @@ private fun SettingsDialog(
 
                 AppText(text = "TMDB API 代理地址", color = Color.Black)
                 OutlinedTextField(value = inputTmdbUrl, onValueChange = { inputTmdbUrl = it }, modifier = Modifier.padding(vertical = 8.dp).fillMaxWidth(), maxLines = 1)
-                
+
                 HorizontalDivider(modifier = Modifier.padding(vertical = 12.dp))
-                
+
                 Row(
                     modifier = Modifier.fillMaxWidth().clickable { showThreadSelection = true }.padding(vertical = 8.dp),
                     horizontalArrangement = Arrangement.SpaceBetween,
@@ -951,13 +951,13 @@ private fun SettingsDialog(
                     onClick = {
                         viewModel.saveSettings(inputCookie, inputTmdbKey, inputTmdbUrl)
                         onDismiss()
-                    }, 
+                    },
                     shape = RoundedCornerShape(20.dp),
                     contentPadding = PaddingValues(horizontal = 24.dp, vertical = 8.dp),
                     modifier = Modifier.fillMaxWidth().padding(top = 24.dp),
                     border = BorderStroke(1.dp, Color.Gray.copy(alpha = 0.5f))
-                ) { 
-                    AppText("确认保存", fontWeight = FontWeight.Bold, color = Color.Black) 
+                ) {
+                    AppText("确认保存", fontWeight = FontWeight.Bold, color = Color.Black)
                 }
             }
         }
@@ -1034,8 +1034,8 @@ fun CategoryOrderDialog(
 ) {
     val currentOrder = uiState.categoryOrder.split(",").filter { it.isNotBlank() }
     val existingCategories = uiState.seriesList.map { it.category }.filter { it.isNotBlank() }.distinct()
-    
-    val orderList = remember(uiState.categoryOrder) { 
+
+    val orderList = remember(uiState.categoryOrder) {
         val list = mutableStateListOf<String>()
         list.addAll(currentOrder)
         existingCategories.forEach { if (!list.contains(it)) list.add(it) }
@@ -1067,13 +1067,13 @@ fun CategoryOrderDialog(
             Column(modifier = Modifier.padding(16.dp)) {
                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                     AppText("拖动排序", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
-                    TextButton(onClick = { 
+                    TextButton(onClick = {
                         viewModel.saveCategoryOrder(orderList.joinToString(","))
-                        onDismiss() 
+                        onDismiss()
                     }) { AppText("保存", fontWeight = FontWeight.Bold) }
                 }
                 Spacer(modifier = Modifier.height(8.dp))
-                
+
                 LazyColumn(state = lazyListState, modifier = Modifier.fillMaxWidth()) {
                     itemsIndexed(orderList, key = { _, item -> item }) { index, item ->
                         ReorderableItem(reorderableState, key = item) { isDragging ->
@@ -1175,7 +1175,7 @@ fun WebLoginView(onLoginSuccess: (String) -> Unit, onCancel: () -> Unit) {
                     CookieManager.getInstance().flush()
                     reloadTrigger++
                 }) { AppText("清空缓存", color = Color.Red) }
-                
+
                 TextButton(onClick = {
                     val cookie = CookieManager.getInstance().getCookie("https://pan.quark.cn/")
                     if (!cookie.isNullOrBlank() && cookie.contains("__uid=")) {
@@ -1218,9 +1218,9 @@ fun WebLoginView(onLoginSuccess: (String) -> Unit, onCancel: () -> Unit) {
                         val url = request?.url.toString()
                         if (!url.startsWith("http://") && !url.startsWith("https://")) {
                             Toast.makeText(context, "已拦截外部跳转，请在当前页面完成登录", Toast.LENGTH_SHORT).show()
-                            return true 
+                            return true
                         }
-                        return false 
+                        return false
                     }
                 }
                 loadUrl("https://pan.quark.cn/")
@@ -1230,7 +1230,7 @@ fun WebLoginView(onLoginSuccess: (String) -> Unit, onCancel: () -> Unit) {
                 webView.clearHistory()
                 webView.clearCache(true)
                 webView.loadUrl("https://pan.quark.cn/")
-                reloadTrigger = 0 
+                reloadTrigger = 0
             }
         })
     }
@@ -1356,10 +1356,10 @@ fun InternalVideoPlayer(
     var gestureType by remember { mutableStateOf("") }
     var gestureValue by remember { mutableFloatStateOf(0f) }
     var isDraggingSeekBar by remember { mutableStateOf(false) }
-    
+
     var dragStartPosition by remember { mutableLongStateOf(0L) }
     var seekDeltaMillis by remember { mutableLongStateOf(0L) }
-    
+
     var seekMessage by remember { mutableStateOf<String?>(null) }
 
     val season = currentFile.parsedInfo?.season ?: 1
@@ -1376,12 +1376,12 @@ fun InternalVideoPlayer(
     var hasAutoSkippedIntro by remember { mutableStateOf(false) }
     val audioManager = remember { context.getSystemService(Context.AUDIO_SERVICE) as AudioManager }
     var hasRestoredProgress by remember { mutableStateOf(false) }
-    
+
     var entryTime by remember { mutableLongStateOf(0L) }
 
     var audioTracks by remember { mutableStateOf<List<Tracks.Group>>(emptyList()) }
     var textTracks by remember { mutableStateOf<List<Tracks.Group>>(emptyList()) }
-    var trackSelectionVersion by remember { mutableIntStateOf(0) } 
+    var trackSelectionVersion by remember { mutableIntStateOf(0) }
 
     val episodeListState = rememberLazyListState()
 
@@ -1433,33 +1433,21 @@ fun InternalVideoPlayer(
             }
     }
 
+    // ============================================================
+    // 修复点：Media3 的 MediaSession 必须在 Builder 阶段设置 Callback，
+    // 且 Callback 中不能重写无参 onPlay/onPause/onSkipToNext/onSkipToPrevious
+    // （那是旧版 android.media.session 的 API）。
+    // 播放 / 暂停会自动由 ExoPlayer 同步到 MediaSession；
+    // 上一集 / 下一集 的 PIP 遥控已由下面的 BroadcastReceiver 处理，
+    // 因此 MediaSession 不再需要 Callback，只需保证实例存在用于系统媒体控制。
+    // 另外当前 Media3 版本没有 setActive(...) 方法，已移除。
+    // ============================================================
     val mediaSession = remember {
-        MediaSession.Builder(context, exoPlayer)
-            .build()
-            .apply {
-                setCallback(object : MediaSession.Callback {
-                    override fun onPlay() { exoPlayer.play() }
-                    override fun onPause() { exoPlayer.pause() }
-                    override fun onSkipToNext() {
-                        val idx = series.videos.indexOfFirst { it.fid == currentFile.fid }
-                        if (idx != -1 && idx < series.videos.size - 1) {
-                            viewModel.playVideo(context, series, series.videos[idx + 1])
-                        }
-                    }
-                    override fun onSkipToPrevious() {
-                        val idx = series.videos.indexOfFirst { it.fid == currentFile.fid }
-                        if (idx > 0) {
-                            viewModel.playVideo(context, series, series.videos[idx - 1])
-                        }
-                    }
-                })
-                setActive(true)
-            }
+        MediaSession.Builder(context, exoPlayer).build()
     }
 
     DisposableEffect(mediaSession) {
         onDispose {
-            mediaSession.setActive(false)
             mediaSession.release()
         }
     }
@@ -1483,9 +1471,9 @@ fun InternalVideoPlayer(
             }
         }
         lifecycleOwner.lifecycle.addObserver(observer)
-        onDispose { 
+        onDispose {
             isPlayerReleased = true
-            lifecycleOwner.lifecycle.removeObserver(observer) 
+            lifecycleOwner.lifecycle.removeObserver(observer)
         }
     }
 
@@ -1540,7 +1528,7 @@ fun InternalVideoPlayer(
             handler.post {
                 try {
                     val timeStamp = System.currentTimeMillis()
-                    
+
                     val prevBitmap = createPipIcon("prev", context)
                     val playPauseBitmap = createPipIcon(if (isPlaying) "pause" else "play", context)
                     val nextBitmap = createPipIcon("next", context)
@@ -1597,7 +1585,7 @@ fun InternalVideoPlayer(
 
         val mediaItem = MediaItem.Builder().setUri(url).setMediaMetadata(MediaMetadata.Builder().setTitle(title).build()).build()
         val mediaSource = ProgressiveMediaSource.Factory(dataSourceFactory).createMediaSource(mediaItem)
-        
+
         exoPlayer.setMediaSource(mediaSource)
         exoPlayer.prepare()
         exoPlayer.playWhenReady = true
@@ -1605,7 +1593,7 @@ fun InternalVideoPlayer(
 
     DisposableEffect(exoPlayer) {
         val listener = object : Player.Listener {
-            override fun onIsPlayingChanged(playing: Boolean) { 
+            override fun onIsPlayingChanged(playing: Boolean) {
                 isPlaying = playing
                 if (isInPip.value) {
                     isInPip.value = activity?.isInPictureInPictureMode == true
@@ -1615,7 +1603,7 @@ fun InternalVideoPlayer(
                 isBuffering = state == Player.STATE_BUFFERING || state == Player.STATE_IDLE
                 if (state == Player.STATE_READY) {
                     duration = exoPlayer.duration.coerceAtLeast(0L)
-                    
+
                     if (!hasRestoredProgress) {
                         hasRestoredProgress = true
                         val savedPos = viewModel.getVideoProgress(currentFile.fid)
@@ -1627,7 +1615,7 @@ fun InternalVideoPlayer(
                             }
                         }
                     }
-                    
+
                     if (introSeconds > 0 && !hasAutoSkippedIntro && exoPlayer.currentPosition < introSeconds * 1000L) {
                         exoPlayer.seekTo(introSeconds * 1000L)
                         currentPosition = introSeconds * 1000L
@@ -1772,14 +1760,14 @@ fun InternalVideoPlayer(
                     }
                     return@pointerInput
                 }
-                
-                var gestureMode = "" 
+
+                var gestureMode = ""
                 var startX = 0f
                 var startY = 0f
                 var startPos = 0L
                 var startBrightness = 0f
                 var startVolume = 0
-                
+
                 detectDragGestures(
                     onDragStart = { offset ->
                         gestureMode = ""
@@ -1790,18 +1778,18 @@ fun InternalVideoPlayer(
                         startVolume = audioManager.getStreamVolume(AudioManager.STREAM_MUSIC)
                     },
                     onDrag = { change, _ ->
-                        
+
                         val deltaX = change.position.x - startX
                         val deltaY = change.position.y - startY
                         val absX = abs(deltaX)
                         val absY = abs(deltaY)
-                        
+
                         if (gestureMode.isEmpty()) {
                             if (absX > 15f || absY > 15f) {
                                 if (absX > absY) {
                                     gestureMode = "seek"
                                     isDraggingSeekBar = true
-                                    dragStartPosition = startPos 
+                                    dragStartPosition = startPos
                                     change.consume()
                                 } else {
                                     if (startX < size.width / 3f) {
@@ -1824,7 +1812,7 @@ fun InternalVideoPlayer(
                         } else {
                             change.consume()
                         }
-                        
+
                         when (gestureMode) {
                             "seek" -> {
                                 val timeDeltaMs = ((deltaX / size.width) * 300 * 1000).toLong()
@@ -1844,7 +1832,7 @@ fun InternalVideoPlayer(
                             }
                         }
                     },
-                    onDragEnd = { 
+                    onDragEnd = {
                         if (gestureMode == "seek") {
                             if (abs(currentPosition - dragStartPosition) > 1000L) {
                                 exoPlayer.seekTo(currentPosition)
@@ -1853,17 +1841,17 @@ fun InternalVideoPlayer(
                                 currentPosition = dragStartPosition
                             }
                         }
-                        gestureMode = "" 
-                        gestureType = "" 
-                        isDraggingSeekBar = false 
+                        gestureMode = ""
+                        gestureType = ""
+                        isDraggingSeekBar = false
                     },
-                    onDragCancel = { 
+                    onDragCancel = {
                         if (gestureMode == "seek") {
                             currentPosition = dragStartPosition
                         }
-                        gestureMode = "" 
+                        gestureMode = ""
                         gestureType = ""
-                        isDraggingSeekBar = false 
+                        isDraggingSeekBar = false
                     }
                 )
             }
@@ -1957,7 +1945,7 @@ fun InternalVideoPlayer(
             Box(
                 modifier = Modifier
                     .align(Alignment.Center)
-                    .padding(bottom = 140.dp) 
+                    .padding(bottom = 140.dp)
                     .background(Color.Black.copy(alpha = 0.6f), RoundedCornerShape(12.dp))
                     .padding(horizontal = 24.dp, vertical = 16.dp)
             ) {
@@ -2008,7 +1996,7 @@ fun InternalVideoPlayer(
                             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                                 try {
                                     val timeStamp = System.currentTimeMillis()
-                                    
+
                                     val prevBitmap = createPipIcon("prev", context)
                                     val playPauseBitmap = createPipIcon(if (isPlaying) "pause" else "play", context)
                                     val nextBitmap = createPipIcon("next", context)
@@ -2037,7 +2025,7 @@ fun InternalVideoPlayer(
                                         .build()
                                     val success = activity?.enterPictureInPictureMode(params) ?: false
                                     if (success) {
-                                        isInPip.value = true 
+                                        isInPip.value = true
                                     }
                                 } catch (e: Exception) {
                                     Toast.makeText(context, "设备不支持画中画", Toast.LENGTH_SHORT).show()
@@ -2095,7 +2083,7 @@ fun InternalVideoPlayer(
                     Column(modifier = Modifier.fillMaxWidth()) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             AppText(text = formatSmartTime(currentPosition), color = Color.White, fontSize = 12.sp)
-                            
+
                             var sliderWidth by remember { mutableStateOf(1f) }
                             val bufferedFraction = if (duration > 0) bufferedPosition.toFloat() / duration else 0f
                             val currentFraction = if (duration > 0) currentPosition.toFloat() / duration else 0f
@@ -2104,7 +2092,7 @@ fun InternalVideoPlayer(
                                 modifier = Modifier
                                     .weight(1f)
                                     .padding(horizontal = 8.dp)
-                                    .height(32.dp) 
+                                    .height(32.dp)
                                     .onSizeChanged { sliderWidth = it.width.toFloat() }
                                     .pointerInput(duration) {
                                         detectTapGestures(
@@ -2167,7 +2155,7 @@ fun InternalVideoPlayer(
                                     val trackHeight = 3.dp.toPx()
                                     val thumbRadius = 6.dp.toPx()
                                     val maxWidth = size.width - thumbRadius * 2
-                                    
+
                                     drawLine(color = Color.White.copy(alpha = 0.2f), start = Offset(thumbRadius, progressY), end = Offset(size.width - thumbRadius, progressY), strokeWidth = trackHeight, cap = androidx.compose.ui.graphics.StrokeCap.Round)
                                     if (bufferedFraction > 0) {
                                         drawLine(color = Color.White.copy(alpha = 0.5f), start = Offset(thumbRadius, progressY), end = Offset(thumbRadius + maxWidth * bufferedFraction.coerceIn(0f, 1f), progressY), strokeWidth = trackHeight, cap = androidx.compose.ui.graphics.StrokeCap.Round)
@@ -2179,7 +2167,7 @@ fun InternalVideoPlayer(
                                     drawCircle(color = Color.White, radius = thumbRadius, center = Offset(circleX, progressY))
                                 }
                             }
-                            
+
                             AppText(text = formatSmartTime(duration), color = Color.White, fontSize = 12.sp)
                         }
 
@@ -2312,13 +2300,13 @@ fun InternalVideoPlayer(
                                 val e = file.parsedInfo?.episode
                                 val s = file.parsedInfo?.season ?: 1
                                 val tmdbTitle = if (e != null) series.seasonEpisodeTitles["${s}_${e}"] ?: series.episodeTitles[e] else null
-                                
+
                                 val label = if (e != null && series.category != "电影" && series.videos.size > 1) {
                                     "第${e}集" + if (!tmdbTitle.isNullOrBlank()) " $tmdbTitle" else ""
                                 } else {
                                     if (series.videos.size == 1) series.title else (file.folderPath.lastOrNull() ?: file.name.substringBeforeLast("."))
                                 }
-                                
+
                                 val isCurrent = file.fid == currentFile.fid
                                 AppText(
                                     text = label,
@@ -2441,7 +2429,7 @@ fun InternalVideoPlayer(
 @Composable
 fun AnimatedLoadingDots(color: Color, fontSize: androidx.compose.ui.unit.TextUnit, text: String = "正在加载中") {
     val transition = rememberInfiniteTransition(label = "loadingDots")
-    
+
     val textStyle = TextStyle(
         color = color,
         fontSize = fontSize,
@@ -2549,9 +2537,9 @@ private fun Context.findActivity(): Activity? {
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun SeriesPosterCard(
-    series: MediaSeries, 
+    series: MediaSeries,
     isScraping: Boolean = false,
-    onClick: () -> Unit, 
+    onClick: () -> Unit,
     onLongClick: () -> Unit
 ) {
     Column(modifier = Modifier.width(110.dp).combinedClickable(onClick = onClick, onLongClick = onLongClick)) {
@@ -2593,10 +2581,10 @@ fun SeriesPosterCard(
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun MediaDetailScreen(
-    series: MediaSeries, 
+    series: MediaSeries,
     allSeries: List<MediaSeries>,
-    onBack: () -> Unit, 
-    onPlay: (MediaSeries, QuarkFile) -> Unit, 
+    onBack: () -> Unit,
+    onPlay: (MediaSeries, QuarkFile) -> Unit,
     onLongClickPoster: (MediaSeries) -> Unit,
     onSelectSeries: (MediaSeries) -> Unit
 ) {
@@ -2682,13 +2670,13 @@ fun MediaDetailScreen(
                     val s = file.parsedInfo?.season ?: 1
                     val tmdbTitle = if (e != null) series.seasonEpisodeTitles["${s}_${e}"] ?: series.episodeTitles[e] else null
                     val stillUrl = if (e != null) series.seasonEpisodeStills["${s}_${e}"] ?: series.episodeStills[e] else null
-                    
+
                     val label = if (e != null && series.category != "电影" && series.videos.size > 1) {
                         "第${e}集" + if (!tmdbTitle.isNullOrBlank()) " $tmdbTitle" else ""
                     } else {
                         if (series.videos.size == 1) series.title else (file.folderPath.lastOrNull() ?: file.name.substringBeforeLast("."))
                     }
-                    
+
                     Column(modifier = Modifier.width(160.dp).clickable { onPlay(series, file) }) {
                         Box(modifier = Modifier.fillMaxWidth().aspectRatio(16f / 9f).clip(RoundedCornerShape(8.dp)).background(Color.DarkGray), contentAlignment = Alignment.Center) {
                             if (stillUrl != null) AsyncImage(model = stillUrl, contentDescription = null, modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
