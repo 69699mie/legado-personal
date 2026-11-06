@@ -69,7 +69,6 @@ data class TmdbSearchResult(
     val genreIds: List<Int> = emptyList()
 )
 
-// 核心修复1：新增 fileListSignature 文件指纹字段
 data class ScrapeCacheItem(
     val title: String,
     val category: String,
@@ -154,7 +153,7 @@ class VideoScraperViewModel(
                 seasonEpisodeStills = cached.seasonEpisodeStills,
                 groupName = cached.groupName,
                 isManuallyEdited = cached.isManuallyEdited,
-                videos = emptyList()
+                videos = emptyList() 
             )
         }
         if (cachedSeries.isNotEmpty()) {
@@ -344,7 +343,6 @@ class VideoScraperViewModel(
         _uiState.update { it.copy(currentSeries = series) }
     }
 
-    // 核心修复：基于“文件指纹”的刮削策略
     fun loadLibraryVideos() {
         val cookie = _uiState.value.cookie
         val apiKey = _uiState.value.tmdbApiKey
@@ -371,15 +369,14 @@ class VideoScraperViewModel(
 
                 val needScrapeList = mutableListOf<MediaSeries>()
                 val finalSeriesList = groupedSeries.map { series ->
-                    // 为当前剧集生成文件指纹：由所有文件的 fid, 季, 集, 文件名 拼接而成
-                    val newSignature = series.videos.joinToString("|") { 
+                    val sortedVideos = series.videos.sortedBy { it.name }
+                    val newSignature = sortedVideos.joinToString("|") { 
                         "${it.fid}_${it.parsedInfo?.season}_${it.parsedInfo?.episode}_${it.name}" 
                     }
                     
                     val cached = scrapedCache[series.id]
                     if (cached != null) {
                         if (cached.isManuallyEdited) {
-                            // 手动编辑过，绝不覆盖
                             return@map series.copy(
                                 title = cached.title,
                                 category = cached.category,
@@ -397,9 +394,7 @@ class VideoScraperViewModel(
                             )
                         }
 
-                        // 判定指纹是否一致
                         if (newSignature != cached.fileListSignature) {
-                            // 指纹不一致（有新集、删集、改名等），加入重刮列表
                             needScrapeList.add(series)
                             series.copy(
                                 title = cached.title,
@@ -416,7 +411,6 @@ class VideoScraperViewModel(
                                 groupName = cached.groupName
                             )
                         } else {
-                            // 指纹完全一致，100% 使用本地缓存，绝对不会去请求网络
                             series.copy(
                                 title = cached.title,
                                 category = cached.category,
@@ -433,7 +427,6 @@ class VideoScraperViewModel(
                             )
                         }
                     } else {
-                        // 全新剧集，无缓存，加入重刮列表
                         needScrapeList.add(series)
                         series
                     }
@@ -615,14 +608,12 @@ class VideoScraperViewModel(
                         }
                     }
                     
-                    // 合并获取新集数信息
                     var epTitles = mutableMapOf<Int, String>()
                     var epStills = mutableMapOf<Int, String>()
                     var seasonDetails = mutableMapOf<Int, SeasonDetail>()
                     var sEpTitles = mutableMapOf<String, String>()
                     var sEpStills = mutableMapOf<String, String>()
 
-                    // 看是否之前已有缓存数据，如果有，需要合并
                     val oldCached = scrapedCache[series.id]
                     if (oldCached != null) {
                         epTitles.putAll(oldCached.episodeTitles)
@@ -664,8 +655,8 @@ class VideoScraperViewModel(
                         seasonEpisodeTitles = sEpTitles, seasonEpisodeStills = sEpStills
                     )
 
-                    // 计算新指纹
-                    val newSignature = newSeries.videos.joinToString("|") { 
+                    val sortedVideos = newSeries.videos.sortedBy { it.name }
+                    val newSignature = sortedVideos.joinToString("|") { 
                         "${it.fid}_${it.parsedInfo?.season}_${it.parsedInfo?.episode}_${it.name}" 
                     }
 
@@ -683,12 +674,12 @@ class VideoScraperViewModel(
                         seasonEpisodeStills = newSeries.seasonEpisodeStills,
                         groupName = newSeries.groupName,
                         isManuallyEdited = false,
-                        fileListSignature = newSignature // 保存新指纹
+                        fileListSignature = newSignature 
                     )
                     newSeries
                 } else {
-                    // 没匹配到 TMDB，也要把空指纹存进去，防止每次启动都去 TMDB 搜索
-                    val newSignature = series.videos.joinToString("|") { 
+                    val sortedVideos = series.videos.sortedBy { it.name }
+                    val newSignature = sortedVideos.joinToString("|") { 
                         "${it.fid}_${it.parsedInfo?.season}_${it.parsedInfo?.episode}_${it.name}" 
                     }
                     val oldCached = scrapedCache[series.id]
@@ -902,7 +893,8 @@ class VideoScraperViewModel(
 
         val updatedSeries = currentList.find { it.id == seriesId }
         if (updatedSeries != null) {
-            val newSignature = updatedSeries.videos.joinToString("|") { 
+            val sortedVideos = updatedSeries.videos.sortedBy { it.name }
+            val newSignature = sortedVideos.joinToString("|") { 
                 "${it.fid}_${it.parsedInfo?.season}_${it.parsedInfo?.episode}_${it.name}" 
             }
             scrapedCache[seriesId] = ScrapeCacheItem(
@@ -940,7 +932,6 @@ class VideoScraperViewModel(
             val newList = mutableListOf<JSONObject>()
             for (i in 0 until jsonArray.length()) {
                 val obj = jsonArray.getJSONObject(i)
-                // 去重：根据影视剧名剔除旧的历史记录
                 if (obj.optString("seriesTitle") != series.title) {
                     newList.add(obj)
                 }
