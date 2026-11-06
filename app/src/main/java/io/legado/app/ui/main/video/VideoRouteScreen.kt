@@ -156,6 +156,13 @@ data class RecentWatchedItem(
 
 val AppBackgroundColor = Color(0xFFF7F8FA)
 
+// PiP 控制常量
+const val PIP_ACTION = "com.mie.reading.ACTION_PIP_CONTROL"
+const val EXTRA_CONTROL = "control"
+const val CONTROL_PREV = 1
+const val CONTROL_PLAY_PAUSE = 2
+const val CONTROL_NEXT = 3
+
 fun createPipIcon(type: String, context: Context): Bitmap {
     val size = 96
     val bitmap = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)
@@ -376,7 +383,6 @@ fun VideoScraperScreen(
 
     Box(modifier = Modifier.fillMaxSize().background(AppBackgroundColor)) {
         if (uiState.currentSeries != null) {
-            // 增强匹配逻辑，确保拿到最新最全的数据
             val latestSeries = remember(uiState.seriesList, uiState.currentSeries, uiState.currentPlayFile) {
                 val current = uiState.currentSeries
                 val byId = current?.let { c -> uiState.seriesList.find { it.id == c.id } }
@@ -392,36 +398,45 @@ fun VideoScraperScreen(
             }
 
             if (latestSeries != null) {
-                // 判断数据是否残缺（没简介、没海报、未分类），且正在刮削
                 val isDataIncomplete = latestSeries.overview.isNullOrBlank() || latestSeries.posterUrl.isNullOrBlank() || latestSeries.category == "未分类"
                 val showLoading = uiState.isScraping && isDataIncomplete && !latestSeries.isManuallyEdited
 
                 if (showLoading) {
-                    // 🌟 完美替代图二：全屏加载中，带波浪跳动的省略号
-                    Box(
-                        modifier = Modifier.fillMaxSize().background(Color.White).statusBarsPadding(),
-                        contentAlignment = Alignment.Center
+                    // 骨架屏加载 UI
+                    Column(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .background(Color.White)
+                            .statusBarsPadding()
+                            .verticalScroll(rememberScrollState())
                     ) {
-                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                            CircularProgressIndicator(color = Color.Gray)
-                            Spacer(modifier = Modifier.height(16.dp))
-                            AnimatedLoadingDots(
-                                color = Color.Gray,
-                                fontSize = 16.sp,
-                                text = "正在获取影视详情"
-                            )
+                        Box(modifier = Modifier.fillMaxWidth().height(350.dp).background(Color(0xFFF0F0F0))) {
+                            IconButton(
+                                onClick = { viewModel.selectSeries(null) },
+                                modifier = Modifier.align(Alignment.TopStart).padding(16.dp)
+                            ) {
+                                Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "返回", tint = Color.Black)
+                            }
                         }
-                        
-                        // 左上角保留返回按钮，防止卡死
-                        IconButton(
-                            onClick = { viewModel.selectSeries(null) },
-                            modifier = Modifier.align(Alignment.TopStart).padding(16.dp)
-                        ) {
-                            Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "返回", tint = Color.Black)
+                        Column(modifier = Modifier.padding(16.dp)) {
+                            Box(modifier = Modifier.fillMaxWidth(0.4f).height(28.dp).background(Color(0xFFE0E0E0), RoundedCornerShape(4.dp)))
+                            Spacer(Modifier.height(12.dp))
+                            Box(modifier = Modifier.fillMaxWidth(0.6f).height(16.dp).background(Color(0xFFE0E0E0), RoundedCornerShape(4.dp)))
+                            Spacer(Modifier.height(24.dp))
+                            Box(modifier = Modifier.fillMaxWidth().height(50.dp).background(Color(0xFFE0E0E0), RoundedCornerShape(25.dp)))
+                            Spacer(Modifier.height(24.dp))
+                            Box(modifier = Modifier.fillMaxWidth().height(100.dp).background(Color(0xFFE0E0E0), RoundedCornerShape(8.dp)))
+                            Spacer(Modifier.height(24.dp))
+                            Box(modifier = Modifier.fillMaxWidth(0.3f).height(20.dp).background(Color(0xFFE0E0E0), RoundedCornerShape(4.dp)))
+                            Spacer(Modifier.height(16.dp))
+                            LazyRow(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                                items(4) {
+                                    Box(modifier = Modifier.width(160.dp).height(90.dp).background(Color(0xFFE0E0E0), RoundedCornerShape(8.dp)))
+                                }
+                            }
                         }
                     }
                 } else {
-                    // 🌟 数据就绪后，自动瞬间渲染完整的图一
                     MediaDetailScreen(
                         series = latestSeries,
                         allSeries = uiState.seriesList,
@@ -1301,7 +1316,12 @@ fun InternalVideoPlayer(
     val isLandscape = configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
     val videoSettingsRepository = koinInject<VideoSettingsRepository>()
 
-    // 使用 Activity 真实状态作为兜底，防止重组时状态丢失
+    // 实时获取最新数据以解决刮削完毕前无法切集的问题
+    val uiState by viewModel.uiState.collectAsStateWithLifecycle()
+    val latestSeries by rememberUpdatedState(
+        uiState.seriesList.find { it.id == series.id || it.title == series.title } ?: series
+    )
+
     val isInPip = remember { mutableStateOf(activity?.isInPictureInPictureMode == true) }
     val lifecycleOwner = LocalLifecycleOwner.current
 
@@ -1413,8 +1433,8 @@ fun InternalVideoPlayer(
     var introSeconds by remember { mutableIntStateOf(0) }
     var outroSeconds by remember { mutableIntStateOf(0) }
 
-    LaunchedEffect(series.title, season) {
-        val pair = viewModel.getIntroOutro(series.title, season)
+    LaunchedEffect(latestSeries.title, season) {
+        val pair = viewModel.getIntroOutro(latestSeries.title, season)
         introSeconds = pair.first
         outroSeconds = pair.second
     }
@@ -1518,24 +1538,25 @@ fun InternalVideoPlayer(
     val pipActionReceiver = remember {
         object : BroadcastReceiver() {
             override fun onReceive(ctx: Context?, intent: Intent?) {
-                when (intent?.action) {
-                    "com.mie.reading.ACTION_PIP_PREV" -> {
-                        val idx = series.videos.indexOfFirst { it.fid == currentFile.fid }
+                val videos = latestSeries.videos
+                when (intent?.getIntExtra(EXTRA_CONTROL, -1)) {
+                    CONTROL_PREV -> {
+                        val idx = videos.indexOfFirst { it.fid == currentFile.fid }
                         if (idx > 0) {
-                            viewModel.playVideo(context, series, series.videos[idx - 1])
+                            viewModel.playVideo(ctx ?: return, latestSeries, videos[idx - 1])
                         } else {
-                            Toast.makeText(context, "已经是第一集了", Toast.LENGTH_SHORT).show()
+                            Toast.makeText(ctx, "已经是第一集了", Toast.LENGTH_SHORT).show()
                         }
                     }
-                    "com.mie.reading.ACTION_PIP_NEXT" -> {
-                        val idx = series.videos.indexOfFirst { it.fid == currentFile.fid }
-                        if (idx != -1 && idx < series.videos.size - 1) {
-                            viewModel.playVideo(context, series, series.videos[idx + 1])
+                    CONTROL_NEXT -> {
+                        val idx = videos.indexOfFirst { it.fid == currentFile.fid }
+                        if (idx != -1 && idx < videos.size - 1) {
+                            viewModel.playVideo(ctx ?: return, latestSeries, videos[idx + 1])
                         } else {
-                            Toast.makeText(context, "已经是最后一集了", Toast.LENGTH_SHORT).show()
+                            Toast.makeText(ctx, "已经是最后一集了", Toast.LENGTH_SHORT).show()
                         }
                     }
-                    "com.mie.reading.ACTION_PIP_PLAY_PAUSE" -> {
+                    CONTROL_PLAY_PAUSE -> {
                         if (exoPlayer.isPlaying) exoPlayer.pause() else exoPlayer.play()
                     }
                 }
@@ -1544,16 +1565,12 @@ fun InternalVideoPlayer(
     }
 
     DisposableEffect(Unit) {
-        val filter = IntentFilter().apply {
-            addAction("com.mie.reading.ACTION_PIP_PREV")
-            addAction("com.mie.reading.ACTION_PIP_NEXT")
-            addAction("com.mie.reading.ACTION_PIP_PLAY_PAUSE")
-        }
+        val filter = IntentFilter(PIP_ACTION)
         ContextCompat.registerReceiver(
             context,
             pipActionReceiver,
             filter,
-            ContextCompat.RECEIVER_EXPORTED // 使用 EXPORTED 允许 SystemUI 发送广播
+            ContextCompat.RECEIVER_NOT_EXPORTED
         )
         onDispose {
             context.unregisterReceiver(pipActionReceiver)
@@ -1569,13 +1586,18 @@ fun InternalVideoPlayer(
                     val playPauseBitmap = createPipIcon(if (isPlaying) "pause" else "play", context)
                     val nextBitmap = createPipIcon("next", context)
 
-                    // 使用 MUTABLE 和唯一 requestCode，添加时间戳强制刷新
-                    val prevIntent = Intent("com.mie.reading.ACTION_PIP_PREV").setPackage(context.packageName).setData(Uri.parse("pip://prev_${System.currentTimeMillis()}"))
-                    val prevPendingIntent = PendingIntent.getBroadcast(context, 100, prevIntent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_MUTABLE)
+                    val prevPendingIntent = PendingIntent.getBroadcast(
+                        context, 100,
+                        Intent(PIP_ACTION).setPackage(context.packageName).putExtra(EXTRA_CONTROL, CONTROL_PREV),
+                        PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+                    )
                     val prevAction = RemoteAction(Icon.createWithBitmap(prevBitmap), "上一集", "上一集", prevPendingIntent)
 
-                    val playPauseIntent = Intent("com.mie.reading.ACTION_PIP_PLAY_PAUSE").setPackage(context.packageName).setData(Uri.parse("pip://play_pause_${isPlaying}_${System.currentTimeMillis()}"))
-                    val playPausePendingIntent = PendingIntent.getBroadcast(context, 101, playPauseIntent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_MUTABLE)
+                    val playPausePendingIntent = PendingIntent.getBroadcast(
+                        context, 101,
+                        Intent(PIP_ACTION).setPackage(context.packageName).putExtra(EXTRA_CONTROL, CONTROL_PLAY_PAUSE),
+                        PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+                    )
                     val playPauseAction = RemoteAction(
                         Icon.createWithBitmap(playPauseBitmap),
                         if (isPlaying) "暂停" else "播放",
@@ -1583,8 +1605,11 @@ fun InternalVideoPlayer(
                         playPausePendingIntent
                     )
 
-                    val nextIntent = Intent("com.mie.reading.ACTION_PIP_NEXT").setPackage(context.packageName).setData(Uri.parse("pip://next_${System.currentTimeMillis()}"))
-                    val nextPendingIntent = PendingIntent.getBroadcast(context, 102, nextIntent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_MUTABLE)
+                    val nextPendingIntent = PendingIntent.getBroadcast(
+                        context, 102,
+                        Intent(PIP_ACTION).setPackage(context.packageName).putExtra(EXTRA_CONTROL, CONTROL_NEXT),
+                        PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+                    )
                     val nextAction = RemoteAction(Icon.createWithBitmap(nextBitmap), "下一集", "下一集", nextPendingIntent)
 
                     val params = PictureInPictureParams.Builder()
@@ -1660,8 +1685,10 @@ fun InternalVideoPlayer(
                     }
 
                 } else if (state == Player.STATE_ENDED) {
-                    val idx = series.videos.indexOfFirst { it.fid == currentFile.fid }
-                    if (idx != -1 && idx < series.videos.size - 1) viewModel.playVideo(context, series, series.videos[idx + 1])
+                    val idx = latestSeries.videos.indexOfFirst { it.fid == currentFile.fid }
+                    if (idx != -1 && idx < latestSeries.videos.size - 1) {
+                        viewModel.playVideo(context, latestSeries, latestSeries.videos[idx + 1])
+                    }
                 }
             }
             override fun onTracksChanged(tracks: Tracks) {
@@ -1713,9 +1740,9 @@ fun InternalVideoPlayer(
             if (outroSeconds > 0 && duration > 0 && outroSeconds * 1000L < duration && currentPosition >= (duration - outroSeconds * 1000L)) {
                 if (!hasTriggeredAutoPlay) {
                     hasTriggeredAutoPlay = true
-                    val idx = series.videos.indexOfFirst { it.fid == currentFile.fid }
-                    if (idx != -1 && idx < series.videos.size - 1) {
-                        viewModel.playVideo(context, series, series.videos[idx + 1])
+                    val idx = latestSeries.videos.indexOfFirst { it.fid == currentFile.fid }
+                    if (idx != -1 && idx < latestSeries.videos.size - 1) {
+                        viewModel.playVideo(context, latestSeries, latestSeries.videos[idx + 1])
                     }
                 }
             }
@@ -1723,9 +1750,9 @@ fun InternalVideoPlayer(
         }
     }
 
-    LaunchedEffect(showEpisodeDrawer) {
+    LaunchedEffect(showEpisodeDrawer, latestSeries.videos) {
         if (showEpisodeDrawer) {
-            val idx = series.videos.indexOfFirst { it.fid == currentFile.fid }
+            val idx = latestSeries.videos.indexOfFirst { it.fid == currentFile.fid }
             if (idx != -1) {
                 episodeListState.animateScrollToItem(idx)
             }
@@ -1934,8 +1961,10 @@ fun InternalVideoPlayer(
             }
         )
 
-        // 彻底切断 UI 泄漏：只要处于小窗，直接 return，不画任何按钮
         if (activity?.isInPictureInPictureMode == true || isInPip.value) {
+            Box(modifier = Modifier.fillMaxSize()) {
+                // 纯黑背景，不显示 Compose UI
+            }
             return@Box
         }
 
@@ -2033,12 +2062,18 @@ fun InternalVideoPlayer(
                                     val playPauseBitmap = createPipIcon(if (isPlaying) "pause" else "play", context)
                                     val nextBitmap = createPipIcon("next", context)
 
-                                    val prevIntent = Intent("com.mie.reading.ACTION_PIP_PREV").setPackage(context.packageName).setData(Uri.parse("pip://prev_${System.currentTimeMillis()}"))
-                                    val prevPendingIntent = PendingIntent.getBroadcast(context, 100, prevIntent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_MUTABLE)
+                                    val prevPendingIntent = PendingIntent.getBroadcast(
+                                        context, 100,
+                                        Intent(PIP_ACTION).setPackage(context.packageName).putExtra(EXTRA_CONTROL, CONTROL_PREV),
+                                        PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+                                    )
                                     val prevAction = RemoteAction(Icon.createWithBitmap(prevBitmap), "上一集", "上一集", prevPendingIntent)
 
-                                    val playPauseIntent = Intent("com.mie.reading.ACTION_PIP_PLAY_PAUSE").setPackage(context.packageName).setData(Uri.parse("pip://play_pause_${isPlaying}_${System.currentTimeMillis()}"))
-                                    val playPausePendingIntent = PendingIntent.getBroadcast(context, 101, playPauseIntent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_MUTABLE)
+                                    val playPausePendingIntent = PendingIntent.getBroadcast(
+                                        context, 101,
+                                        Intent(PIP_ACTION).setPackage(context.packageName).putExtra(EXTRA_CONTROL, CONTROL_PLAY_PAUSE),
+                                        PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+                                    )
                                     val playPauseAction = RemoteAction(
                                         Icon.createWithBitmap(playPauseBitmap),
                                         if (isPlaying) "暂停" else "播放",
@@ -2046,8 +2081,11 @@ fun InternalVideoPlayer(
                                         playPausePendingIntent
                                     )
 
-                                    val nextIntent = Intent("com.mie.reading.ACTION_PIP_NEXT").setPackage(context.packageName).setData(Uri.parse("pip://next_${System.currentTimeMillis()}"))
-                                    val nextPendingIntent = PendingIntent.getBroadcast(context, 102, nextIntent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_MUTABLE)
+                                    val nextPendingIntent = PendingIntent.getBroadcast(
+                                        context, 102,
+                                        Intent(PIP_ACTION).setPackage(context.packageName).putExtra(EXTRA_CONTROL, CONTROL_NEXT),
+                                        PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+                                    )
                                     val nextAction = RemoteAction(Icon.createWithBitmap(nextBitmap), "下一集", "下一集", nextPendingIntent)
 
                                     val params = PictureInPictureParams.Builder()
@@ -2225,12 +2263,12 @@ fun InternalVideoPlayer(
                                         modifier = Modifier.combinedClickable(
                                             onClick = {
                                                 introSeconds = (currentPosition / 1000).toInt()
-                                                viewModel.saveIntroOutro(series.title, season, introSeconds, outroSeconds)
+                                                viewModel.saveIntroOutro(latestSeries.title, season, introSeconds, outroSeconds)
                                                 Toast.makeText(context, "片头已设为 ${formatIntroOutro(introSeconds)}", Toast.LENGTH_SHORT).show()
                                             },
                                             onLongClick = {
                                                 introSeconds = 0
-                                                viewModel.saveIntroOutro(series.title, season, introSeconds, outroSeconds)
+                                                viewModel.saveIntroOutro(latestSeries.title, season, introSeconds, outroSeconds)
                                                 Toast.makeText(context, "已清空片头", Toast.LENGTH_SHORT).show()
                                             }
                                         ).padding(horizontal = 8.dp, vertical = 4.dp)
@@ -2238,8 +2276,9 @@ fun InternalVideoPlayer(
                                 }
 
                                 IconButton(onClick = {
-                                    val idx = series.videos.indexOfFirst { it.fid == currentFile.fid }
-                                    if (idx > 0) viewModel.playVideo(context, series, series.videos[idx - 1])
+                                    val videos = latestSeries.videos
+                                    val idx = videos.indexOfFirst { it.fid == currentFile.fid }
+                                    if (idx > 0) viewModel.playVideo(context, latestSeries, videos[idx - 1])
                                 }, modifier = Modifier.size(36.dp)) { Icon(Icons.Default.SkipPrevious, null, tint = Color.White, modifier = Modifier.size(24.dp)) }
 
                                 IconButton(onClick = { if (isPlaying) exoPlayer.pause() else exoPlayer.play() }, modifier = Modifier.size(40.dp)) {
@@ -2247,8 +2286,9 @@ fun InternalVideoPlayer(
                                 }
 
                                 IconButton(onClick = {
-                                    val idx = series.videos.indexOfFirst { it.fid == currentFile.fid }
-                                    if (idx != -1 && idx < series.videos.size - 1) viewModel.playVideo(context, series, series.videos[idx + 1])
+                                    val videos = latestSeries.videos
+                                    val idx = videos.indexOfFirst { it.fid == currentFile.fid }
+                                    if (idx != -1 && idx < videos.size - 1) viewModel.playVideo(context, latestSeries, videos[idx + 1])
                                 }, modifier = Modifier.size(36.dp)) { Icon(Icons.Default.SkipNext, null, tint = Color.White, modifier = Modifier.size(24.dp)) }
 
                                 if (isLandscape) {
@@ -2260,13 +2300,13 @@ fun InternalVideoPlayer(
                                                 val remain = duration - currentPosition
                                                 if (remain > 0) {
                                                     outroSeconds = (remain / 1000).toInt()
-                                                    viewModel.saveIntroOutro(series.title, season, introSeconds, outroSeconds)
+                                                    viewModel.saveIntroOutro(latestSeries.title, season, introSeconds, outroSeconds)
                                                     Toast.makeText(context, "片尾已设为剩余 ${formatIntroOutro(outroSeconds)}", Toast.LENGTH_SHORT).show()
                                                 }
                                             },
                                             onLongClick = {
                                                 outroSeconds = 0
-                                                viewModel.saveIntroOutro(series.title, season, introSeconds, outroSeconds)
+                                                viewModel.saveIntroOutro(latestSeries.title, season, introSeconds, outroSeconds)
                                                 Toast.makeText(context, "已清空片尾", Toast.LENGTH_SHORT).show()
                                             }
                                         ).padding(horizontal = 8.dp, vertical = 4.dp)
@@ -2327,15 +2367,15 @@ fun InternalVideoPlayer(
                         }
                         Spacer(modifier = Modifier.height(16.dp))
                         LazyColumn(state = episodeListState) {
-                            items(series.videos) { file ->
+                            items(latestSeries.videos) { file ->
                                 val e = file.parsedInfo?.episode
                                 val s = file.parsedInfo?.season ?: 1
-                                val tmdbTitle = if (e != null) series.seasonEpisodeTitles["${s}_${e}"] ?: series.episodeTitles[e] else null
+                                val tmdbTitle = if (e != null) latestSeries.seasonEpisodeTitles["${s}_${e}"] ?: latestSeries.episodeTitles[e] else null
 
-                                val label = if (e != null && series.category != "电影" && series.videos.size > 1) {
+                                val label = if (e != null && latestSeries.category != "电影" && latestSeries.videos.size > 1) {
                                     "第${e}集" + if (!tmdbTitle.isNullOrBlank()) " $tmdbTitle" else ""
                                 } else {
-                                    if (series.videos.size == 1) series.title else (file.folderPath.lastOrNull() ?: file.name.substringBeforeLast("."))
+                                    if (latestSeries.videos.size == 1) latestSeries.title else (file.folderPath.lastOrNull() ?: file.name.substringBeforeLast("."))
                                 }
 
                                 val isCurrent = file.fid == currentFile.fid
@@ -2345,7 +2385,7 @@ fun InternalVideoPlayer(
                                     fontWeight = if (isCurrent) FontWeight.Bold else FontWeight.Normal,
                                     fontSize = 15.sp,
                                     modifier = Modifier.fillMaxWidth().background(if (isCurrent) Color(0x33FFFFFF) else Color.Transparent, RoundedCornerShape(8.dp)).clickable {
-                                        viewModel.playVideo(context, series, file)
+                                        viewModel.playVideo(context, latestSeries, file)
                                         showEpisodeDrawer = false
                                     }.padding(vertical = 12.dp, horizontal = 8.dp)
                                 )
@@ -2442,7 +2482,7 @@ fun InternalVideoPlayer(
                 Spacer(modifier = Modifier.height(16.dp))
                 Button(
                     onClick = {
-                        viewModel.saveIntroOutro(series.title, season, inputIntro.toInt(), inputOutro.toInt())
+                        viewModel.saveIntroOutro(latestSeries.title, season, inputIntro.toInt(), inputOutro.toInt())
                         introSeconds = inputIntro.toInt()
                         outroSeconds = inputOutro.toInt()
                         showIntroOutroDialog = false
