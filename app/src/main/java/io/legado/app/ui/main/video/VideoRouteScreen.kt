@@ -1448,6 +1448,8 @@ fun InternalVideoPlayer(
             window?.let {
                 WindowCompat.setDecorFitsSystemWindows(it, true)
                 WindowCompat.getInsetsController(it, it.decorView).show(WindowInsetsCompat.Type.systemBars())
+                // 🌟 核心修复：强制重绘 View，修复底部导航栏消失的 Bug
+                it.decorView.requestApplyInsets()
             }
             activity?.window?.let {
                 val params = it.attributes
@@ -2745,6 +2747,8 @@ fun MediaDetailScreen(
                 val controller = WindowCompat.getInsetsController(window, view)
                 WindowCompat.setDecorFitsSystemWindows(window, true)
                 controller.show(WindowInsetsCompat.Type.navigationBars())
+                // 🌟 核心修复：退出详情页时强制重绘，修复底部导航栏消失的 Bug
+                window.decorView.requestApplyInsets()
             }
         }
     }
