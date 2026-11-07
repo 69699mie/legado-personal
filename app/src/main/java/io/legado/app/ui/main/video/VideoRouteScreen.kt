@@ -490,7 +490,8 @@ fun VideoScraperScreen(
                     columns = GridCells.Fixed(3), contentPadding = PaddingValues(16.dp),
                     horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(16.dp)
                 ) {
-                    items(categorySeries) { series ->
+                    // 🌟 增量修改：分类查看全部时，按 A-Z 排序展示
+                    items(categorySeries.sortedBy { it.title }) { series ->
                         SeriesPosterCard(series = series, onClick = { viewModel.selectSeries(series) }, onLongClick = { manualScrapeSeries = series; showManualScrapeDialog = true })
                     }
                 }
@@ -683,7 +684,8 @@ fun VideoScraperScreen(
                                         }
                                         item {
                                             LazyRow(contentPadding = PaddingValues(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                                                items(seriesList) { series ->
+                                                // 🌟 增量修改：首页分类列表里的影视按 A-Z 排序
+                                                items(seriesList.sortedBy { it.title }) { series ->
                                                     SeriesPosterCard(
                                                         series = series,
                                                         isScraping = uiState.isScraping,
