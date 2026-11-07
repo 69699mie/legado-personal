@@ -99,7 +99,7 @@ class VideoScraperViewModel(
         .readTimeout(15, TimeUnit.SECONDS)
         .build()
 
-    // 全局并发闸门：同时最多 5 个 TMDB 请求在飞
+    // 全局并发闸门：限制同时进行的 TMDB 请求数
     private val tmdbSemaphore = Semaphore(5)
 
     private val _uiState = MutableStateFlow(VideoUiState())
@@ -411,7 +411,7 @@ class VideoScraperViewModel(
                         } else series
                     } else {
                         series.copy(
-                            title = cached.title, category = cached.category, posterUrl = cached.posterUrl,
+                            title = cached!!.title, category = cached.category, posterUrl = cached.posterUrl,
                             backdropUrl = cached.backdropUrl, overview = cached.overview, rating = cached.rating,
                             seasonDetails = cached.seasonDetails, episodeTitles = cached.episodeTitles,
                             episodeStills = cached.episodeStills, seasonEpisodeTitles = cached.seasonEpisodeTitles,
@@ -480,14 +480,21 @@ class VideoScraperViewModel(
             var folderSeason: Int? = null
 
             if (meaningfulPaths.isNotEmpty()) {
-                if (VideoFileNameParser.isSeasonFolder(meaningfulPaths.last())) {
-                    folderSeason = parseSeasonFromFolder(meaningfulPaths.last())
-                    val seasonStr = meaningfulPaths.last()
+                var lastPath = meaningfulPaths.last()
+                
+                // 核心修复：如果最后一级目录是纯数字（如 178），向上回溯一层作为剧名
+                if (lastPath.matches(Regex("^\\d+$")) && meaningfulPaths.size >= 2) {
+                    lastPath = meaningfulPaths[meaningfulPaths.size - 2]
+                }
+
+                if (VideoFileNameParser.isSeasonFolder(lastPath)) {
+                    folderSeason = parseSeasonFromFolder(lastPath)
+                    val seasonStr = lastPath
                     baseTitle = if (meaningfulPaths.size >= 2) meaningfulPaths[meaningfulPaths.size - 2] else meaningfulPaths.last()
                     groupName = baseTitle 
                     baseTitle = "$baseTitle $seasonStr" 
                 } else {
-                    baseTitle = meaningfulPaths.last()
+                    baseTitle = lastPath
                     if (meaningfulPaths.size >= 2 && VideoFileNameParser.isSeasonFolder(meaningfulPaths[meaningfulPaths.size - 2])) {
                         val seasonStr = meaningfulPaths[meaningfulPaths.size - 2]
                         folderSeason = parseSeasonFromFolder(seasonStr)
@@ -548,38 +555,57 @@ class VideoScraperViewModel(
         cookie: String, parentFid: String, currentPath: List<String>, resultList: MutableList<QuarkFile>
     ) {
         withContext(Dispatchers.IO) {
-            val url = "https://drive-pc.quark.cn/1/clouddrive/file/sort?pr=ucpro&fr=pc&uc_param_str=&pdir_fid=$parentFid&_page=1&_size=100&_sort=file_type:asc,updated_at:desc"
-            val request = Request.Builder().url(url).header("Cookie", cookie).header("User-Agent", "Mozilla/5.0").build()
-            try {
-                client.newCall(request).execute().use { response ->
-                    updateCookieFromResponse(response.headers)
-                    
-                    val body = response.body?.string()
-                    if (!body.isNullOrBlank()) {
-                        val json = JSONObject(body)
-                        if (json.optInt("code", -1) == 0) {
-                            val list = json.optJSONObject("data")?.optJSONArray("list")
-                            if (list != null) {
-                                for (i in 0 until list.length()) {
-                                    val item = list.getJSONObject(i)
-                                    val fileName = item.optString("file_name")
-                                    val fileFid = item.optString("fid")
-                                    val isFolder = item.optBoolean("dir", false)
-                                    val size = item.optLong("size", 0L)
-                                    if (isFolder) {
-                                        fetchVideosRecursively(cookie, fileFid, currentPath + fileName, resultList)
-                                    } else {
-                                        val parsed = VideoFileNameParser.parse(fileName, currentPath.lastOrNull())
-                                        if (parsed.isVideo) {
-                                            resultList.add(QuarkFile(fileFid, fileName, false, "未分类", currentPath, parsed, size))
+            var page = 1
+            var hasMore = true
+            while (hasMore) {
+                val url = "https://drive-pc.quark.cn/1/clouddrive/file/sort?pr=ucpro&fr=pc&uc_param_str=&pdir_fid=$parentFid&_page=$page&_size=100&_sort=file_type:asc,updated_at:desc"
+                val request = Request.Builder().url(url).header("Cookie", cookie).header("User-Agent", "Mozilla/5.0").build()
+                try {
+                    client.newCall(request).execute().use { response ->
+                        updateCookieFromResponse(response.headers)
+                        
+                        val body = response.body?.string()
+                        if (!body.isNullOrBlank()) {
+                            val json = JSONObject(body)
+                            if (json.optInt("code", -1) == 0) {
+                                val list = json.optJSONObject("data")?.optJSONArray("list")
+                                if (list != null) {
+                                    for (i in 0 until list.length()) {
+                                        val item = list.getJSONObject(i)
+                                        val fileName = item.optString("file_name")
+                                        val fileFid = item.optString("fid")
+                                        val isFolder = item.optBoolean("dir", false)
+                                        val size = item.optLong("size", 0L)
+                                        if (isFolder) {
+                                            fetchVideosRecursively(cookie, fileFid, currentPath + fileName, resultList)
+                                        } else {
+                                            val parsed = VideoFileNameParser.parse(fileName, currentPath.lastOrNull())
+                                            if (parsed.isVideo) {
+                                                resultList.add(QuarkFile(fileFid, fileName, false, "未分类", currentPath, parsed, size))
+                                            }
                                         }
                                     }
+                                    // 如果拉取到的条数小于100，说明没有下一页了
+                                    if (list.length() < 100) {
+                                        hasMore = false
+                                    } else {
+                                        page++
+                                    }
+                                } else {
+                                    hasMore = false
                                 }
+                            } else {
+                                hasMore = false
                             }
+                        } else {
+                            hasMore = false
                         }
                     }
+                } catch (e: Exception) {
+                    e.printStackTrace()
+                    hasMore = false
                 }
-            } catch (e: Exception) { e.printStackTrace() }
+            }
         }
     }
 
