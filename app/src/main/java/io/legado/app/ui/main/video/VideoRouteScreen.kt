@@ -39,6 +39,7 @@ import android.widget.Toast
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.keyframes
@@ -199,6 +200,33 @@ fun createPipIcon(type: String, context: Context): Bitmap {
         }
     }
     return bitmap
+}
+
+@Composable
+fun ShimmerBox(modifier: Modifier) {
+    val transition = rememberInfiniteTransition(label = "shimmer")
+    val translateAnim by transition.animateFloat(
+        initialValue = 0f,
+        targetValue = 1000f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(durationMillis = 1200, easing = LinearEasing),
+            repeatMode = RepeatMode.Restart
+        ),
+        label = "shimmer_translate"
+    )
+    Box(
+        modifier = modifier.background(
+            brush = Brush.linearGradient(
+                colors = listOf(
+                    Color(0xFFE0E0E0),
+                    Color(0xFFF5F5F5),
+                    Color(0xFFE0E0E0)
+                ),
+                start = Offset.Zero,
+                end = Offset(x = translateAnim, y = translateAnim)
+            )
+        )
+    )
 }
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
@@ -401,6 +429,7 @@ fun VideoScraperScreen(
                 val showLoading = uiState.isScraping && isDataIncomplete && !latestSeries.isManuallyEdited
 
                 if (showLoading) {
+                    // 骨架屏动画
                     Column(
                         modifier = Modifier
                             .fillMaxSize()
@@ -408,7 +437,8 @@ fun VideoScraperScreen(
                             .statusBarsPadding()
                             .verticalScroll(rememberScrollState())
                     ) {
-                        Box(modifier = Modifier.fillMaxWidth().height(350.dp).background(Color(0xFFF0F0F0))) {
+                        Box(modifier = Modifier.fillMaxWidth().height(350.dp)) {
+                            ShimmerBox(modifier = Modifier.fillMaxSize())
                             IconButton(
                                 onClick = { viewModel.selectSeries(null) },
                                 modifier = Modifier.align(Alignment.TopStart).padding(16.dp)
@@ -417,19 +447,19 @@ fun VideoScraperScreen(
                             }
                         }
                         Column(modifier = Modifier.padding(16.dp)) {
-                            Box(modifier = Modifier.fillMaxWidth(0.4f).height(28.dp).background(Color(0xFFE0E0E0), RoundedCornerShape(4.dp)))
+                            ShimmerBox(modifier = Modifier.fillMaxWidth(0.4f).height(28.dp).clip(RoundedCornerShape(4.dp)))
                             Spacer(Modifier.height(12.dp))
-                            Box(modifier = Modifier.fillMaxWidth(0.6f).height(16.dp).background(Color(0xFFE0E0E0), RoundedCornerShape(4.dp)))
+                            ShimmerBox(modifier = Modifier.fillMaxWidth(0.6f).height(16.dp).clip(RoundedCornerShape(4.dp)))
                             Spacer(Modifier.height(24.dp))
-                            Box(modifier = Modifier.fillMaxWidth().height(50.dp).background(Color(0xFFE0E0E0), RoundedCornerShape(25.dp)))
+                            ShimmerBox(modifier = Modifier.fillMaxWidth().height(50.dp).clip(RoundedCornerShape(25.dp)))
                             Spacer(Modifier.height(24.dp))
-                            Box(modifier = Modifier.fillMaxWidth().height(100.dp).background(Color(0xFFE0E0E0), RoundedCornerShape(8.dp)))
+                            ShimmerBox(modifier = Modifier.fillMaxWidth().height(100.dp).clip(RoundedCornerShape(8.dp)))
                             Spacer(Modifier.height(24.dp))
-                            Box(modifier = Modifier.fillMaxWidth(0.3f).height(20.dp).background(Color(0xFFE0E0E0), RoundedCornerShape(4.dp)))
+                            ShimmerBox(modifier = Modifier.fillMaxWidth(0.3f).height(20.dp).clip(RoundedCornerShape(4.dp)))
                             Spacer(Modifier.height(16.dp))
                             LazyRow(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                                 items(4) {
-                                    Box(modifier = Modifier.width(160.dp).height(90.dp).background(Color(0xFFE0E0E0), RoundedCornerShape(8.dp)))
+                                    ShimmerBox(modifier = Modifier.width(160.dp).height(90.dp).clip(RoundedCornerShape(8.dp)))
                                 }
                             }
                         }
@@ -2674,6 +2704,28 @@ fun MediaDetailScreen(
     onSelectSeries: (MediaSeries) -> Unit
 ) {
     val viewModel: VideoScraperViewModel = koinViewModel()
+    val context = LocalContext.current
+    val activity = context.findActivity()
+    val view = LocalView.current
+    var showAllEpisodesDialog by remember { mutableStateOf(false) }
+
+    // 🌟 核心修复：进入详情页时隐藏系统导航栏，退出时恢复
+    DisposableEffect(Unit) {
+        val window = activity?.window
+        if (window != null) {
+            val controller = WindowCompat.getInsetsController(window, view)
+            WindowCompat.setDecorFitsSystemWindows(window, false)
+            controller.hide(WindowInsetsCompat.Type.navigationBars())
+            controller.systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+        }
+        onDispose {
+            if (window != null) {
+                val controller = WindowCompat.getInsetsController(window, view)
+                WindowCompat.setDecorFitsSystemWindows(window, true)
+                controller.show(WindowInsetsCompat.Type.navigationBars())
+            }
+        }
+    }
 
     if (series.videos.isEmpty() && isScraping) {
         Box(modifier = Modifier.fillMaxSize().background(Color.White), contentAlignment = Alignment.Center) {
@@ -2715,7 +2767,12 @@ fun MediaDetailScreen(
 
     val listState = rememberLazyListState()
 
-    LazyColumn(state = listState, modifier = Modifier.fillMaxSize().background(Color.White)) {
+    LazyColumn(
+        state = listState, 
+        modifier = Modifier.fillMaxSize().background(Color.White),
+        // 🌟 关键修复：给底部留出 100dp 的空间，彻底解决被悬浮底栏遮挡问题
+        contentPadding = PaddingValues(bottom = 100.dp) 
+    ) {
         item {
             Box(modifier = Modifier.fillMaxWidth().height(350.dp)) {
                 if (series.posterUrl != null) {
@@ -2755,12 +2812,26 @@ fun MediaDetailScreen(
         }
 
         item {
-            AppText(
-                text = "剧集/视频列表",
-                style = MaterialTheme.typography.titleMedium,
-                fontWeight = FontWeight.Bold,
-                modifier = Modifier.padding(start = 16.dp, top = 24.dp, bottom = 8.dp)
-            )
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(start = 16.dp, top = 24.dp, bottom = 8.dp, end = 16.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                AppText(
+                    text = "剧集/视频列表",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold
+                )
+                // 🌟 全量剧集弹窗入口
+                if (currentSeasonVideos.size > 10) {
+                    AppText(
+                        text = "共 ${currentSeasonVideos.size} 集，查看全部 >",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = Color.Gray,
+                        modifier = Modifier.clickable { showAllEpisodesDialog = true }
+                    )
+                }
+            }
         }
 
         item {
@@ -2770,7 +2841,7 @@ fun MediaDetailScreen(
                 }
             } else {
                 LazyRow(contentPadding = PaddingValues(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                    items(currentSeasonVideos) { file ->
+                    items(currentSeasonVideos.take(10)) { file ->
                         val e = file.parsedInfo?.episode
                         val s = file.parsedInfo?.season ?: 1
                         val tmdbTitle = if (e != null) series.seasonEpisodeTitles["${s}_${e}"] ?: series.episodeTitles[e] else null
@@ -2846,6 +2917,65 @@ fun MediaDetailScreen(
                     }
                     
                     AppText(text = "共 ${series.videos.size} 集 | $sizeText (单集)", style = MaterialTheme.typography.bodySmall, color = Color.Gray, modifier = Modifier.padding(top = 4.dp))
+                }
+            }
+        }
+    }
+
+    // 🌟 文件最下方加入全量选集弹窗
+    if (showAllEpisodesDialog) {
+        Dialog(onDismissRequest = { showAllEpisodesDialog = false }) {
+            Surface(
+                shape = RoundedCornerShape(16.dp),
+                color = Color(0xFF222222),
+                modifier = Modifier.fillMaxWidth().heightIn(max = 600.dp)
+            ) {
+                Column(modifier = Modifier.padding(16.dp)) {
+                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                        AppText("全部剧集 (${currentSeasonVideos.size})", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 16.sp)
+                        IconButton(onClick = { showAllEpisodesDialog = false }) {
+                            Icon(Icons.Default.Close, contentDescription = "关闭", tint = Color.White)
+                        }
+                    }
+                    
+                    LazyVerticalGrid(
+                        columns = GridCells.Fixed(4),
+                        contentPadding = PaddingValues(top = 12.dp, bottom = 12.dp),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        items(currentSeasonVideos) { file ->
+                            val e = file.parsedInfo?.episode
+                            val label = if (e != null && series.category != "电影" && series.videos.size > 1) {
+                                "第${e}集"
+                            } else {
+                                if (series.videos.size == 1) series.title else (file.folderPath.lastOrNull() ?: file.name.substringBeforeLast("."))
+                            }
+
+                            val isCurrent = file.fid == (targetPlayFile?.fid ?: "")
+
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .aspectRatio(2.5f)
+                                    .clip(RoundedCornerShape(20.dp))
+                                    .background(if (isCurrent) Color(0xFF555555) else Color.White)
+                                    .clickable {
+                                        showAllEpisodesDialog = false
+                                        onPlay(series, file)
+                                    },
+                                contentAlignment = Alignment.Center
+                            ) {
+                                AppText(
+                                    text = if (label.startsWith("第")) label.replace("集", "") else label,
+                                    color = if (isCurrent) Color.White else Color.Black,
+                                    fontSize = 14.sp,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                            }
+                        }
+                    }
                 }
             }
         }
