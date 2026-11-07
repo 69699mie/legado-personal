@@ -24,6 +24,8 @@ import org.json.JSONArray
 import org.json.JSONObject
 import java.io.IOException
 import java.net.URLEncoder
+import java.text.Collator
+import java.util.Locale
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.TimeUnit
 
@@ -102,6 +104,9 @@ class VideoScraperViewModel(
 
     private val tmdbSemaphore = Semaphore(5)
 
+    // 🌟 核心引入：Android 官方内置国际化排序器，按拼音 A-Z 排序
+    private val pinyinCollator = Collator.getInstance(Locale.CHINA)
+
     private val _uiState = MutableStateFlow(VideoUiState())
     val uiState = _uiState.asStateFlow()
 
@@ -163,7 +168,8 @@ class VideoScraperViewModel(
                 isManuallyEdited = cached.isManuallyEdited,
                 videos = emptyList() 
             )
-        }.sortedBy { it.title } // 🌟 增量修改：启动缓存加载 A-Z 排序
+        }.sortedWith(compareBy(pinyinCollator) { it.title }) // 🌟 拼音 A-Z 排序
+        
         if (cachedSeries.isNotEmpty()) {
             _uiState.update { it.copy(seriesList = cachedSeries) }
         }
@@ -373,7 +379,7 @@ class VideoScraperViewModel(
                         fetchVideosRecursively(cookie, fid, initialPath, allVideos)
                     }
                 }
-                // 🌟 核心修复：全局去重，防止同一集出现两次
+                // 核心修复：全局去重，防止同一集出现两次
                 val uniqueVideos = allVideos.distinctBy { it.fid }
                 val groupedSeries = aggregateToSeries(uniqueVideos)
 
@@ -431,7 +437,7 @@ class VideoScraperViewModel(
                             isManuallyEdited = cached.isManuallyEdited
                         )
                     }
-                }
+                }.sortedWith(compareBy(pinyinCollator) { it.title }) // 🌟 拼音 A-Z 排序
 
                 _uiState.update { it.copy(seriesList = finalSeriesList) }
                 cleanInvalidRecentWatched(validIds)
@@ -547,8 +553,7 @@ class VideoScraperViewModel(
                 )
             }
         }
-        // 🌟 增量修改：聚合完成后 A-Z 排序
-        return seriesMap.values.toList().sortedBy { it.title }
+        return seriesMap.values.toList().sortedWith(compareBy(pinyinCollator) { it.title }) // 🌟 拼音 A-Z 排序
     }
 
     private fun parseSeasonFromFolder(folderName: String): Int? {
@@ -722,10 +727,9 @@ class VideoScraperViewModel(
             saveScrapedCache()
 
             withContext(Dispatchers.Main) {
-                // 🌟 增量修改：刮削完恢复列表时 A-Z 排序
                 val currentList = _uiState.value.seriesList.map { old ->
                     scrapedList.find { it.id == old.id } ?: old
-                }.sortedBy { it.title }
+                }.sortedWith(compareBy(pinyinCollator) { it.title }) // 🌟 拼音 A-Z 排序
                 
                 val oldCurrent = _uiState.value.currentSeries
                 val newCurrent = if (oldCurrent != null) {
@@ -944,7 +948,7 @@ class VideoScraperViewModel(
                     isManuallyEdited = true
                 )
             } else it
-        }.sortedBy { it.title } // 🌟 增量修改：手动编辑后重新排序
+        }.sortedWith(compareBy(pinyinCollator) { it.title }) // 🌟 拼音 A-Z 排序
         
         _uiState.update {
             val updatedCurrent = currentList.find { s -> s.id == seriesId }
@@ -1013,7 +1017,7 @@ class VideoScraperViewModel(
                 withContext(Dispatchers.Main) {
                     val newList = _uiState.value.seriesList.map {
                         if (it.id == seriesId) finalSeries else it
-                    }.sortedBy { it.title } // 🌟 增量修改：异步更新后重新排序
+                    }.sortedWith(compareBy(pinyinCollator) { it.title }) // 🌟 拼音 A-Z 排序
                     
                     _uiState.update {
                         it.copy(seriesList = newList, currentSeries = finalSeries)
