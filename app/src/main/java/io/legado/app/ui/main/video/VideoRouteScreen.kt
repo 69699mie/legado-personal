@@ -12,16 +12,13 @@ import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
 import android.content.pm.ActivityInfo
-import android.content.pm.PackageManager
 import android.content.res.Configuration
 import android.graphics.Bitmap
 import android.graphics.Paint
 import android.graphics.Path
 import android.graphics.drawable.Icon
 import android.media.AudioManager
-import android.media.audiofx.LoudnessEnhancer
 import android.net.TrafficStats
-import android.net.Uri
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
@@ -370,7 +367,7 @@ fun VideoScraperScreen(
     var manualScrapeSeries by remember { mutableStateOf<MediaSeries?>(null) }
     var showClearHistoryConfirm by remember { mutableStateOf(false) }
 
-    // 🌟 终极修复：退出播放器时，彻底重置 Activity 的全局 Window 状态，恢复底部导航栏
+    // 🌟 核心修复：退出播放器时，彻底重置 Activity 的全局 Window 状态，恢复底部导航栏
     LaunchedEffect(uiState.playUrl, uiState.currentSeries) {
         if (uiState.playUrl == null && uiState.currentSeries == null) {
             delay(150)
@@ -1381,17 +1378,6 @@ fun InternalVideoPlayer(
 
     // 🌟 核心修复：判断当前是否处于小窗/分屏模式
     val isInMultiWindowMode = remember { activity?.isInMultiWindowMode == true }
-    
-    // 🌟 核心修复：音量增强（LoudnessEnhancer），突破系统音量限制
-    var loudnessEnhancer by remember { mutableStateOf<LoudnessEnhancer?>(null) }
-    DisposableEffect(Unit) {
-        onDispose {
-            try {
-                loudnessEnhancer?.release()
-            } catch (e: Exception) {}
-            loudnessEnhancer = null
-        }
-    }
 
     // 🌟 核心修复：防熄屏
     DisposableEffect(Unit) {
@@ -1425,7 +1411,6 @@ fun InternalVideoPlayer(
 
     var currentSystemTime by remember { mutableStateOf("") }
 
-    // 🌟 核心修复：手动旋转锁，防止重力感应立刻干预
     val isManualRotating = remember { mutableStateOf(false) }
     val coroutineScope = rememberCoroutineScope()
 
@@ -1444,7 +1429,7 @@ fun InternalVideoPlayer(
         val orientationListener = object : OrientationEventListener(context) {
             override fun onOrientationChanged(orientation: Int) {
                 if (orientation == ORIENTATION_UNKNOWN) return
-                if (isManualRotating.value) return // 🌟 核心修复：如果正在手动旋转，直接忽略传感器事件
+                if (isManualRotating.value) return 
                 if (currentIsLocked || isInPip.value) return
                 if (activity?.isInMultiWindowMode == true || activity?.isInPictureInPictureMode == true) return
                 if (System.currentTimeMillis() - lastManualSwitchTime[0] < 2000) return
@@ -1476,7 +1461,6 @@ fun InternalVideoPlayer(
     // 🌟 核心修复：精准隐藏和恢复系统状态栏，不下狠手
     LaunchedEffect(isLandscape, isInPip.value, isInMultiWindowMode) {
         if (view.isInEditMode || isInPip.value || isInMultiWindowMode) return@LaunchedEffect
-        // 优先使用 Dialog 的 Window 进行全屏控制，如果是 Activity 就直接用 Activity 的 Window
         val window = (view.parent as? DialogWindowProvider)?.window ?: activity?.window
         if (window != null) {
             val controller = WindowCompat.getInsetsController(window, window.decorView)
@@ -1606,6 +1590,7 @@ fun InternalVideoPlayer(
                 prepare()
                 playWhenReady = true
                 setWakeMode(androidx.media3.common.C.WAKE_MODE_NETWORK)
+                volume = 1f // 🌟 核心修复：强制 ExoPlayer 音量倍数为 1，完全交由系统音量控制
             }
     }
 
@@ -1849,18 +1834,6 @@ fun InternalVideoPlayer(
             }
         }
         exoPlayer.addListener(listener)
-        
-        // 🌟 初始化音量增强（LoudnessEnhancer）
-        try {
-            if (exoPlayer.audioSessionId != androidx.media3.common.C.AUDIO_SESSION_ID_UNSET) {
-                loudnessEnhancer = LoudnessEnhancer(exoPlayer.audioSessionId).apply {
-                    setTargetGain(800) // 默认增加 8dB 增益
-                    enabled = true
-                }
-            }
-        } catch (e: Exception) {
-            e.printStackTrace()
-        }
 
         onDispose {
             // 🌟 核心修复：只有当文件匹配（即用户真正退出时），才保存进度。防止切集瞬间退出导致进度错乱
@@ -2212,12 +2185,7 @@ fun InternalVideoPlayer(
                         IconButton(onClick = {
                             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                                 try {
-                                    val hasPipFeature = context.packageManager.hasSystemFeature(PackageManager.FEATURE_PICTURE_IN_PICTURE)
-                                    if (!hasPipFeature) {
-                                        Toast.makeText(context, "设备不支持画中画", Toast.LENGTH_SHORT).show()
-                                        return@IconButton
-                                    }
-
+                                    // 🌟 核心修复：直接 try-catch 唤起画中画，不依赖不可靠的 hasSystemFeature
                                     val prevBitmap = createPipIcon("prev", context)
                                     val playPauseBitmap = createPipIcon(if (isPlaying) "pause" else "play", context)
                                     val nextBitmap = createPipIcon("next", context)
