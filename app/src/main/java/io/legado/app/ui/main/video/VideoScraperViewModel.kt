@@ -716,9 +716,9 @@ class VideoScraperViewModel(
     }
 
     private fun searchTmdb(title: String, year: Int?, apiKey: String, baseUrl: String, language: String): TmdbSearchResult? {
+        val isProxy = baseUrl.contains("quarkalist") || baseUrl.contains("proxy")
         val url = try {
             val query = URLEncoder.encode(title, "UTF-8")
-            val isProxy = baseUrl.contains("quarkalist") || baseUrl.contains("proxy")
             val apiPath = if (isProxy) "/api/3/search/multi" else "/3/search/multi"
             "$baseUrl$apiPath?api_key=$apiKey&query=$query&language=$language"
         } catch (e: Exception) { return null }
