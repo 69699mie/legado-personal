@@ -135,6 +135,7 @@ import coil3.compose.AsyncImage
 import io.legado.app.data.repository.VideoSettingsRepository
 import io.legado.app.ui.widget.components.text.AppText
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import okhttp3.OkHttpClient
 import org.json.JSONArray
 import org.koin.androidx.compose.koinViewModel
@@ -367,16 +368,19 @@ fun VideoScraperScreen(
     var manualScrapeSeries by remember { mutableStateOf<MediaSeries?>(null) }
     var showClearHistoryConfirm by remember { mutableStateOf(false) }
 
-    // 🌟 终极核心修复：只要退回主页，强制重置系统 UI 状态，强行唤醒全局 Insets，彻底解决底栏消失问题
+    // 🌟 终极修复：退出播放器时，极其暴力地重置 Activity 的全局 Window 状态
     LaunchedEffect(uiState.playUrl, uiState.currentSeries) {
         if (uiState.playUrl == null && uiState.currentSeries == null) {
-            delay(150) // 等待可能的横竖屏动画结束
+            delay(150)
             activity?.window?.let { window ->
                 WindowCompat.setDecorFitsSystemWindows(window, true)
                 val controller = WindowCompat.getInsetsController(window, window.decorView)
                 controller.show(WindowInsetsCompat.Type.systemBars())
                 window.decorView.systemUiVisibility = View.SYSTEM_UI_FLAG_VISIBLE
-                window.decorView.requestApplyInsets()
+                window.decorView.requestLayout()
+                window.decorView.post {
+                    window.decorView.requestApplyInsets()
+                }
             }
         }
     }
@@ -1405,6 +1409,8 @@ fun InternalVideoPlayer(
 
     var currentSystemTime by remember { mutableStateOf("") }
 
+    val isManualRotating = remember { mutableStateOf(false) }
+
     LaunchedEffect(Unit) {
         // 只有在非小窗、非画中画时才强制横屏
         if (!isInMultiWindowMode && activity?.isInPictureInPictureMode != true) {
@@ -1420,6 +1426,7 @@ fun InternalVideoPlayer(
         val orientationListener = object : OrientationEventListener(context) {
             override fun onOrientationChanged(orientation: Int) {
                 if (orientation == ORIENTATION_UNKNOWN) return
+                if (isManualRotating.value) return 
                 if (currentIsLocked || isInPip.value) return
                 if (activity?.isInMultiWindowMode == true || activity?.isInPictureInPictureMode == true) return // 小窗禁止触发旋转
                 if (System.currentTimeMillis() - lastManualSwitchTime[0] < 2000) return
@@ -1730,6 +1737,11 @@ fun InternalVideoPlayer(
         }
         lastPlayingFile = currentFile
 
+        // 🌟 核心修复：瞬间清空所有进度和 UI 状态，防止新集继承了旧集的画面和进度
+        currentPosition = 0L
+        duration = 0L
+        bufferedPosition = 0L
+
         hasRestoredProgress = false
         hasTriggeredAutoPlay = false
         hasAutoSkippedIntro = false
@@ -1819,7 +1831,10 @@ fun InternalVideoPlayer(
         }
         exoPlayer.addListener(listener)
         onDispose {
-            if (exoPlayer.currentPosition > 0) viewModel.saveVideoProgress(currentFile.fid, exoPlayer.currentPosition)
+            // 🌟 核心修复：只有当文件匹配（即用户真正退出时），才保存进度。防止切集瞬间退出导致进度错乱
+            if (lastPlayingFile.fid == currentFile.fid && exoPlayer.currentPosition > 0) {
+                viewModel.saveVideoProgress(currentFile.fid, exoPlayer.currentPosition)
+            }
             exoPlayer.removeListener(listener)
             exoPlayer.stop()
             exoPlayer.release()
@@ -1987,6 +2002,7 @@ fun InternalVideoPlayer(
                                 val maxVol = audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC)
                                 val newVolFloat = (startVolume.toFloat() / maxVol) - (deltaY / size.height)
                                 gestureValue = newVolFloat.coerceIn(0f, 1f)
+                                // 🌟 核心修复：直接调节系统媒体音量，并传入标志位0，不弹出原生音量条
                                 audioManager.setStreamVolume(AudioManager.STREAM_MUSIC, (gestureValue * maxVol).roundToInt(), 0)
                             }
                         }
@@ -2141,8 +2157,18 @@ fun InternalVideoPlayer(
                     Surface(color = Color.White.copy(alpha = 0.1f), shape = CircleShape, border = BorderStroke(1.dp, Color.White.copy(alpha = 0.2f))) {
                         IconButton(onClick = {
                             lastManualSwitchTime[0] = System.currentTimeMillis()
-                            if (isLandscape) activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
-                            else activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE
+                            isManualRotating.value = true
+                            
+                            if (isLandscape) {
+                                activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
+                            } else {
+                                activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE
+                            }
+
+                            CoroutineScope(Dispatchers.Main).launch {
+                                delay(1500)
+                                isManualRotating.value = false
+                            }
                         }) {
                             Icon(Icons.Default.ScreenRotation, null, tint = Color.White)
                         }
