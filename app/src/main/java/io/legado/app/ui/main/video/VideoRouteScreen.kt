@@ -26,6 +26,7 @@ import android.os.Looper
 import android.os.Process
 import android.util.Rational
 import android.view.OrientationEventListener
+import android.view.View
 import android.view.ViewGroup
 import android.view.WindowManager
 import android.webkit.CookieManager
@@ -366,16 +367,16 @@ fun VideoScraperScreen(
     var manualScrapeSeries by remember { mutableStateOf<MediaSeries?>(null) }
     var showClearHistoryConfirm by remember { mutableStateOf(false) }
 
-    // 🌟 核心修复：一旦彻底退出播放器（playUrl == null 且 currentSeries == null），强制重置全局状态栏和 Insets
+    // 🌟 终极核心修复：只要退回主页，强制重置系统 UI 状态，强行唤醒全局 Insets，彻底解决底栏消失问题
     LaunchedEffect(uiState.playUrl, uiState.currentSeries) {
         if (uiState.playUrl == null && uiState.currentSeries == null) {
+            delay(150) // 等待可能的横竖屏动画结束
             activity?.window?.let { window ->
                 WindowCompat.setDecorFitsSystemWindows(window, true)
                 val controller = WindowCompat.getInsetsController(window, window.decorView)
                 controller.show(WindowInsetsCompat.Type.systemBars())
-                window.decorView.post {
-                    window.decorView.requestApplyInsets()
-                }
+                window.decorView.systemUiVisibility = View.SYSTEM_UI_FLAG_VISIBLE
+                window.decorView.requestApplyInsets()
             }
         }
     }
@@ -1447,9 +1448,10 @@ fun InternalVideoPlayer(
         onDispose { orientationListener.disable() }
     }
 
-    LaunchedEffect(isLandscape, isInPip.value) {
+    LaunchedEffect(isLandscape, isInPip.value, isInMultiWindowMode) {
         if (view.isInEditMode || isInPip.value || isInMultiWindowMode) return@LaunchedEffect
-        val window = (view.parent as? DialogWindowProvider)?.window ?: activity?.window
+        // 🌟 核心修复：绝对不能碰 activity.window，只修改自己所在的 Dialog window
+        val window = (view.parent as? DialogWindowProvider)?.window
         if (window != null) {
             val controller = WindowCompat.getInsetsController(window, window.decorView)
             if (isLandscape) {
@@ -1469,11 +1471,13 @@ fun InternalVideoPlayer(
             if (!isInMultiWindowMode) {
                 activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
             }
-            val window = (view.parent as? DialogWindowProvider)?.window ?: activity?.window
-            window?.let {
-                WindowCompat.setDecorFitsSystemWindows(it, true)
-                WindowCompat.getInsetsController(it, it.decorView).show(WindowInsetsCompat.Type.systemBars())
-                it.decorView.requestApplyInsets()
+            // 🌟 核心修复：退出时直接重置 Activity Window 属性，防止底层状态卡死
+            activity?.window?.let { window ->
+                WindowCompat.setDecorFitsSystemWindows(window, true)
+                val controller = WindowCompat.getInsetsController(window, window.decorView)
+                controller.show(WindowInsetsCompat.Type.systemBars())
+                window.decorView.systemUiVisibility = View.SYSTEM_UI_FLAG_VISIBLE
+                window.decorView.requestApplyInsets()
             }
             activity?.window?.let {
                 val params = it.attributes
