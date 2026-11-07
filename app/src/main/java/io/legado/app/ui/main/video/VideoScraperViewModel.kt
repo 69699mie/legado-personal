@@ -163,7 +163,7 @@ class VideoScraperViewModel(
                 isManuallyEdited = cached.isManuallyEdited,
                 videos = emptyList() 
             )
-        }
+        }.sortedBy { it.title } // 🌟 增量修改：启动缓存加载 A-Z 排序
         if (cachedSeries.isNotEmpty()) {
             _uiState.update { it.copy(seriesList = cachedSeries) }
         }
@@ -547,7 +547,8 @@ class VideoScraperViewModel(
                 )
             }
         }
-        return seriesMap.values.toList()
+        // 🌟 增量修改：聚合完成后 A-Z 排序
+        return seriesMap.values.toList().sortedBy { it.title }
     }
 
     private fun parseSeasonFromFolder(folderName: String): Int? {
@@ -721,9 +722,11 @@ class VideoScraperViewModel(
             saveScrapedCache()
 
             withContext(Dispatchers.Main) {
+                // 🌟 增量修改：刮削完恢复列表时 A-Z 排序
                 val currentList = _uiState.value.seriesList.map { old ->
                     scrapedList.find { it.id == old.id } ?: old
-                }
+                }.sortedBy { it.title }
+                
                 val oldCurrent = _uiState.value.currentSeries
                 val newCurrent = if (oldCurrent != null) {
                     currentList.find { it.id == oldCurrent.id } 
@@ -941,7 +944,8 @@ class VideoScraperViewModel(
                     isManuallyEdited = true
                 )
             } else it
-        }
+        }.sortedBy { it.title } // 🌟 增量修改：手动编辑后重新排序
+        
         _uiState.update {
             val updatedCurrent = currentList.find { s -> s.id == seriesId }
             it.copy(seriesList = currentList, currentSeries = updatedCurrent ?: it.currentSeries)
@@ -1009,7 +1013,8 @@ class VideoScraperViewModel(
                 withContext(Dispatchers.Main) {
                     val newList = _uiState.value.seriesList.map {
                         if (it.id == seriesId) finalSeries else it
-                    }
+                    }.sortedBy { it.title } // 🌟 增量修改：异步更新后重新排序
+                    
                     _uiState.update {
                         it.copy(seriesList = newList, currentSeries = finalSeries)
                     }
