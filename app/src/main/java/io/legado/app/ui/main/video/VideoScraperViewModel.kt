@@ -164,7 +164,7 @@ class VideoScraperViewModel(
                 isManuallyEdited = cached.isManuallyEdited,
                 videos = emptyList() 
             )
-        }.filter { !it.title.matches(Regex("^\\d+$")) } // 🌟 启动防闪：过滤纯数字脏数据
+        }.filter { !it.title.matches(Regex("^\\d+$")) }
          .sortedWith(compareBy(pinyinCollator) { it.title })
         
         if (cachedSeries.isNotEmpty()) {
