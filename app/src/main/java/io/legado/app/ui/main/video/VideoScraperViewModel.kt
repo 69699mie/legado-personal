@@ -103,8 +103,6 @@ class VideoScraperViewModel(
         .build()
 
     private val tmdbSemaphore = Semaphore(5)
-
-    // 🌟 拼音排序器
     private val pinyinCollator = Collator.getInstance(Locale.CHINA)
 
     private val _uiState = MutableStateFlow(VideoUiState())
@@ -117,9 +115,7 @@ class VideoScraperViewModel(
     private val libraryNames = mutableMapOf<String, String>()
     
     private var lastQuarkError: String? = null
-    
     private val scrapedCache = ConcurrentHashMap<String, ScrapeCacheItem>()
-    
     private var isHandlingPendingRequest = false
 
     init {
@@ -441,7 +437,9 @@ class VideoScraperViewModel(
                 }.sortedWith(compareBy(pinyinCollator) { it.title })
 
                 _uiState.update { it.copy(seriesList = finalSeriesList) }
-                cleanInvalidRecentWatched(validIds)
+                
+                // 🌟 修复历史记录误删：将完整的 groupedSeries 传入，进行宽松匹配
+                cleanInvalidRecentWatched(groupedSeries)
 
                 if (apiKey.isNotBlank() && needScrapeList.isNotEmpty()) {
                     scrapeSeriesPosters(needScrapeList, apiKey, _uiState.value.tmdbBaseUrl)
@@ -457,16 +455,23 @@ class VideoScraperViewModel(
         }
     }
 
-    private fun cleanInvalidRecentWatched(validIds: Set<String>) {
+    // 🌟 修复历史记录误删：认可 id, title, originalParsedTitle 等三种匹配方式
+    private fun cleanInvalidRecentWatched(groupedSeries: List<MediaSeries>) {
         try {
             val jsonArray = JSONArray(videoSettingsRepository.recentWatchedVideos)
             val newList = mutableListOf<JSONObject>()
-            val validTitles = validIds.map { it.replace("\\s".toRegex(), "") }.toSet()
+            
+            val validNames = mutableSetOf<String>()
+            groupedSeries.forEach { series ->
+                validNames.add(series.id.replace("\\s".toRegex(), ""))
+                validNames.add(series.title.replace("\\s".toRegex(), ""))
+                validNames.add(series.originalParsedTitle.replace("\\s".toRegex(), ""))
+            }
             
             for (i in 0 until jsonArray.length()) {
                 val obj = jsonArray.getJSONObject(i)
                 val sTitle = obj.optString("seriesTitle").replace("\\s".toRegex(), "")
-                if (validTitles.contains(sTitle)) {
+                if (validNames.contains(sTitle)) {
                     newList.add(obj)
                 }
             }
@@ -1118,14 +1123,11 @@ class VideoScraperViewModel(
             videoSettingsRepository.recentWatchedVideos = resultArray.toString()
         } catch (e: Exception) { e.printStackTrace() }
 
-        // 🌟 核心修复：判断是否是同一部剧切集
         val isSameSeriesSwitch = _uiState.value.currentSeries?.id == realSeries.id && _uiState.value.playUrl != null
 
         if (isSameSeriesSwitch) {
-            // 同剧切集：不置空 playUrl，保持播放器 UI 存活，等新链接回来后自动内部换源
             _uiState.update { it.copy(playTitle = titleText, currentSeries = realSeries) }
         } else {
-            // 跨剧播放或首次播放：清空 playUrl，正常重建播放器
             _uiState.update { it.copy(playUrl = null, playTitle = titleText, currentSeries = realSeries, currentPlayFile = file, isDirectPlay = false) }
         }
 
@@ -1135,7 +1137,6 @@ class VideoScraperViewModel(
             }
 
             if (url != null) {
-                // 无论是同剧切集还是跨剧，拿到新链接后连同 currentPlayFile 一起更新
                 _uiState.update { it.copy(playUrl = url, currentPlayFile = file) }
             } else {
                 val detail = lastQuarkError ?: "未知错误"
