@@ -1411,6 +1411,8 @@ fun InternalVideoPlayer(
 
     val isManualRotating = remember { mutableStateOf(false) }
 
+    val coroutineScope = rememberCoroutineScope()
+
     LaunchedEffect(Unit) {
         // 只有在非小窗、非画中画时才强制横屏
         if (!isInMultiWindowMode && activity?.isInPictureInPictureMode != true) {
@@ -2165,7 +2167,7 @@ fun InternalVideoPlayer(
                                 activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE
                             }
 
-                            CoroutineScope(Dispatchers.Main).launch {
+                            coroutineScope.launch {
                                 delay(1500)
                                 isManualRotating.value = false
                             }
