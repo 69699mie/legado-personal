@@ -8,10 +8,13 @@ import io.legado.app.data.repository.VideoSettingsRepository
 import io.legado.app.utils.ParsedVideoName
 import io.legado.app.utils.VideoFileNameParser
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
@@ -19,6 +22,7 @@ import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONArray
 import org.json.JSONObject
+import java.io.IOException
 import java.net.URLEncoder
 import java.util.concurrent.TimeUnit
 
@@ -94,6 +98,9 @@ class VideoScraperViewModel(
         .connectTimeout(15, TimeUnit.SECONDS)
         .readTimeout(15, TimeUnit.SECONDS)
         .build()
+
+    // 全局并发闸门：同时最多 5 个 TMDB 请求在飞
+    private val tmdbSemaphore = Semaphore(5)
 
     private val _uiState = MutableStateFlow(VideoUiState())
     val uiState = _uiState.asStateFlow()
@@ -367,7 +374,16 @@ class VideoScraperViewModel(
                 }
                 val groupedSeries = aggregateToSeries(allVideos)
 
+                // 清理已不存在于网盘的缓存
+                val validIds = groupedSeries.map { it.id }.toSet()
+                val invalidIds = scrapedCache.keys.filter { it !in validIds }
+                invalidIds.forEach { scrapedCache.remove(it) }
+                if (invalidIds.isNotEmpty()) saveScrapedCache()
+
                 val needScrapeList = mutableListOf<MediaSeries>()
+                var emptyPosterRetryCount = 0
+                val maxEmptyPosterRetry = 10
+
                 val finalSeriesList = groupedSeries.map { series ->
                     val sortedVideos = series.videos.sortedBy { it.name }
                     val newSignature = sortedVideos.joinToString("|") { 
@@ -375,64 +391,38 @@ class VideoScraperViewModel(
                     }
                     
                     val cached = scrapedCache[series.id]
-                    if (cached != null) {
-                        if (cached.isManuallyEdited) {
-                            return@map series.copy(
-                                title = cached.title,
-                                category = cached.category,
-                                posterUrl = cached.posterUrl,
-                                backdropUrl = cached.backdropUrl,
-                                overview = cached.overview,
-                                rating = cached.rating,
-                                seasonDetails = cached.seasonDetails,
-                                episodeTitles = cached.episodeTitles,
-                                episodeStills = cached.episodeStills,
-                                seasonEpisodeTitles = cached.seasonEpisodeTitles,
-                                seasonEpisodeStills = cached.seasonEpisodeStills,
-                                groupName = cached.groupName,
-                                isManuallyEdited = true
-                            )
-                        }
+                    val isSignatureChanged = cached == null || newSignature != cached.fileListSignature
+                    val isEmptyPoster = cached?.posterUrl.isNullOrBlank()
+                    val shouldRetryEmptyPoster = isEmptyPoster && emptyPosterRetryCount < maxEmptyPosterRetry
 
-                        if (newSignature != cached.fileListSignature) {
-                            needScrapeList.add(series)
-                            series.copy(
-                                title = cached.title,
-                                category = cached.category,
-                                posterUrl = cached.posterUrl,
-                                backdropUrl = cached.backdropUrl,
-                                overview = cached.overview,
-                                rating = cached.rating,
-                                seasonDetails = cached.seasonDetails,
-                                episodeTitles = cached.episodeTitles,
-                                episodeStills = cached.episodeStills,
-                                seasonEpisodeTitles = cached.seasonEpisodeTitles,
-                                seasonEpisodeStills = cached.seasonEpisodeStills,
-                                groupName = cached.groupName
-                            )
-                        } else {
-                            series.copy(
-                                title = cached.title,
-                                category = cached.category,
-                                posterUrl = cached.posterUrl,
-                                backdropUrl = cached.backdropUrl,
-                                overview = cached.overview,
-                                rating = cached.rating,
-                                seasonDetails = cached.seasonDetails,
-                                episodeTitles = cached.episodeTitles,
-                                episodeStills = cached.episodeStills,
-                                seasonEpisodeTitles = cached.seasonEpisodeTitles,
-                                seasonEpisodeStills = cached.seasonEpisodeStills,
-                                groupName = cached.groupName
-                            )
-                        }
-                    } else {
+                    val needScrape = isSignatureChanged || shouldRetryEmptyPoster
+                    if (needScrape) {
                         needScrapeList.add(series)
-                        series
+                        if (isEmptyPoster) emptyPosterRetryCount++
+                        if (cached != null) {
+                            series.copy(
+                                title = cached.title, category = cached.category, posterUrl = cached.posterUrl,
+                                backdropUrl = cached.backdropUrl, overview = cached.overview, rating = cached.rating,
+                                seasonDetails = cached.seasonDetails, episodeTitles = cached.episodeTitles,
+                                episodeStills = cached.episodeStills, seasonEpisodeTitles = cached.seasonEpisodeTitles,
+                                seasonEpisodeStills = cached.seasonEpisodeStills, groupName = cached.groupName,
+                                isManuallyEdited = cached.isManuallyEdited
+                            )
+                        } else series
+                    } else {
+                        series.copy(
+                            title = cached.title, category = cached.category, posterUrl = cached.posterUrl,
+                            backdropUrl = cached.backdropUrl, overview = cached.overview, rating = cached.rating,
+                            seasonDetails = cached.seasonDetails, episodeTitles = cached.episodeTitles,
+                            episodeStills = cached.episodeStills, seasonEpisodeTitles = cached.seasonEpisodeTitles,
+                            seasonEpisodeStills = cached.seasonEpisodeStills, groupName = cached.groupName,
+                            isManuallyEdited = cached.isManuallyEdited
+                        )
                     }
                 }
 
                 _uiState.update { it.copy(seriesList = finalSeriesList) }
+                cleanInvalidRecentWatched(validIds)
 
                 if (apiKey.isNotBlank() && needScrapeList.isNotEmpty()) {
                     scrapeSeriesPosters(needScrapeList, apiKey, _uiState.value.tmdbBaseUrl)
@@ -446,6 +436,23 @@ class VideoScraperViewModel(
                 _uiState.update { it.copy(isLoading = false, isScraping = false, errorMsg = "扫描异常: ${e.message}") }
             }
         }
+    }
+
+    private fun cleanInvalidRecentWatched(validIds: Set<String>) {
+        try {
+            val jsonArray = JSONArray(videoSettingsRepository.recentWatchedVideos)
+            val newList = mutableListOf<JSONObject>()
+            for (i in 0 until jsonArray.length()) {
+                val obj = jsonArray.getJSONObject(i)
+                val sTitle = obj.optString("seriesTitle")
+                if (validIds.any { it == sTitle || it.contains(sTitle) }) {
+                    newList.add(obj)
+                }
+            }
+            val resultArray = JSONArray()
+            newList.forEach { resultArray.put(it) }
+            videoSettingsRepository.recentWatchedVideos = resultArray.toString()
+        } catch (e: Exception) { e.printStackTrace() }
     }
 
     private fun aggregateToSeries(videos: List<QuarkFile>): List<MediaSeries> {
@@ -579,117 +586,103 @@ class VideoScraperViewModel(
     private fun scrapeSeriesPosters(needScrapeList: List<MediaSeries>, apiKey: String, baseUrl: String) {
         viewModelScope.launch(Dispatchers.IO) {
             val scrapedList = needScrapeList.map { series ->
-                var searchTitle = series.originalParsedTitle
-                if (series.groupName != null) {
-                    searchTitle = series.groupName
-                }
+                tmdbSemaphore.withPermit {
+                    var searchTitle = series.originalParsedTitle
+                    if (series.groupName != null) searchTitle = series.groupName
 
-                val match = searchTmdbWithFallback(searchTitle, series.year, apiKey, baseUrl)
-                if (match != null) {
-                    var finalTitle = match.title
-                    if (series.groupName != null && series.originalParsedTitle.contains("第")) {
-                        val suffix = series.originalParsedTitle.substringAfter(series.groupName).trim()
-                        if (suffix.isNotBlank() && !finalTitle.contains(suffix)) {
-                            finalTitle = "$finalTitle $suffix"
+                    val match = searchTmdbWithFallback(searchTitle, series.year, apiKey, baseUrl)
+                    if (match != null) {
+                        var finalTitle = match.title
+                        if (series.groupName != null && series.originalParsedTitle.contains("第")) {
+                            val suffix = series.originalParsedTitle.substringAfter(series.groupName).trim()
+                            if (suffix.isNotBlank() && !finalTitle.contains(suffix)) finalTitle = "$finalTitle $suffix"
                         }
-                    }
-                    
-                    if (finalTitle.matches(Regex("^[a-zA-Z0-9\\s\\p{Punct}]+$")) && searchTitle.any { it.code > 127 }) {
-                        finalTitle = searchTitle
-                    }
-                    
-                    var finalCategory = series.category
-                    if (finalCategory == "未分类") {
-                        finalCategory = when {
-                            match.mediaType == "movie" -> "电影"
-                            match.genreIds.contains(16) -> "动漫"
-                            match.mediaType == "tv" -> "剧集"
-                            else -> "未分类"
-                        }
-                    }
-                    
-                    var epTitles = mutableMapOf<Int, String>()
-                    var epStills = mutableMapOf<Int, String>()
-                    var seasonDetails = mutableMapOf<Int, SeasonDetail>()
-                    var sEpTitles = mutableMapOf<String, String>()
-                    var sEpStills = mutableMapOf<String, String>()
-
-                    val oldCached = scrapedCache[series.id]
-                    if (oldCached != null) {
-                        epTitles.putAll(oldCached.episodeTitles)
-                        epStills.putAll(oldCached.episodeStills)
-                        seasonDetails.putAll(oldCached.seasonDetails)
-                        sEpTitles.putAll(oldCached.seasonEpisodeTitles)
-                        sEpStills.putAll(oldCached.seasonEpisodeStills)
-                    }
-
-                    if (match.mediaType != "movie") {
-                        val allSeasons = series.videos.mapNotNull { it.parsedInfo?.season }.distinct().sorted()
-                        val targetSeasons = if (allSeasons.isEmpty()) listOf(1) else allSeasons
+                        if (finalTitle.matches(Regex("^[a-zA-Z0-9\\s\\p{Punct}]+$")) && searchTitle.any { it.code > 127 }) finalTitle = searchTitle
                         
-                        for (season in targetSeasons) {
-                            val detail = fetchSeasonDetail(match.id, season, apiKey, baseUrl)
-                            if (detail != null) {
-                                seasonDetails[season] = detail.first
-                                sEpTitles.putAll(detail.second)
-                                sEpStills.putAll(detail.third)
-                                if (season == 1) {
-                                    detail.second.forEach { (k, v) ->
-                                        val epNum = k.substringAfter("_").toIntOrNull()
-                                        if (epNum != null) epTitles[epNum] = v
-                                    }
-                                    detail.third.forEach { (k, v) ->
-                                        val epNum = k.substringAfter("_").toIntOrNull()
-                                        if (epNum != null) epStills[epNum] = v
+                        var finalCategory = series.category
+                        if (finalCategory == "未分类") {
+                            finalCategory = when {
+                                match.mediaType == "movie" -> "电影"
+                                match.genreIds.contains(16) -> "动漫"
+                                match.mediaType == "tv" -> "剧集"
+                                else -> "未分类"
+                            }
+                        }
+                        
+                        var epTitles = mutableMapOf<Int, String>()
+                        var epStills = mutableMapOf<Int, String>()
+                        var seasonDetails = mutableMapOf<Int, SeasonDetail>()
+                        var sEpTitles = mutableMapOf<String, String>()
+                        var sEpStills = mutableMapOf<String, String>()
+
+                        val oldCached = scrapedCache[series.id]
+                        if (oldCached != null) {
+                            epTitles.putAll(oldCached.episodeTitles)
+                            epStills.putAll(oldCached.episodeStills)
+                            seasonDetails.putAll(oldCached.seasonDetails)
+                            sEpTitles.putAll(oldCached.seasonEpisodeTitles)
+                            sEpStills.putAll(oldCached.seasonEpisodeStills)
+                        }
+
+                        if (match.mediaType != "movie") {
+                            val allSeasons = series.videos.mapNotNull { it.parsedInfo?.season }.distinct().sorted()
+                            val targetSeasons = if (allSeasons.isEmpty()) listOf(1) else allSeasons
+                            for (season in targetSeasons) {
+                                val detail = fetchSeasonDetail(match.id, season, apiKey, baseUrl)
+                                if (detail != null) {
+                                    seasonDetails[season] = detail.first
+                                    sEpTitles.putAll(detail.second)
+                                    sEpStills.putAll(detail.third)
+                                    if (season == 1) {
+                                        detail.second.forEach { (k, v) ->
+                                            val epNum = k.substringAfter("_").toIntOrNull()
+                                            if (epNum != null) epTitles[epNum] = v
+                                        }
+                                        detail.third.forEach { (k, v) ->
+                                            val epNum = k.substringAfter("_").toIntOrNull()
+                                            if (epNum != null) epStills[epNum] = v
+                                        }
                                     }
                                 }
                             }
                         }
-                    }
 
-                    val newSeries = series.copy(
-                        title = finalTitle, category = finalCategory, posterUrl = match.posterUrl, backdropUrl = match.backdropUrl,
-                        overview = match.overview, rating = match.rating, 
-                        seasonDetails = seasonDetails,
-                        episodeTitles = epTitles, episodeStills = epStills,
-                        seasonEpisodeTitles = sEpTitles, seasonEpisodeStills = sEpStills
-                    )
-
-                    val sortedVideos = newSeries.videos.sortedBy { it.name }
-                    val newSignature = sortedVideos.joinToString("|") { 
-                        "${it.name}_${it.parsedInfo?.season ?: 1}_${it.parsedInfo?.episode ?: 0}" 
-                    }
-
-                    scrapedCache[newSeries.id] = ScrapeCacheItem(
-                        title = newSeries.title,
-                        category = newSeries.category,
-                        posterUrl = newSeries.posterUrl,
-                        backdropUrl = newSeries.backdropUrl,
-                        overview = newSeries.overview,
-                        rating = newSeries.rating,
-                        seasonDetails = newSeries.seasonDetails,
-                        episodeTitles = newSeries.episodeTitles,
-                        episodeStills = newSeries.episodeStills,
-                        seasonEpisodeTitles = newSeries.seasonEpisodeTitles,
-                        seasonEpisodeStills = newSeries.seasonEpisodeStills,
-                        groupName = newSeries.groupName,
-                        isManuallyEdited = false,
-                        fileListSignature = newSignature 
-                    )
-                    newSeries
-                } else {
-                    val sortedVideos = series.videos.sortedBy { it.name }
-                    val newSignature = sortedVideos.joinToString("|") { 
-                        "${it.name}_${it.parsedInfo?.season ?: 1}_${it.parsedInfo?.episode ?: 0}" 
-                    }
-                    val oldCached = scrapedCache[series.id]
-                    if (oldCached == null) {
-                        scrapedCache[series.id] = ScrapeCacheItem(
-                            title = series.title, category = series.category, posterUrl = null, backdropUrl = null, overview = null, rating = null,
-                            groupName = series.groupName, isManuallyEdited = false, fileListSignature = newSignature
+                        val newSeries = series.copy(
+                            title = finalTitle, category = finalCategory, posterUrl = match.posterUrl, backdropUrl = match.backdropUrl,
+                            overview = match.overview, rating = match.rating, 
+                            seasonDetails = seasonDetails, episodeTitles = epTitles, episodeStills = epStills,
+                            seasonEpisodeTitles = sEpTitles, seasonEpisodeStills = sEpStills
                         )
+
+                        val sortedVideos = newSeries.videos.sortedBy { it.name }
+                        val newSignature = sortedVideos.joinToString("|") { 
+                            "${it.name}_${it.parsedInfo?.season ?: 1}_${it.parsedInfo?.episode ?: 0}" 
+                        }
+
+                        scrapedCache[newSeries.id] = ScrapeCacheItem(
+                            title = newSeries.title, category = newSeries.category, posterUrl = newSeries.posterUrl,
+                            backdropUrl = newSeries.backdropUrl, overview = newSeries.overview, rating = newSeries.rating,
+                            seasonDetails = newSeries.seasonDetails, episodeTitles = newSeries.episodeTitles,
+                            episodeStills = newSeries.episodeStills, seasonEpisodeTitles = newSeries.seasonEpisodeTitles,
+                            seasonEpisodeStills = newSeries.seasonEpisodeStills, groupName = newSeries.groupName,
+                            isManuallyEdited = false, fileListSignature = newSignature 
+                        )
+                        newSeries
+                    } else {
+                        val sortedVideos = series.videos.sortedBy { it.name }
+                        val newSignature = sortedVideos.joinToString("|") { 
+                            "${it.name}_${it.parsedInfo?.season ?: 1}_${it.parsedInfo?.episode ?: 0}" 
+                        }
+                        val oldCached = scrapedCache[series.id]
+                        if (oldCached == null) {
+                            scrapedCache[series.id] = ScrapeCacheItem(
+                                title = series.title, category = series.category, posterUrl = null, backdropUrl = null,
+                                overview = null, rating = null, groupName = series.groupName,
+                                isManuallyEdited = false, fileListSignature = newSignature
+                            )
+                        }
+                        series
                     }
-                    series
                 }
             }
 
@@ -699,7 +692,6 @@ class VideoScraperViewModel(
                 val currentList = _uiState.value.seriesList.map { old ->
                     scrapedList.find { it.id == old.id } ?: old
                 }
-                
                 val oldCurrent = _uiState.value.currentSeries
                 val newCurrent = if (oldCurrent != null) {
                     currentList.find { it.id == oldCurrent.id } 
@@ -709,7 +701,6 @@ class VideoScraperViewModel(
 
                 hasLoadedLibrary = true
                 _uiState.update { it.copy(isLoading = false, isScraping = false, seriesList = currentList, currentSeries = newCurrent) }
-                
                 handlePendingPlayRequest()
             }
         }
@@ -725,15 +716,32 @@ class VideoScraperViewModel(
     }
 
     private fun searchTmdb(title: String, year: Int?, apiKey: String, baseUrl: String, language: String): TmdbSearchResult? {
-        try {
+        val url = try {
             val query = URLEncoder.encode(title, "UTF-8")
             val isProxy = baseUrl.contains("quarkalist") || baseUrl.contains("proxy")
             val apiPath = if (isProxy) "/api/3/search/multi" else "/3/search/multi"
-            val url = "$baseUrl$apiPath?api_key=$apiKey&query=$query&language=$language"
-            val request = Request.Builder().url(url).build()
-            client.newCall(request).execute().use { response ->
-                val body = response.body?.string()
-                if (!body.isNullOrBlank()) {
+            "$baseUrl$apiPath?api_key=$apiKey&query=$query&language=$language"
+        } catch (e: Exception) { return null }
+
+        var lastException: Exception? = null
+        for (attempt in 0..2) {
+            if (attempt > 0) {
+                val backoffMs = if (attempt == 1) 1000L else 2000L
+                try { Thread.sleep(backoffMs) } catch (e: InterruptedException) { Thread.currentThread().interrupt(); return null }
+            }
+            try {
+                val request = Request.Builder().url(url).build()
+                client.newCall(request).execute().use { response ->
+                    val code = response.code
+                    if (code == 401 || code == 403) return null
+                    if (code == 429 || code in 500..599) {
+                        lastException = IOException("HTTP $code")
+                        return@use
+                    }
+                    if (code != 200) return null
+
+                    val body = response.body?.string()
+                    if (body.isNullOrBlank()) return null
                     val json = JSONObject(body)
                     val results = json.optJSONArray("results")
                     if (results != null && results.length() > 0) {
@@ -780,9 +788,14 @@ class VideoScraperViewModel(
                             mediaType = mediaType, genreIds = genreIdsList
                         )
                     }
+                    return null
                 }
+            } catch (e: IOException) {
+                lastException = e
+            } catch (e: Exception) {
+                return null
             }
-        } catch (e: Exception) {}
+        }
         return null
     }
 
@@ -881,6 +894,9 @@ class VideoScraperViewModel(
     }
 
     fun applyManualScrape(seriesId: String, result: TmdbSearchResult?, newCategory: String, newTitle: String) {
+        val apiKey = _uiState.value.tmdbApiKey
+        val baseUrl = _uiState.value.tmdbBaseUrl
+
         val currentList = _uiState.value.seriesList.map {
             if (it.id == seriesId) {
                 it.copy(
@@ -900,29 +916,124 @@ class VideoScraperViewModel(
         }
 
         val updatedSeries = currentList.find { it.id == seriesId }
-        if (updatedSeries != null) {
-            val sortedVideos = updatedSeries.videos.sortedBy { it.name }
-            val newSignature = sortedVideos.joinToString("|") { 
-                "${it.name}_${it.parsedInfo?.season ?: 1}_${it.parsedInfo?.episode ?: 0}" 
+        if (updatedSeries == null) return
+
+        saveManualScrapeBasic(updatedSeries)
+
+        if (result != null && apiKey.isNotBlank()) {
+            viewModelScope.launch(Dispatchers.IO) {
+                val seasonTitles = mutableMapOf<String, String>()
+                val episodeTitles = mutableMapOf<Int, String>()
+                val seasonEpisodeStills = mutableMapOf<String, String>()
+                val episodeStills = mutableMapOf<Int, String>()
+
+                val allSeasons = updatedSeries.videos
+                    .mapNotNull { it.parsedInfo?.season }
+                    .distinct()
+                    .sorted()
+                val targetSeasons = if (allSeasons.isEmpty()) listOf(1) else allSeasons
+
+                for (season in targetSeasons) {
+                    val detail = tmdbSemaphore.withPermit {
+                        fetchSeasonDetail(result.id, season, apiKey, baseUrl)
+                    }
+                    if (detail != null) {
+                        seasonTitles.putAll(detail.second)
+                        seasonEpisodeStills.putAll(detail.third)
+                        if (targetSeasons.size == 1) {
+                            detail.second.forEach { (k, v) ->
+                                val epNum = k.substringAfter("_").toIntOrNull()
+                                if (epNum != null) episodeTitles[epNum] = v
+                            }
+                            detail.third.forEach { (k, v) ->
+                                val epNum = k.substringAfter("_").toIntOrNull()
+                                if (epNum != null) episodeStills[epNum] = v
+                            }
+                        }
+                    }
+                }
+
+                val existingCache = scrapedCache[seriesId]
+                val mergedSeasonTitles = if (existingCache != null) {
+                    (existingCache.seasonEpisodeTitles + seasonTitles).toMutableMap()
+                } else seasonTitles.toMutableMap()
+                val mergedEpisodeTitles = if (existingCache != null) {
+                    (existingCache.episodeTitles + episodeTitles).toMutableMap()
+                } else episodeTitles.toMutableMap()
+                val mergedSeasonStills = if (existingCache != null) {
+                    (existingCache.seasonEpisodeStills + seasonEpisodeStills).toMutableMap()
+                } else seasonEpisodeStills.toMutableMap()
+                val mergedEpisodeStills = if (existingCache != null) {
+                    (existingCache.episodeStills + episodeStills).toMutableMap()
+                } else episodeStills.toMutableMap()
+
+                val finalSeries = updatedSeries.copy(
+                    seasonEpisodeTitles = mergedSeasonTitles,
+                    episodeTitles = mergedEpisodeTitles,
+                    seasonEpisodeStills = mergedSeasonStills,
+                    episodeStills = mergedEpisodeStills
+                )
+
+                withContext(Dispatchers.Main) {
+                    val newList = _uiState.value.seriesList.map {
+                        if (it.id == seriesId) finalSeries else it
+                    }
+                    _uiState.update {
+                        it.copy(seriesList = newList, currentSeries = finalSeries)
+                    }
+                }
+
+                saveManualScrapeComplete(finalSeries)
             }
-            scrapedCache[seriesId] = ScrapeCacheItem(
-                title = updatedSeries.title,
-                category = updatedSeries.category,
-                posterUrl = updatedSeries.posterUrl,
-                backdropUrl = updatedSeries.backdropUrl,
-                overview = updatedSeries.overview,
-                rating = updatedSeries.rating,
-                seasonDetails = updatedSeries.seasonDetails,
-                episodeTitles = updatedSeries.episodeTitles,
-                episodeStills = updatedSeries.episodeStills,
-                seasonEpisodeTitles = updatedSeries.seasonEpisodeTitles,
-                seasonEpisodeStills = updatedSeries.seasonEpisodeStills,
-                groupName = updatedSeries.groupName,
-                isManuallyEdited = true,
-                fileListSignature = newSignature
-            )
-            saveScrapedCache()
         }
+    }
+
+    private fun saveManualScrapeBasic(series: MediaSeries) {
+        val sortedVideos = series.videos.sortedBy { it.name }
+        val newSignature = sortedVideos.joinToString("|") {
+            "${it.name}_${it.parsedInfo?.season ?: 1}_${it.parsedInfo?.episode ?: 0}"
+        }
+        scrapedCache[series.id] = ScrapeCacheItem(
+            title = series.title,
+            category = series.category,
+            posterUrl = series.posterUrl,
+            backdropUrl = series.backdropUrl,
+            overview = series.overview,
+            rating = series.rating,
+            seasonDetails = series.seasonDetails,
+            episodeTitles = series.episodeTitles,
+            episodeStills = series.episodeStills,
+            seasonEpisodeTitles = series.seasonEpisodeTitles,
+            seasonEpisodeStills = series.seasonEpisodeStills,
+            groupName = series.groupName,
+            isManuallyEdited = true,
+            fileListSignature = newSignature
+        )
+        saveScrapedCache()
+    }
+
+    private fun saveManualScrapeComplete(series: MediaSeries) {
+        val sortedVideos = series.videos.sortedBy { it.name }
+        val newSignature = sortedVideos.joinToString("|") {
+            "${it.name}_${it.parsedInfo?.season ?: 1}_${it.parsedInfo?.episode ?: 0}"
+        }
+        scrapedCache[series.id] = ScrapeCacheItem(
+            title = series.title,
+            category = series.category,
+            posterUrl = series.posterUrl,
+            backdropUrl = series.backdropUrl,
+            overview = series.overview,
+            rating = series.rating,
+            seasonDetails = series.seasonDetails,
+            episodeTitles = series.episodeTitles,
+            episodeStills = series.episodeStills,
+            seasonEpisodeTitles = series.seasonEpisodeTitles,
+            seasonEpisodeStills = series.seasonEpisodeStills,
+            groupName = series.groupName,
+            isManuallyEdited = true,
+            fileListSignature = newSignature
+        )
+        saveScrapedCache()
     }
 
     fun playVideo(context: Context, series: MediaSeries, file: QuarkFile) {
@@ -932,21 +1043,19 @@ class VideoScraperViewModel(
 
         val cookie = _uiState.value.cookie
         
-        // 修复：如果 parsedInfo 为空（重启时的临时对象），重新解析
         val parsedInfo = file.parsedInfo ?: VideoFileNameParser.parse(file.name)
         val epNum = parsedInfo.episode
         val season = parsedInfo.season ?: 1
         
         var titleText = realSeries.title
         if (realSeries.category != "电影") {
-            // 修复：强行用正则从 file.name 里提取集数（兼容“狂飙 第2集 安欣…”）
             val realEpNum = epNum ?: Regex("第\\s*([0-9]+)\\s*集").find(file.name)?.groupValues?.get(1)?.toIntOrNull()
             if (realEpNum != null) {
                 val tmdbEpTitle = realSeries.seasonEpisodeTitles["${season}_${realEpNum}"] ?: realSeries.episodeTitles[realEpNum]
                 titleText = if (!tmdbEpTitle.isNullOrBlank()) "${realSeries.title} 第${realEpNum}集 $tmdbEpTitle"
                 else "${realSeries.title} 第${realEpNum}集"
             } else if (file.name.contains("第") && file.name.contains("集")) {
-                titleText = file.name // 如果提取不到，直接用完整文件名兜底
+                titleText = file.name 
             }
         }
 
@@ -961,7 +1070,7 @@ class VideoScraperViewModel(
             }
             val newObj = JSONObject().apply {
                 put("fid", file.fid)
-                put("title", titleText) // 存下完整标题
+                put("title", titleText) 
                 put("seriesTitle", realSeries.title)
                 put("coverPath", realSeries.posterUrl ?: "")
                 put("timestamp", System.currentTimeMillis())
