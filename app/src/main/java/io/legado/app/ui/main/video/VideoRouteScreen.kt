@@ -1414,10 +1414,13 @@ fun InternalVideoPlayer(
     val isManualRotating = remember { mutableStateOf(false) }
     val coroutineScope = rememberCoroutineScope()
 
+    // 🌟 核心修复：只强制横屏一次，避免和用户手动旋转打架
+    var hasRequestedLandscape = remember { false }
+
     LaunchedEffect(Unit) {
-        // 只有在非小窗、非画中画时才强制横屏
-        if (!isInMultiWindowMode && activity?.isInPictureInPictureMode != true) {
+        if (!hasRequestedLandscape && !isInMultiWindowMode && activity?.isInPictureInPictureMode != true) {
             activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE
+            hasRequestedLandscape = true
         }
         while (true) {
             currentSystemTime = SimpleDateFormat("HH:mm", Locale.getDefault()).format(Date())
@@ -1458,7 +1461,7 @@ fun InternalVideoPlayer(
         onDispose { orientationListener.disable() }
     }
 
-    // 🌟 核心修复：精准隐藏和恢复系统状态栏，不下狠手
+    // 🌟 核心修复：精准隐藏和恢复系统状态栏
     LaunchedEffect(isLandscape, isInPip.value, isInMultiWindowMode) {
         if (view.isInEditMode || isInPip.value || isInMultiWindowMode) return@LaunchedEffect
         val window = (view.parent as? DialogWindowProvider)?.window ?: activity?.window
@@ -1481,7 +1484,6 @@ fun InternalVideoPlayer(
             if (!isInMultiWindowMode) {
                 activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
             }
-            // 退出时直接重置 Activity Window 属性，防止底层状态卡死
             activity?.window?.let { window ->
                 WindowCompat.setDecorFitsSystemWindows(window, true)
                 val controller = WindowCompat.getInsetsController(window, window.decorView)
@@ -1764,6 +1766,17 @@ fun InternalVideoPlayer(
         exoPlayer.playWhenReady = true
     }
 
+    // 🌟 核心修复：定时保存进度，彻底消灭进度串台
+    LaunchedEffect(currentFile.fid, isPlaying) {
+        while (isPlaying) {
+            delay(1000)
+            val pos = exoPlayer.currentPosition
+            if (pos > 0) {
+                viewModel.saveVideoProgress(currentFile.fid, pos)
+            }
+        }
+    }
+
     DisposableEffect(exoPlayer) {
         val listener = object : Player.Listener {
             override fun onIsPlayingChanged(playing: Boolean) {
@@ -1836,8 +1849,8 @@ fun InternalVideoPlayer(
         exoPlayer.addListener(listener)
 
         onDispose {
-            // 🌟 核心修复：只有当文件匹配（即用户真正退出时），才保存进度。防止切集瞬间退出导致进度错乱
-            if (lastPlayingFile.fid == currentFile.fid && exoPlayer.currentPosition > 0) {
+            // 🌟 核心修复：退出时再保存一次最终进度
+            if (exoPlayer.currentPosition > 0) {
                 viewModel.saveVideoProgress(currentFile.fid, exoPlayer.currentPosition)
             }
             exoPlayer.removeListener(listener)
