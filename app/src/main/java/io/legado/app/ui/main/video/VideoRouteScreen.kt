@@ -2709,7 +2709,6 @@ fun MediaDetailScreen(
     val view = LocalView.current
     var showAllEpisodesDialog by remember { mutableStateOf(false) }
 
-    // 🌟 核心修复：进入详情页时隐藏系统导航栏，退出时恢复
     DisposableEffect(Unit) {
         val window = activity?.window
         if (window != null) {
@@ -2770,7 +2769,6 @@ fun MediaDetailScreen(
     LazyColumn(
         state = listState, 
         modifier = Modifier.fillMaxSize().background(Color.White),
-        // 🌟 关键修复：给底部留出 100dp 的空间，彻底解决被悬浮底栏遮挡问题
         contentPadding = PaddingValues(bottom = 100.dp) 
     ) {
         item {
@@ -2822,7 +2820,6 @@ fun MediaDetailScreen(
                     style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.Bold
                 )
-                // 🌟 全量剧集弹窗入口
                 if (currentSeasonVideos.size > 10) {
                     AppText(
                         text = "共 ${currentSeasonVideos.size} 集，查看全部 >",
@@ -2922,13 +2919,15 @@ fun MediaDetailScreen(
         }
     }
 
-    // 🌟 文件最下方加入全量选集弹窗
     if (showAllEpisodesDialog) {
         Dialog(onDismissRequest = { showAllEpisodesDialog = false }) {
             Surface(
                 shape = RoundedCornerShape(16.dp),
                 color = Color(0xFF222222),
-                modifier = Modifier.fillMaxWidth().heightIn(max = 600.dp)
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(max = 600.dp)
+                    .navigationBarsPadding() // 🌟 这里：防止被系统底部手势条遮挡
             ) {
                 Column(modifier = Modifier.padding(16.dp)) {
                     Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
