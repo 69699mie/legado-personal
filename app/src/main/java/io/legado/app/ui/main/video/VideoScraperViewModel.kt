@@ -104,7 +104,7 @@ class VideoScraperViewModel(
 
     private val tmdbSemaphore = Semaphore(5)
 
-    // 🌟 核心引入：Android 官方内置国际化排序器，按拼音 A-Z 排序
+    // 🌟 拼音排序器
     private val pinyinCollator = Collator.getInstance(Locale.CHINA)
 
     private val _uiState = MutableStateFlow(VideoUiState())
@@ -168,7 +168,8 @@ class VideoScraperViewModel(
                 isManuallyEdited = cached.isManuallyEdited,
                 videos = emptyList() 
             )
-        }.sortedWith(compareBy(pinyinCollator) { it.title }) // 🌟 拼音 A-Z 排序
+        }.filter { !it.title.matches(Regex("^\\d+$")) } // 🌟 启动防闪：过滤纯数字脏数据
+         .sortedWith(compareBy(pinyinCollator) { it.title })
         
         if (cachedSeries.isNotEmpty()) {
             _uiState.update { it.copy(seriesList = cachedSeries) }
@@ -379,12 +380,12 @@ class VideoScraperViewModel(
                         fetchVideosRecursively(cookie, fid, initialPath, allVideos)
                     }
                 }
-                // 核心修复：全局去重，防止同一集出现两次
                 val uniqueVideos = allVideos.distinctBy { it.fid }
                 val groupedSeries = aggregateToSeries(uniqueVideos)
 
                 val validIds = groupedSeries.map { it.id }.toSet()
-                val invalidIds = scrapedCache.keys.filter { it !in validIds && it.startsWith("temp_") }
+                // 🌟 刷新清理：强制移除无用的 temp_ 数据和纯数字的脏数据
+                val invalidIds = scrapedCache.keys.filter { it !in validIds && (it.startsWith("temp_") || it.matches(Regex("^\\d+$"))) }
                 invalidIds.forEach { scrapedCache.remove(it) }
                 if (invalidIds.isNotEmpty()) saveScrapedCache()
 
@@ -437,7 +438,7 @@ class VideoScraperViewModel(
                             isManuallyEdited = cached.isManuallyEdited
                         )
                     }
-                }.sortedWith(compareBy(pinyinCollator) { it.title }) // 🌟 拼音 A-Z 排序
+                }.sortedWith(compareBy(pinyinCollator) { it.title })
 
                 _uiState.update { it.copy(seriesList = finalSeriesList) }
                 cleanInvalidRecentWatched(validIds)
@@ -553,7 +554,7 @@ class VideoScraperViewModel(
                 )
             }
         }
-        return seriesMap.values.toList().sortedWith(compareBy(pinyinCollator) { it.title }) // 🌟 拼音 A-Z 排序
+        return seriesMap.values.toList().sortedWith(compareBy(pinyinCollator) { it.title })
     }
 
     private fun parseSeasonFromFolder(folderName: String): Int? {
@@ -729,7 +730,7 @@ class VideoScraperViewModel(
             withContext(Dispatchers.Main) {
                 val currentList = _uiState.value.seriesList.map { old ->
                     scrapedList.find { it.id == old.id } ?: old
-                }.sortedWith(compareBy(pinyinCollator) { it.title }) // 🌟 拼音 A-Z 排序
+                }.sortedWith(compareBy(pinyinCollator) { it.title })
                 
                 val oldCurrent = _uiState.value.currentSeries
                 val newCurrent = if (oldCurrent != null) {
@@ -948,7 +949,7 @@ class VideoScraperViewModel(
                     isManuallyEdited = true
                 )
             } else it
-        }.sortedWith(compareBy(pinyinCollator) { it.title }) // 🌟 拼音 A-Z 排序
+        }.sortedWith(compareBy(pinyinCollator) { it.title })
         
         _uiState.update {
             val updatedCurrent = currentList.find { s -> s.id == seriesId }
@@ -1017,7 +1018,7 @@ class VideoScraperViewModel(
                 withContext(Dispatchers.Main) {
                     val newList = _uiState.value.seriesList.map {
                         if (it.id == seriesId) finalSeries else it
-                    }.sortedWith(compareBy(pinyinCollator) { it.title }) // 🌟 拼音 A-Z 排序
+                    }.sortedWith(compareBy(pinyinCollator) { it.title })
                     
                     _uiState.update {
                         it.copy(seriesList = newList, currentSeries = finalSeries)
@@ -1117,7 +1118,16 @@ class VideoScraperViewModel(
             videoSettingsRepository.recentWatchedVideos = resultArray.toString()
         } catch (e: Exception) { e.printStackTrace() }
 
-        _uiState.update { it.copy(playUrl = null, playTitle = titleText, currentSeries = realSeries, currentPlayFile = file, isDirectPlay = false) }
+        // 🌟 核心修复：判断是否是同一部剧切集
+        val isSameSeriesSwitch = _uiState.value.currentSeries?.id == realSeries.id && _uiState.value.playUrl != null
+
+        if (isSameSeriesSwitch) {
+            // 同剧切集：不置空 playUrl，保持播放器 UI 存活，等新链接回来后自动内部换源
+            _uiState.update { it.copy(playTitle = titleText, currentSeries = realSeries) }
+        } else {
+            // 跨剧播放或首次播放：清空 playUrl，正常重建播放器
+            _uiState.update { it.copy(playUrl = null, playTitle = titleText, currentSeries = realSeries, currentPlayFile = file, isDirectPlay = false) }
+        }
 
         viewModelScope.launch {
             val url = withContext(Dispatchers.IO) {
@@ -1125,7 +1135,8 @@ class VideoScraperViewModel(
             }
 
             if (url != null) {
-                _uiState.update { it.copy(playUrl = url) }
+                // 无论是同剧切集还是跨剧，拿到新链接后连同 currentPlayFile 一起更新
+                _uiState.update { it.copy(playUrl = url, currentPlayFile = file) }
             } else {
                 val detail = lastQuarkError ?: "未知错误"
                 stopPlaying()
