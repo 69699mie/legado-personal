@@ -350,6 +350,7 @@ fun VideoScraperScreen(
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val context = LocalContext.current
     val videoSettingsRepository = koinInject<VideoSettingsRepository>()
+    val view = LocalView.current
 
     var showSettingsDialog by remember { mutableStateOf(false) }
     var showWebLoginDialog by remember { mutableStateOf(false) }
@@ -363,6 +364,15 @@ fun VideoScraperScreen(
 
     var manualScrapeSeries by remember { mutableStateOf<MediaSeries?>(null) }
     var showClearHistoryConfirm by remember { mutableStateOf(false) }
+
+    // 🌟 核心修复：一旦退出播放器（playUrl == null），强制刷新主界面的 Insets，恢复底部导航栏显示
+    LaunchedEffect(uiState.playUrl) {
+        if (uiState.playUrl == null) {
+            view.post {
+                view.requestApplyInsets()
+            }
+        }
+    }
 
     val recentWatchedList = remember(uiState.seriesList, videoSettingsRepository.recentWatchedVideos) {
         val list = mutableListOf<RecentWatchedItem>()
@@ -1448,7 +1458,6 @@ fun InternalVideoPlayer(
             window?.let {
                 WindowCompat.setDecorFitsSystemWindows(it, true)
                 WindowCompat.getInsetsController(it, it.decorView).show(WindowInsetsCompat.Type.systemBars())
-                // 🌟 核心修复：强制重绘 View，修复底部导航栏消失的 Bug
                 it.decorView.requestApplyInsets()
             }
             activity?.window?.let {
@@ -2747,7 +2756,6 @@ fun MediaDetailScreen(
                 val controller = WindowCompat.getInsetsController(window, view)
                 WindowCompat.setDecorFitsSystemWindows(window, true)
                 controller.show(WindowInsetsCompat.Type.navigationBars())
-                // 🌟 核心修复：退出详情页时强制重绘，修复底部导航栏消失的 Bug
                 window.decorView.requestApplyInsets()
             }
         }
