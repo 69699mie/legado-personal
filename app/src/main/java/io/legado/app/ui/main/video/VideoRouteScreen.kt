@@ -202,30 +202,33 @@ fun createPipIcon(type: String, context: Context): Bitmap {
     return bitmap
 }
 
+// 🌟 修改：新的骨架屏加载动画（水平细光带扫过）
 @Composable
 fun ShimmerBox(modifier: Modifier) {
     val transition = rememberInfiniteTransition(label = "shimmer")
     val translateAnim by transition.animateFloat(
-        initialValue = 0f,
-        targetValue = 1000f,
+        initialValue = -400f, 
+        targetValue = 1500f, 
         animationSpec = infiniteRepeatable(
-            animation = tween(durationMillis = 1200, easing = LinearEasing),
+            animation = tween(durationMillis = 1500, easing = LinearEasing),
             repeatMode = RepeatMode.Restart
         ),
         label = "shimmer_translate"
     )
     Box(
-        modifier = modifier.background(
-            brush = Brush.linearGradient(
-                colors = listOf(
-                    Color(0xFFE0E0E0),
-                    Color(0xFFF5F5F5),
-                    Color(0xFFE0E0E0)
-                ),
-                start = Offset.Zero,
-                end = Offset(x = translateAnim, y = translateAnim)
+        modifier = modifier
+            .background(Color(0xFFEEEEEE)) 
+            .background(
+                brush = Brush.linearGradient(
+                    colors = listOf(
+                        Color.Transparent,
+                        Color.White.copy(alpha = 0.6f),
+                        Color.Transparent
+                    ),
+                    start = Offset(translateAnim - 200f, 0f),
+                    end = Offset(translateAnim, 0f) 
+                )
             )
-        )
     )
 }
 
@@ -2921,27 +2924,28 @@ fun MediaDetailScreen(
 
     if (showAllEpisodesDialog) {
         Dialog(onDismissRequest = { showAllEpisodesDialog = false }) {
+            // 🌟 重构：浅色高级质感的弹窗 UI
             Surface(
-                shape = RoundedCornerShape(16.dp),
-                color = Color(0xFF222222),
+                shape = RoundedCornerShape(24.dp),
+                color = Color.White,
                 modifier = Modifier
                     .fillMaxWidth()
                     .heightIn(max = 600.dp)
-                    .navigationBarsPadding() // 🌟 这里：防止被系统底部手势条遮挡
+                    .navigationBarsPadding()
             ) {
-                Column(modifier = Modifier.padding(16.dp)) {
+                Column(modifier = Modifier.padding(20.dp)) {
                     Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                        AppText("全部剧集 (${currentSeasonVideos.size})", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 16.sp)
+                        AppText("全部剧集 (${currentSeasonVideos.size})", color = Color(0xFF1A1A1A), fontWeight = FontWeight.Bold, fontSize = 18.sp)
                         IconButton(onClick = { showAllEpisodesDialog = false }) {
-                            Icon(Icons.Default.Close, contentDescription = "关闭", tint = Color.White)
+                            Icon(Icons.Default.Close, contentDescription = "关闭", tint = Color(0xFF999999))
                         }
                     }
                     
                     LazyVerticalGrid(
                         columns = GridCells.Fixed(4),
-                        contentPadding = PaddingValues(top = 12.dp, bottom = 12.dp),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                        contentPadding = PaddingValues(top = 8.dp, bottom = 12.dp),
+                        horizontalArrangement = Arrangement.spacedBy(10.dp),
+                        verticalArrangement = Arrangement.spacedBy(10.dp)
                     ) {
                         items(currentSeasonVideos) { file ->
                             val e = file.parsedInfo?.episode
@@ -2956,9 +2960,9 @@ fun MediaDetailScreen(
                             Box(
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .aspectRatio(2.5f)
-                                    .clip(RoundedCornerShape(20.dp))
-                                    .background(if (isCurrent) Color(0xFF555555) else Color.White)
+                                    .height(40.dp)
+                                    .clip(RoundedCornerShape(12.dp))
+                                    .background(if (isCurrent) Color(0xFF333333) else Color(0xFFF5F5F5))
                                     .clickable {
                                         showAllEpisodesDialog = false
                                         onPlay(series, file)
@@ -2966,9 +2970,10 @@ fun MediaDetailScreen(
                                 contentAlignment = Alignment.Center
                             ) {
                                 AppText(
-                                    text = if (label.startsWith("第")) label.replace("集", "") else label,
-                                    color = if (isCurrent) Color.White else Color.Black,
+                                    text = label, // 🌟 完整显示，修复了缺失的“集”字
+                                    color = if (isCurrent) Color.White else Color(0xFF333333),
                                     fontSize = 14.sp,
+                                    fontWeight = if (isCurrent) FontWeight.Bold else FontWeight.Medium,
                                     maxLines = 1,
                                     overflow = TextOverflow.Ellipsis
                                 )
