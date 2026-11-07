@@ -113,7 +113,6 @@ class VideoScraperViewModel(
     
     private var lastQuarkError: String? = null
     
-    // 核心修复：使用 ConcurrentHashMap 防止并发修改异常崩溃
     private val scrapedCache = ConcurrentHashMap<String, ScrapeCacheItem>()
     
     private var isHandlingPendingRequest = false
@@ -374,7 +373,9 @@ class VideoScraperViewModel(
                         fetchVideosRecursively(cookie, fid, initialPath, allVideos)
                     }
                 }
-                val groupedSeries = aggregateToSeries(allVideos)
+                // 🌟 核心修复：全局去重，防止同一集出现两次
+                val uniqueVideos = allVideos.distinctBy { it.fid }
+                val groupedSeries = aggregateToSeries(uniqueVideos)
 
                 val validIds = groupedSeries.map { it.id }.toSet()
                 val invalidIds = scrapedCache.keys.filter { it !in validIds && it.startsWith("temp_") }
@@ -386,22 +387,19 @@ class VideoScraperViewModel(
                 val maxEmptyPosterRetry = 10
 
                 val finalSeriesList = groupedSeries.map { series ->
-                    // 🌟 签名改为基于 fid，实现真实增量更新
                     val newSignature = series.videos.map { it.fid }.sorted().joinToString("|")
                     
                     var cached = scrapedCache[series.id]
                     
-                    // 🌟 稳定标题反查：如果 ID（剧名）变了，通过比对 fid 签名找回旧缓存
                     if (cached == null || cached.fileListSignature != newSignature) {
                         val migratedCache = scrapedCache.values.find { it.fileListSignature == newSignature }
                         if (migratedCache != null) {
-                            // 找到同名文件，继承旧数据
                             val oldId = scrapedCache.entries.find { it.value == migratedCache }?.key
                             if (oldId != null) {
                                 scrapedCache.remove(oldId)
                             }
                             cached = migratedCache
-                            scrapedCache[series.id] = migratedCache // 迁移到新 ID 下
+                            scrapedCache[series.id] = migratedCache 
                         }
                     }
 
@@ -456,13 +454,11 @@ class VideoScraperViewModel(
         try {
             val jsonArray = JSONArray(videoSettingsRepository.recentWatchedVideos)
             val newList = mutableListOf<JSONObject>()
-            // 提取现有的所有合法剧名（去空格）
             val validTitles = validIds.map { it.replace("\\s".toRegex(), "") }.toSet()
             
             for (i in 0 until jsonArray.length()) {
                 val obj = jsonArray.getJSONObject(i)
                 val sTitle = obj.optString("seriesTitle").replace("\\s".toRegex(), "")
-                // 使用精确匹配，防止“遮天”和“遮天2”互相误杀
                 if (validTitles.contains(sTitle)) {
                     newList.add(obj)
                 }
@@ -500,7 +496,6 @@ class VideoScraperViewModel(
             if (meaningfulPaths.isNotEmpty()) {
                 var lastPath = meaningfulPaths.last()
                 
-                // 如果最后一级目录是纯数字（如 178），向上回溯一层作为剧名
                 if (lastPath.matches(Regex("^\\d+$")) && meaningfulPaths.size >= 2) {
                     lastPath = meaningfulPaths[meaningfulPaths.size - 2]
                 }
@@ -603,7 +598,6 @@ class VideoScraperViewModel(
                                             }
                                         }
                                     }
-                                    // 如果拉取到的条数小于100，说明没有下一页了
                                     if (list.length() < 100) {
                                         hasMore = false
                                     } else {
