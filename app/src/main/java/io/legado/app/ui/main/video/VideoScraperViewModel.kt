@@ -380,7 +380,6 @@ class VideoScraperViewModel(
                 val groupedSeries = aggregateToSeries(uniqueVideos)
 
                 val validIds = groupedSeries.map { it.id }.toSet()
-                // 🌟 刷新清理：强制移除无用的 temp_ 数据和纯数字的脏数据
                 val invalidIds = scrapedCache.keys.filter { it !in validIds && (it.startsWith("temp_") || it.matches(Regex("^\\d+$"))) }
                 invalidIds.forEach { scrapedCache.remove(it) }
                 if (invalidIds.isNotEmpty()) saveScrapedCache()
@@ -438,8 +437,8 @@ class VideoScraperViewModel(
 
                 _uiState.update { it.copy(seriesList = finalSeriesList) }
                 
-                // 🌟 修复历史记录误删：将完整的 groupedSeries 传入，进行宽松匹配
-                cleanInvalidRecentWatched(groupedSeries)
+                // 🌟 核心修复：绝不在此处清理历史记录。等刮削完成后再清。避免用文件夹原名去误杀刮削后的名字！
+                // cleanInvalidRecentWatched(finalSeriesList)
 
                 if (apiKey.isNotBlank() && needScrapeList.isNotEmpty()) {
                     scrapeSeriesPosters(needScrapeList, apiKey, _uiState.value.tmdbBaseUrl)
@@ -455,14 +454,15 @@ class VideoScraperViewModel(
         }
     }
 
-    // 🌟 修复历史记录误删：认可 id, title, originalParsedTitle 等三种匹配方式
-    private fun cleanInvalidRecentWatched(groupedSeries: List<MediaSeries>) {
+    // 🌟 修复历史记录误删：此处拿到的 seriesList 是已经刮削完毕或合并了正确信息的列表
+    private fun cleanInvalidRecentWatched(seriesList: List<MediaSeries>) {
         try {
             val jsonArray = JSONArray(videoSettingsRepository.recentWatchedVideos)
             val newList = mutableListOf<JSONObject>()
             
+            // 收集当前所有合法剧集的 id 和 title
             val validNames = mutableSetOf<String>()
-            groupedSeries.forEach { series ->
+            seriesList.forEach { series ->
                 validNames.add(series.id.replace("\\s".toRegex(), ""))
                 validNames.add(series.title.replace("\\s".toRegex(), ""))
                 validNames.add(series.originalParsedTitle.replace("\\s".toRegex(), ""))
@@ -746,6 +746,10 @@ class VideoScraperViewModel(
 
                 hasLoadedLibrary = true
                 _uiState.update { it.copy(isLoading = false, isScraping = false, seriesList = currentList, currentSeries = newCurrent) }
+                
+                // 🌟 关键修复：刮削完成后，数据已经是最新的真实剧名，此时再清理历史记录，绝对不会误杀！
+                cleanInvalidRecentWatched(currentList)
+                
                 handlePendingPlayRequest()
             }
         }
