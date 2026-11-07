@@ -351,6 +351,7 @@ fun VideoScraperScreen(
     val context = LocalContext.current
     val videoSettingsRepository = koinInject<VideoSettingsRepository>()
     val view = LocalView.current
+    val activity = context.findActivity()
 
     var showSettingsDialog by remember { mutableStateOf(false) }
     var showWebLoginDialog by remember { mutableStateOf(false) }
@@ -365,11 +366,16 @@ fun VideoScraperScreen(
     var manualScrapeSeries by remember { mutableStateOf<MediaSeries?>(null) }
     var showClearHistoryConfirm by remember { mutableStateOf(false) }
 
-    // 🌟 核心修复：一旦退出播放器（playUrl == null），强制刷新主界面的 Insets，恢复底部导航栏显示
-    LaunchedEffect(uiState.playUrl) {
-        if (uiState.playUrl == null) {
-            view.post {
-                view.requestApplyInsets()
+    // 🌟 核心修复：一旦彻底退出播放器（playUrl == null 且 currentSeries == null），强制重置全局状态栏和 Insets
+    LaunchedEffect(uiState.playUrl, uiState.currentSeries) {
+        if (uiState.playUrl == null && uiState.currentSeries == null) {
+            activity?.window?.let { window ->
+                WindowCompat.setDecorFitsSystemWindows(window, true)
+                val controller = WindowCompat.getInsetsController(window, window.decorView)
+                controller.show(WindowInsetsCompat.Type.systemBars())
+                window.decorView.post {
+                    window.decorView.requestApplyInsets()
+                }
             }
         }
     }
@@ -1363,6 +1369,9 @@ fun InternalVideoPlayer(
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val latestSeries = uiState.seriesList.find { it.id == series.id || it.title == series.title } ?: series
 
+    // 🌟 核心修复：判断当前是否处于小窗/分屏模式
+    val isInMultiWindowMode = remember { activity?.isInMultiWindowMode == true }
+
     // 🌟 核心修复：防熄屏
     DisposableEffect(Unit) {
         view.keepScreenOn = true
@@ -1396,7 +1405,10 @@ fun InternalVideoPlayer(
     var currentSystemTime by remember { mutableStateOf("") }
 
     LaunchedEffect(Unit) {
-        activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE
+        // 只有在非小窗、非画中画时才强制横屏
+        if (!isInMultiWindowMode && activity?.isInPictureInPictureMode != true) {
+            activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE
+        }
         while (true) {
             currentSystemTime = SimpleDateFormat("HH:mm", Locale.getDefault()).format(Date())
             delay(1000)
@@ -1408,6 +1420,7 @@ fun InternalVideoPlayer(
             override fun onOrientationChanged(orientation: Int) {
                 if (orientation == ORIENTATION_UNKNOWN) return
                 if (currentIsLocked || isInPip.value) return
+                if (activity?.isInMultiWindowMode == true || activity?.isInPictureInPictureMode == true) return // 小窗禁止触发旋转
                 if (System.currentTimeMillis() - lastManualSwitchTime[0] < 2000) return
 
                 when (orientation) {
@@ -1435,7 +1448,7 @@ fun InternalVideoPlayer(
     }
 
     LaunchedEffect(isLandscape, isInPip.value) {
-        if (view.isInEditMode || isInPip.value) return@LaunchedEffect
+        if (view.isInEditMode || isInPip.value || isInMultiWindowMode) return@LaunchedEffect
         val window = (view.parent as? DialogWindowProvider)?.window ?: activity?.window
         if (window != null) {
             val controller = WindowCompat.getInsetsController(window, window.decorView)
@@ -1453,7 +1466,9 @@ fun InternalVideoPlayer(
     val originalBrightness = remember { activity?.window?.attributes?.screenBrightness ?: WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE }
     DisposableEffect(Unit) {
         onDispose {
-            activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
+            if (!isInMultiWindowMode) {
+                activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
+            }
             val window = (view.parent as? DialogWindowProvider)?.window ?: activity?.window
             window?.let {
                 WindowCompat.setDecorFitsSystemWindows(it, true)
