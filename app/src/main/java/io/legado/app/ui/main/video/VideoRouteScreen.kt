@@ -146,6 +146,7 @@ import java.util.Locale
 import java.util.concurrent.TimeUnit
 import kotlin.math.abs
 import kotlin.math.roundToInt
+import java.text.Collator
 
 data class RecentWatchedItem(
     val fid: String,
@@ -162,6 +163,9 @@ const val EXTRA_CONTROL = "control"
 const val CONTROL_PREV = 1
 const val CONTROL_PLAY_PAUSE = 2
 const val CONTROL_NEXT = 3
+
+// 🌟 核心引入：UI 层的拼音排序器
+val pinyinCollator = Collator.getInstance(Locale.CHINA)
 
 fun createPipIcon(type: String, context: Context): Bitmap {
     val size = 96
@@ -490,8 +494,8 @@ fun VideoScraperScreen(
                     columns = GridCells.Fixed(3), contentPadding = PaddingValues(16.dp),
                     horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(16.dp)
                 ) {
-                    // 🌟 增量修改：分类查看全部时，按 A-Z 排序展示
-                    items(categorySeries.sortedBy { it.title }) { series ->
+                    // 🌟 增量修改：分类查看全部时，按拼音 A-Z 排序展示
+                    items(categorySeries.sortedWith(compareBy(pinyinCollator) { it.title })) { series ->
                         SeriesPosterCard(series = series, onClick = { viewModel.selectSeries(series) }, onLongClick = { manualScrapeSeries = series; showManualScrapeDialog = true })
                     }
                 }
@@ -684,8 +688,8 @@ fun VideoScraperScreen(
                                         }
                                         item {
                                             LazyRow(contentPadding = PaddingValues(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                                                // 🌟 增量修改：首页分类列表里的影视按 A-Z 排序
-                                                items(seriesList.sortedBy { it.title }) { series ->
+                                                // 🌟 增量修改：首页分类列表里的影视按拼音 A-Z 排序
+                                                items(seriesList.sortedWith(compareBy(pinyinCollator) { it.title })) { series ->
                                                     SeriesPosterCard(
                                                         series = series,
                                                         isScraping = uiState.isScraping,
