@@ -24,6 +24,7 @@ import org.json.JSONArray
 import org.json.JSONObject
 import java.io.IOException
 import java.net.URLEncoder
+import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.TimeUnit
 
 data class QuarkFile(
@@ -99,7 +100,6 @@ class VideoScraperViewModel(
         .readTimeout(15, TimeUnit.SECONDS)
         .build()
 
-    // 全局并发闸门：限制同时进行的 TMDB 请求数
     private val tmdbSemaphore = Semaphore(5)
 
     private val _uiState = MutableStateFlow(VideoUiState())
@@ -112,7 +112,9 @@ class VideoScraperViewModel(
     private val libraryNames = mutableMapOf<String, String>()
     
     private var lastQuarkError: String? = null
-    private val scrapedCache = mutableMapOf<String, ScrapeCacheItem>()
+    
+    // 核心修复：使用 ConcurrentHashMap 防止并发修改异常崩溃
+    private val scrapedCache = ConcurrentHashMap<String, ScrapeCacheItem>()
     
     private var isHandlingPendingRequest = false
 
@@ -374,9 +376,8 @@ class VideoScraperViewModel(
                 }
                 val groupedSeries = aggregateToSeries(allVideos)
 
-                // 清理已不存在于网盘的缓存
                 val validIds = groupedSeries.map { it.id }.toSet()
-                val invalidIds = scrapedCache.keys.filter { it !in validIds }
+                val invalidIds = scrapedCache.keys.filter { it !in validIds && it.startsWith("temp_") }
                 invalidIds.forEach { scrapedCache.remove(it) }
                 if (invalidIds.isNotEmpty()) saveScrapedCache()
 
@@ -385,12 +386,25 @@ class VideoScraperViewModel(
                 val maxEmptyPosterRetry = 10
 
                 val finalSeriesList = groupedSeries.map { series ->
-                    val sortedVideos = series.videos.sortedBy { it.name }
-                    val newSignature = sortedVideos.joinToString("|") { 
-                        "${it.name}_${it.parsedInfo?.season ?: 1}_${it.parsedInfo?.episode ?: 0}" 
-                    }
+                    // 🌟 签名改为基于 fid，实现真实增量更新
+                    val newSignature = series.videos.map { it.fid }.sorted().joinToString("|")
                     
-                    val cached = scrapedCache[series.id]
+                    var cached = scrapedCache[series.id]
+                    
+                    // 🌟 稳定标题反查：如果 ID（剧名）变了，通过比对 fid 签名找回旧缓存
+                    if (cached == null || cached.fileListSignature != newSignature) {
+                        val migratedCache = scrapedCache.values.find { it.fileListSignature == newSignature }
+                        if (migratedCache != null) {
+                            // 找到同名文件，继承旧数据
+                            val oldId = scrapedCache.entries.find { it.value == migratedCache }?.key
+                            if (oldId != null) {
+                                scrapedCache.remove(oldId)
+                            }
+                            cached = migratedCache
+                            scrapedCache[series.id] = migratedCache // 迁移到新 ID 下
+                        }
+                    }
+
                     val isSignatureChanged = cached == null || newSignature != cached.fileListSignature
                     val isEmptyPoster = cached?.posterUrl.isNullOrBlank()
                     val shouldRetryEmptyPoster = isEmptyPoster && emptyPosterRetryCount < maxEmptyPosterRetry
@@ -442,10 +456,14 @@ class VideoScraperViewModel(
         try {
             val jsonArray = JSONArray(videoSettingsRepository.recentWatchedVideos)
             val newList = mutableListOf<JSONObject>()
+            // 提取现有的所有合法剧名（去空格）
+            val validTitles = validIds.map { it.replace("\\s".toRegex(), "") }.toSet()
+            
             for (i in 0 until jsonArray.length()) {
                 val obj = jsonArray.getJSONObject(i)
-                val sTitle = obj.optString("seriesTitle")
-                if (validIds.any { it == sTitle || it.contains(sTitle) }) {
+                val sTitle = obj.optString("seriesTitle").replace("\\s".toRegex(), "")
+                // 使用精确匹配，防止“遮天”和“遮天2”互相误杀
+                if (validTitles.contains(sTitle)) {
                     newList.add(obj)
                 }
             }
@@ -482,7 +500,7 @@ class VideoScraperViewModel(
             if (meaningfulPaths.isNotEmpty()) {
                 var lastPath = meaningfulPaths.last()
                 
-                // 核心修复：如果最后一级目录是纯数字（如 178），向上回溯一层作为剧名
+                // 如果最后一级目录是纯数字（如 178），向上回溯一层作为剧名
                 if (lastPath.matches(Regex("^\\d+$")) && meaningfulPaths.size >= 2) {
                     lastPath = meaningfulPaths[meaningfulPaths.size - 2]
                 }
@@ -680,10 +698,7 @@ class VideoScraperViewModel(
                             seasonEpisodeTitles = sEpTitles, seasonEpisodeStills = sEpStills
                         )
 
-                        val sortedVideos = newSeries.videos.sortedBy { it.name }
-                        val newSignature = sortedVideos.joinToString("|") { 
-                            "${it.name}_${it.parsedInfo?.season ?: 1}_${it.parsedInfo?.episode ?: 0}" 
-                        }
+                        val newSignature = newSeries.videos.map { it.fid }.sorted().joinToString("|")
 
                         scrapedCache[newSeries.id] = ScrapeCacheItem(
                             title = newSeries.title, category = newSeries.category, posterUrl = newSeries.posterUrl,
@@ -695,10 +710,7 @@ class VideoScraperViewModel(
                         )
                         newSeries
                     } else {
-                        val sortedVideos = series.videos.sortedBy { it.name }
-                        val newSignature = sortedVideos.joinToString("|") { 
-                            "${it.name}_${it.parsedInfo?.season ?: 1}_${it.parsedInfo?.episode ?: 0}" 
-                        }
+                        val newSignature = series.videos.map { it.fid }.sorted().joinToString("|")
                         val oldCached = scrapedCache[series.id]
                         if (oldCached == null) {
                             scrapedCache[series.id] = ScrapeCacheItem(
@@ -1015,10 +1027,7 @@ class VideoScraperViewModel(
     }
 
     private fun saveManualScrapeBasic(series: MediaSeries) {
-        val sortedVideos = series.videos.sortedBy { it.name }
-        val newSignature = sortedVideos.joinToString("|") {
-            "${it.name}_${it.parsedInfo?.season ?: 1}_${it.parsedInfo?.episode ?: 0}"
-        }
+        val newSignature = series.videos.map { it.fid }.sorted().joinToString("|")
         scrapedCache[series.id] = ScrapeCacheItem(
             title = series.title,
             category = series.category,
@@ -1039,10 +1048,7 @@ class VideoScraperViewModel(
     }
 
     private fun saveManualScrapeComplete(series: MediaSeries) {
-        val sortedVideos = series.videos.sortedBy { it.name }
-        val newSignature = sortedVideos.joinToString("|") {
-            "${it.name}_${it.parsedInfo?.season ?: 1}_${it.parsedInfo?.episode ?: 0}"
-        }
+        val newSignature = series.videos.map { it.fid }.sorted().joinToString("|")
         scrapedCache[series.id] = ScrapeCacheItem(
             title = series.title,
             category = series.category,
