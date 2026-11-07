@@ -68,8 +68,11 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp // 【已修复】补充了 sp 的导入
+import androidx.compose.ui.unit.sp
 import androidx.core.net.toUri
+import androidx.core.view.WindowCompat
+import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.WindowInsetsControllerCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.LifecycleOwner
@@ -292,6 +295,20 @@ fun MainScreen(
         else
             WideNavigationRailValue.Collapsed
     )
+
+    // 🌟 核心修复：监听播放器状态，退出时强制恢复底栏安全区
+    LaunchedEffect(isVideoPlaying) {
+        if (!isVideoPlaying) {
+            delay(100) // 稍微等一下界面切换
+            val window = (context as? ComponentActivity)?.window
+            if (window != null) {
+                WindowCompat.setDecorFitsSystemWindows(window, true)
+                val controller = WindowCompat.getInsetsController(window, window.decorView)
+                controller.show(WindowInsetsCompat.Type.systemBars())
+                window.decorView.post { window.decorView.requestApplyInsets() }
+            }
+        }
+    }
 
     Box(modifier = Modifier.fillMaxSize()) {
         Row(modifier = Modifier.fillMaxSize()) {
@@ -799,6 +816,14 @@ fun MainScreen(
                 viewModel = videoViewModel,
                 downloadThreads = videoUiState.downloadThreads,
                 onBack = {
+                    // 🌟 核心修复：直接重置 Activity 的 Window 并触发 Insets 重算
+                    (context as? ComponentActivity)?.window?.let { window ->
+                        WindowCompat.setDecorFitsSystemWindows(window, true)
+                        val controller = WindowCompat.getInsetsController(window, window.decorView)
+                        controller.show(WindowInsetsCompat.Type.systemBars())
+                        window.decorView.systemUiVisibility = android.view.View.SYSTEM_UI_FLAG_VISIBLE
+                        window.decorView.requestApplyInsets()
+                    }
                     (context as? ComponentActivity)?.requestedOrientation = android.content.pm.ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
                     videoViewModel.stopPlaying()
                 }
