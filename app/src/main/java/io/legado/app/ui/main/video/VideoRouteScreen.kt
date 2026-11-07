@@ -164,7 +164,6 @@ const val CONTROL_PREV = 1
 const val CONTROL_PLAY_PAUSE = 2
 const val CONTROL_NEXT = 3
 
-// 🌟 核心引入：UI 层的拼音排序器
 val pinyinCollator = Collator.getInstance(Locale.CHINA)
 
 fun createPipIcon(type: String, context: Context): Bitmap {
@@ -206,7 +205,6 @@ fun createPipIcon(type: String, context: Context): Bitmap {
     return bitmap
 }
 
-// 🌟 修改：新的骨架屏加载动画（水平细光带扫过）
 @Composable
 fun ShimmerBox(modifier: Modifier) {
     val transition = rememberInfiniteTransition(label = "shimmer")
@@ -436,7 +434,6 @@ fun VideoScraperScreen(
                 val showLoading = uiState.isScraping && isDataIncomplete && !latestSeries.isManuallyEdited
 
                 if (showLoading) {
-                    // 骨架屏动画
                     Column(
                         modifier = Modifier
                             .fillMaxSize()
@@ -494,7 +491,6 @@ fun VideoScraperScreen(
                     columns = GridCells.Fixed(3), contentPadding = PaddingValues(16.dp),
                     horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(16.dp)
                 ) {
-                    // 🌟 增量修改：分类查看全部时，按拼音 A-Z 排序展示
                     items(categorySeries.sortedWith(compareBy(pinyinCollator) { it.title })) { series ->
                         SeriesPosterCard(series = series, onClick = { viewModel.selectSeries(series) }, onLongClick = { manualScrapeSeries = series; showManualScrapeDialog = true })
                     }
@@ -688,7 +684,6 @@ fun VideoScraperScreen(
                                         }
                                         item {
                                             LazyRow(contentPadding = PaddingValues(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                                                // 🌟 增量修改：首页分类列表里的影视按拼音 A-Z 排序
                                                 items(seriesList.sortedWith(compareBy(pinyinCollator) { it.title })) { series ->
                                                     SeriesPosterCard(
                                                         series = series,
@@ -1358,6 +1353,14 @@ fun InternalVideoPlayer(
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val latestSeries = uiState.seriesList.find { it.id == series.id || it.title == series.title } ?: series
 
+    // 🌟 核心修复：防熄屏
+    DisposableEffect(Unit) {
+        view.keepScreenOn = true
+        onDispose {
+            view.keepScreenOn = false
+        }
+    }
+
     val dynamicTitle = remember(latestSeries, currentFile) {
         val parsedInfo = currentFile.parsedInfo ?: io.legado.app.utils.VideoFileNameParser.parse(currentFile.name)
         val epNum = parsedInfo.episode ?: Regex("第\\s*([0-9]+)\\s*集").find(currentFile.name)?.groupValues?.get(1)?.toIntOrNull()
@@ -1685,7 +1688,18 @@ fun InternalVideoPlayer(
         }
     }
 
+    // 🌟 核心修复：记录上一次的文件，以便在换源时保存进度
+    var lastPlayingFile by remember { mutableStateOf(currentFile) }
+
     LaunchedEffect(url) {
+        // 换源前，如果发现文件变了，保存旧文件进度
+        if (lastPlayingFile.fid != currentFile.fid) {
+            if (exoPlayer.currentPosition > 0) {
+                viewModel.saveVideoProgress(lastPlayingFile.fid, exoPlayer.currentPosition)
+            }
+        }
+        lastPlayingFile = currentFile
+
         hasRestoredProgress = false
         hasTriggeredAutoPlay = false
         hasAutoSkippedIntro = false
@@ -2930,7 +2944,6 @@ fun MediaDetailScreen(
 
     if (showAllEpisodesDialog) {
         Dialog(onDismissRequest = { showAllEpisodesDialog = false }) {
-            // 🌟 重构：浅色高级质感的弹窗 UI
             Surface(
                 shape = RoundedCornerShape(24.dp),
                 color = Color.White,
@@ -2976,7 +2989,7 @@ fun MediaDetailScreen(
                                 contentAlignment = Alignment.Center
                             ) {
                                 AppText(
-                                    text = label, // 🌟 完整显示，修复了缺失的“集”字
+                                    text = label,
                                     color = if (isCurrent) Color.White else Color(0xFF333333),
                                     fontSize = 14.sp,
                                     fontWeight = if (isCurrent) FontWeight.Bold else FontWeight.Medium,
