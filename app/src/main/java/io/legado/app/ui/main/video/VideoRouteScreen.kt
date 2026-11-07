@@ -401,7 +401,6 @@ fun VideoScraperScreen(
                 val showLoading = uiState.isScraping && isDataIncomplete && !latestSeries.isManuallyEdited
 
                 if (showLoading) {
-                    // 骨架屏加载 UI
                     Column(
                         modifier = Modifier
                             .fillMaxSize()
@@ -580,7 +579,6 @@ fun VideoScraperScreen(
                         val savedOrder = uiState.categoryOrder.split(",").filter { it.isNotBlank() }
                         val allCategories = grouped.keys.toMutableList()
                         
-                        // 强制置顶“最近观看”，并合并自定义排序和未排序的分类
                         val finalOrderList = mutableListOf<String>()
                         finalOrderList.add("最近观看")
                         savedOrder.forEach { if (it != "最近观看" && !finalOrderList.contains(it)) finalOrderList.add(it) }
@@ -1101,19 +1099,15 @@ fun CategoryOrderDialog(
     
     val orderList = remember(uiState.categoryOrder, existingCategories) {
         val list = mutableStateListOf<String>()
-        // 移除最近观看
         val currentOrder = uiState.categoryOrder.split(",").filter { it.isNotBlank() && it != "最近观看" }
         list.addAll(currentOrder)
-        // 合并预设分类
         presetCategories.forEach { if (!list.contains(it)) list.add(it) }
-        // 合并已有分类
         existingCategories.forEach { if (!list.contains(it)) list.add(it) }
         list
     }
 
     val lazyListState = rememberLazyListState()
     val reorderableState = rememberReorderableLazyListState(lazyListState) { from, to ->
-        // 允许自由拖动，不再限制 index 0
         if (to.index >= 0 && from.index != to.index) {
             val item = orderList.removeAt(from.index)
             orderList.add(to.index, item)
@@ -1121,7 +1115,6 @@ fun CategoryOrderDialog(
     }
 
     Dialog(onDismissRequest = {
-        // 保存时加上“最近观看”在最前面，确保首页展示逻辑正常
         val finalOrder = "最近观看," + orderList.joinToString(",")
         viewModel.saveCategoryOrder(finalOrder)
         onDismiss()
@@ -1324,11 +1317,8 @@ fun InternalVideoPlayer(
     val videoSettingsRepository = koinInject<VideoSettingsRepository>()
 
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
-    val latestSeries by rememberUpdatedState(
-        uiState.seriesList.find { it.id == series.id || it.title == series.title } ?: series
-    )
+    val latestSeries = uiState.seriesList.find { it.id == series.id || it.title == series.title } ?: series
 
-    // 动态计算标题，确保后台刮削完成后标题自动刷新
     val dynamicTitle = remember(latestSeries, currentFile) {
         val parsedInfo = currentFile.parsedInfo ?: io.legado.app.utils.VideoFileNameParser.parse(currentFile.name)
         val epNum = parsedInfo.episode ?: Regex("第\\s*([0-9]+)\\s*集").find(currentFile.name)?.groupValues?.get(1)?.toIntOrNull()
@@ -1556,15 +1546,17 @@ fun InternalVideoPlayer(
         }
     }
 
+    val latestSeriesForReceiver by rememberUpdatedState(latestSeries)
+
     val pipActionReceiver = remember {
         object : BroadcastReceiver() {
             override fun onReceive(ctx: Context?, intent: Intent?) {
-                val videos = latestSeries.videos
+                val videos = latestSeriesForReceiver.videos 
                 when (intent?.getIntExtra(EXTRA_CONTROL, -1)) {
                     CONTROL_PREV -> {
                         val idx = videos.indexOfFirst { it.fid == currentFile.fid }
                         if (idx > 0) {
-                            viewModel.playVideo(ctx ?: return, latestSeries, videos[idx - 1])
+                            viewModel.playVideo(ctx ?: return, latestSeriesForReceiver, videos[idx - 1])
                         } else {
                             Toast.makeText(ctx, "已经是第一集了", Toast.LENGTH_SHORT).show()
                         }
@@ -1572,7 +1564,7 @@ fun InternalVideoPlayer(
                     CONTROL_NEXT -> {
                         val idx = videos.indexOfFirst { it.fid == currentFile.fid }
                         if (idx != -1 && idx < videos.size - 1) {
-                            viewModel.playVideo(ctx ?: return, latestSeries, videos[idx + 1])
+                            viewModel.playVideo(ctx ?: return, latestSeriesForReceiver, videos[idx + 1])
                         } else {
                             Toast.makeText(ctx, "已经是最后一集了", Toast.LENGTH_SHORT).show()
                         }
@@ -1591,7 +1583,7 @@ fun InternalVideoPlayer(
             context,
             pipActionReceiver,
             filter,
-            ContextCompat.RECEIVER_NOT_EXPORTED
+            ContextCompat.RECEIVER_EXPORTED 
         )
         onDispose {
             context.unregisterReceiver(pipActionReceiver)
@@ -2833,20 +2825,18 @@ fun MediaDetailScreen(
             Column(modifier = Modifier.fillMaxWidth().background(Color(0xFFF5F5F5)).padding(16.dp).padding(top = 24.dp)) {
                 AppText(text = "文件信息", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
                 
-                // 使用 targetPlayFile 作为代表，这样你切到哪一集，这里显示的就是那一集的信息
                 val infoFile = targetPlayFile ?: series.videos.firstOrNull()
                 
                 infoFile?.let { firstFile ->
                     AppText(text = firstFile.name, style = MaterialTheme.typography.bodySmall, color = Color.Gray, modifier = Modifier.padding(top = 8.dp))
                     
-                    // 🌟 寻找最深路径并补全前导斜杠
                     val deepestFile = series.videos.maxByOrNull { it.folderPath.size } ?: firstFile
-                    val pathStr = deepestFile.folderPath.joinToString("/")
-                    val cleanPath = pathStr.trimStart('/')
-                    val displayPath = if (cleanPath.isBlank()) "/" else "/$cleanPath"
-                    AppText(text = "夸克网盘: $displayPath", style = MaterialTheme.typography.bodySmall, color = Color.Gray, modifier = Modifier.padding(top = 4.dp))
+                    var pathStr = deepestFile.folderPath.joinToString("/")
                     
-                    // 🌟 动态计算大小单位 (G/MB)
+                    if (!pathStr.startsWith("/")) pathStr = "/$pathStr"
+                    
+                    AppText(text = "夸克网盘: $pathStr", style = MaterialTheme.typography.bodySmall, color = Color.Gray, modifier = Modifier.padding(top = 4.dp))
+                    
                     val sizeInBytes = firstFile.size
                     val sizeInMB = sizeInBytes / (1024f * 1024f)
                     val sizeText = if (sizeInMB >= 1024f) {
