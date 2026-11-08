@@ -215,7 +215,6 @@ fun ShimmerBox(modifier: Modifier) {
         initialValue = -400f,
         targetValue = 1200f,
         animationSpec = infiniteRepeatable(
-            // 🌟 修复点：使用缓动曲线并延长时长，使光晕扫过更平滑
             animation = tween(durationMillis = 1600, easing = FastOutSlowInEasing),
             repeatMode = RepeatMode.Restart
         ),
@@ -226,9 +225,7 @@ fun ShimmerBox(modifier: Modifier) {
             .background(Color(0xFFEEEEEE))
             .background(
                 brush = Brush.linearGradient(
-                    // 🌟 修复点：高光透明度降为 0.4f，避免刺眼
                     colors = listOf(Color.Transparent, Color.White.copy(alpha = 0.4f), Color.Transparent),
-                    // 🌟 修复点：Y 轴增加偏移，形成自然斜向微光
                     start = Offset(translateAnim - 200f, 0f),
                     end = Offset(translateAnim, 200f)
                 )
@@ -376,7 +373,6 @@ fun VideoScraperScreen(
             }
 
             if (latestSeries != null) {
-                // 🌟 修复点：只要刮削中且视频列表为空，必定显示骨架屏
                 val showLoading = uiState.isScraping && latestSeries.videos.isEmpty() && !latestSeries.isManuallyEdited
 
                 if (showLoading) {
@@ -947,7 +943,6 @@ fun InternalVideoPlayer(url: String, title: String, cookie: String, series: Medi
         
         exoPlayer.setMediaSource(mediaSource)
         
-        // 🌟 修复点：直接在 prepare() 前 seekTo 起始位置，根绝进度串台
         if (startPositionMs > 0L) {
             exoPlayer.seekTo(startPositionMs)
         }
@@ -1113,9 +1108,8 @@ fun InternalVideoPlayer(url: String, title: String, cookie: String, series: Medi
                 Column(modifier = Modifier.align(Alignment.CenterStart).padding(start = 16.dp), verticalArrangement = Arrangement.spacedBy(30.dp)) {
                     Surface(color = Color.White.copy(alpha = 0.1f), shape = CircleShape, border = BorderStroke(1.dp, Color.White.copy(alpha = 0.2f))) {
                         IconButton(onClick = {
-                            // 🌟 修复点：使用 SENSOR 模式解决物理横屏下的瞬间闪回
-                            if (isLandscape) activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_SENSOR_PORTRAIT
-                            else activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
+                            // 🌟 方案一修复点：直接发送 UNSPECIFIED，让系统读取当前物理方向（横屏），并交还重力感应
+                            activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
                         }) { Icon(Icons.Default.ScreenRotation, null, tint = Color.White) }
                     }
                 }
@@ -1126,7 +1120,6 @@ fun InternalVideoPlayer(url: String, title: String, cookie: String, series: Medi
                             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                                 if (!context.packageManager.hasSystemFeature(PackageManager.FEATURE_PICTURE_IN_PICTURE)) { Toast.makeText(context, "当前设备不支持画中画功能", Toast.LENGTH_SHORT).show(); return@IconButton }
                                 
-                                // 🌟 修复点：强转 ComponentActivity 并校验 RESUMED 状态
                                 val safeActivity = activity as? ComponentActivity
                                 if (safeActivity == null || safeActivity.lifecycle.currentState != Lifecycle.State.RESUMED) {
                                     Toast.makeText(context, "请等待视频播放界面完全加载后再试", Toast.LENGTH_SHORT).show(); return@IconButton
@@ -1352,8 +1345,6 @@ fun MediaDetailScreen(
             }
         }
     }
-
-    // 🌟 修复点：彻底删除原代码的 CircularProgressIndicator 拦截逻辑
 
     val relatedSeries = remember(series, allSeries) {
         if (series.groupName.isNullOrBlank()) emptyList() else allSeries.filter { it.groupName == series.groupName && it.id != series.id }
