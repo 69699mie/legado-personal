@@ -38,6 +38,7 @@ import android.widget.FrameLayout
 import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
+import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.LinearEasing
@@ -51,6 +52,7 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideOutHorizontally
+import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.ExperimentalFoundationApi
@@ -168,6 +170,15 @@ const val CONTROL_PLAY_PAUSE = 2
 const val CONTROL_NEXT = 3
 
 val pinyinCollator = Collator.getInstance(Locale.CHINA)
+
+fun extractEpisodeNumber(fileName: String, parsedEpisode: Int?): Int {
+    if (parsedEpisode != null && parsedEpisode > 0) return parsedEpisode
+    val cleanName = fileName.replace(Regex("\\d{3,4}p", RegexOption.IGNORE_CASE), "")
+        .replace(Regex("\\d{4}"), "")
+    val match = Regex("(?:第|EP|E)\\s*(\\d+)", RegexOption.IGNORE_CASE).find(cleanName)
+        ?: Regex("(?<!\\d)(\\d{1,4})(?!\\d)").find(cleanName)
+    return match?.groupValues?.get(1)?.toIntOrNull() ?: 0
+}
 
 fun createPipIcon(type: String, context: Context): Bitmap {
     val size = 96
@@ -374,43 +385,48 @@ fun VideoScraperScreen(
 
             if (latestSeries != null) {
                 val showLoading = uiState.isScraping && latestSeries.videos.isEmpty() && !latestSeries.isManuallyEdited
-
-                if (showLoading) {
-                    Column(modifier = Modifier.fillMaxSize().background(Color.White).statusBarsPadding().verticalScroll(rememberScrollState())) {
-                        Box(modifier = Modifier.fillMaxWidth().height(350.dp).defaultMinSize(minHeight = 350.dp)) {
-                            ShimmerBox(modifier = Modifier.fillMaxSize())
-                            IconButton(onClick = { viewModel.selectSeries(null) }, modifier = Modifier.align(Alignment.TopStart).padding(16.dp)) {
-                                Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "返回", tint = Color.Black)
+                
+                AnimatedContent(
+                    targetState = showLoading,
+                    transitionSpec = { fadeIn(animationSpec = tween(400)) togetherWith fadeOut(animationSpec = tween(400)) },
+                    label = "detail_transition"
+                ) { isLoading ->
+                    if (isLoading) {
+                        Column(modifier = Modifier.fillMaxSize().background(Color.White).statusBarsPadding().verticalScroll(rememberScrollState())) {
+                            Box(modifier = Modifier.fillMaxWidth().height(350.dp).defaultMinSize(minHeight = 350.dp)) {
+                                ShimmerBox(modifier = Modifier.fillMaxSize())
+                                IconButton(onClick = { viewModel.selectSeries(null) }, modifier = Modifier.align(Alignment.TopStart).padding(16.dp)) {
+                                    Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "返回", tint = Color.Black)
+                                }
+                            }
+                            Column(modifier = Modifier.padding(16.dp)) {
+                                ShimmerBox(modifier = Modifier.fillMaxWidth(0.4f).height(28.dp).clip(RoundedCornerShape(4.dp)))
+                                Spacer(Modifier.height(12.dp))
+                                ShimmerBox(modifier = Modifier.fillMaxWidth(0.6f).height(16.dp).clip(RoundedCornerShape(4.dp)))
+                                Spacer(Modifier.height(24.dp))
+                                ShimmerBox(modifier = Modifier.fillMaxWidth().height(50.dp).clip(RoundedCornerShape(25.dp)))
+                                Spacer(Modifier.height(24.dp))
+                                ShimmerBox(modifier = Modifier.fillMaxWidth().height(100.dp).clip(RoundedCornerShape(8.dp)))
+                                Spacer(Modifier.height(24.dp))
+                                ShimmerBox(modifier = Modifier.fillMaxWidth(0.3f).height(20.dp).clip(RoundedCornerShape(4.dp)))
+                                Spacer(Modifier.height(16.dp))
+                                LazyRow(horizontalArrangement = Arrangement.spacedBy(12.dp)) { items(4) { ShimmerBox(modifier = Modifier.width(160.dp).height(90.dp).clip(RoundedCornerShape(8.dp))) } }
                             }
                         }
-                        Column(modifier = Modifier.padding(16.dp)) {
-                            ShimmerBox(modifier = Modifier.fillMaxWidth(0.4f).height(28.dp).clip(RoundedCornerShape(4.dp)))
-                            Spacer(Modifier.height(12.dp))
-                            ShimmerBox(modifier = Modifier.fillMaxWidth(0.6f).height(16.dp).clip(RoundedCornerShape(4.dp)))
-                            Spacer(Modifier.height(24.dp))
-                            ShimmerBox(modifier = Modifier.fillMaxWidth().height(50.dp).clip(RoundedCornerShape(25.dp)))
-                            Spacer(Modifier.height(24.dp))
-                            ShimmerBox(modifier = Modifier.fillMaxWidth().height(100.dp).clip(RoundedCornerShape(8.dp)))
-                            Spacer(Modifier.height(24.dp))
-                            ShimmerBox(modifier = Modifier.fillMaxWidth(0.3f).height(20.dp).clip(RoundedCornerShape(4.dp)))
-                            Spacer(Modifier.height(16.dp))
-                            LazyRow(horizontalArrangement = Arrangement.spacedBy(12.dp)) { items(4) { ShimmerBox(modifier = Modifier.width(160.dp).height(90.dp).clip(RoundedCornerShape(8.dp))) } }
-                        }
+                    } else {
+                        MediaDetailScreen(
+                            series = latestSeries, allSeries = uiState.seriesList, isScraping = uiState.isScraping, 
+                            onBack = { viewModel.selectSeries(null) }, 
+                            onPlay = { series, file -> 
+                                if (activity != null && !activity.isInMultiWindowMode) {
+                                    activity.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
+                                }
+                                viewModel.playVideo(context, series, file) 
+                            }, 
+                            onLongClickPoster = { manualScrapeSeries = it; showManualScrapeDialog = true }, 
+                            onSelectSeries = { viewModel.selectSeries(it) }
+                        )
                     }
-                } else {
-                    MediaDetailScreen(
-                        series = latestSeries, allSeries = uiState.seriesList, isScraping = uiState.isScraping, 
-                        onBack = { viewModel.selectSeries(null) }, 
-                        onPlay = { series, file -> 
-                            // 🌟 修复点：提前发横屏请求防闪烁
-                            if (activity != null && !activity.isInMultiWindowMode) {
-                                activity.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
-                            }
-                            viewModel.playVideo(context, series, file) 
-                        }, 
-                        onLongClickPoster = { manualScrapeSeries = it; showManualScrapeDialog = true }, 
-                        onSelectSeries = { viewModel.selectSeries(it) }
-                    )
                 }
             }
         } else if (viewAllCategory != null) {
@@ -792,7 +808,18 @@ fun InternalVideoPlayer(url: String, title: String, cookie: String, series: Medi
     val isLandscape = configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
     val videoSettingsRepository = koinInject<VideoSettingsRepository>()
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
+    
     val latestSeries = uiState.seriesList.find { it.id == series.id || it.title == series.title } ?: series
+    
+    // 🌟 核心修复：把当前的剧集列表也按集数排好序，确保上一集/下一集绝对正确
+    val sortedVideos = remember(latestSeries.videos) {
+        latestSeries.videos.sortedWith(
+            compareBy<QuarkFile> { it.parsedInfo?.season ?: 1 }
+                .thenBy { extractEpisodeNumber(it.name, it.parsedInfo?.episode) }
+                .thenBy { it.name }
+        )
+    }
+
     val isInMultiWindowMode = remember { activity?.isInMultiWindowMode == true }
     DisposableEffect(Unit) { view.keepScreenOn = true; onDispose { view.keepScreenOn = false } }
 
@@ -815,11 +842,7 @@ fun InternalVideoPlayer(url: String, title: String, cookie: String, series: Medi
     var hasRequestedLandscape = remember { false }
 
     LaunchedEffect(Unit) {
-        // 🌟 修复点：进入播放器时，使用 SENSOR_LANDSCAPE 双方向感应
-        if (!hasRequestedLandscape && !isInMultiWindowMode && activity?.isInPictureInPictureMode != true) { 
-            activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
-            hasRequestedLandscape = true 
-        }
+        if (!hasRequestedLandscape && !isInMultiWindowMode && activity?.isInPictureInPictureMode != true) { activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE; hasRequestedLandscape = true }
         while (true) { currentSystemTime = SimpleDateFormat("HH:mm", Locale.getDefault()).format(Date()); delay(1000) }
     }
 
@@ -918,10 +941,9 @@ fun InternalVideoPlayer(url: String, title: String, cookie: String, series: Medi
     val pipActionReceiver = remember {
         object : BroadcastReceiver() {
             override fun onReceive(ctx: Context?, intent: Intent?) {
-                val videos = latestSeriesForReceiver.videos
                 when (intent?.getIntExtra(EXTRA_CONTROL, -1)) {
-                    CONTROL_PREV -> { val idx = videos.indexOfFirst { it.fid == currentFile.fid }; if (idx > 0) viewModel.playVideo(ctx ?: return, latestSeriesForReceiver, videos[idx - 1]) else Toast.makeText(ctx, "已经是第一集了", Toast.LENGTH_SHORT).show() }
-                    CONTROL_NEXT -> { val idx = videos.indexOfFirst { it.fid == currentFile.fid }; if (idx != -1 && idx < videos.size - 1) viewModel.playVideo(ctx ?: return, latestSeriesForReceiver, videos[idx + 1]) else Toast.makeText(ctx, "已经是最后一集了", Toast.LENGTH_SHORT).show() }
+                    CONTROL_PREV -> { val idx = sortedVideos.indexOfFirst { it.fid == currentFile.fid }; if (idx > 0) viewModel.playVideo(ctx ?: return, latestSeriesForReceiver, sortedVideos[idx - 1]) else Toast.makeText(ctx, "已经是第一集了", Toast.LENGTH_SHORT).show() }
+                    CONTROL_NEXT -> { val idx = sortedVideos.indexOfFirst { it.fid == currentFile.fid }; if (idx != -1 && idx < sortedVideos.size - 1) viewModel.playVideo(ctx ?: return, latestSeriesForReceiver, sortedVideos[idx + 1]) else Toast.makeText(ctx, "已经是最后一集了", Toast.LENGTH_SHORT).show() }
                     CONTROL_PLAY_PAUSE -> { if (exoPlayer.isPlaying) exoPlayer.pause() else exoPlayer.play() }
                 }
             }
@@ -1000,8 +1022,8 @@ fun InternalVideoPlayer(url: String, title: String, cookie: String, series: Medi
                         Toast.makeText(context, "已自动跳过片头", Toast.LENGTH_SHORT).show()
                     }
                 } else if (state == Player.STATE_ENDED) {
-                    val idx = latestSeries.videos.indexOfFirst { it.fid == currentFile.fid }
-                    if (idx != -1 && idx < latestSeries.videos.size - 1) viewModel.playVideo(context, latestSeries, latestSeries.videos[idx + 1])
+                    val idx = sortedVideos.indexOfFirst { it.fid == currentFile.fid }
+                    if (idx != -1 && idx < sortedVideos.size - 1) viewModel.playVideo(context, latestSeries, sortedVideos[idx + 1])
                 }
             }
             override fun onTracksChanged(tracks: Tracks) {
@@ -1031,15 +1053,15 @@ fun InternalVideoPlayer(url: String, title: String, cookie: String, series: Medi
             if (outroSeconds > 0 && duration > 0 && outroSeconds * 1000L < duration && currentPosition >= (duration - outroSeconds * 1000L)) {
                 if (!hasTriggeredAutoPlay) {
                     hasTriggeredAutoPlay = true
-                    val idx = latestSeries.videos.indexOfFirst { it.fid == currentFile.fid }
-                    if (idx != -1 && idx < latestSeries.videos.size - 1) viewModel.playVideo(context, latestSeries, latestSeries.videos[idx + 1])
+                    val idx = sortedVideos.indexOfFirst { it.fid == currentFile.fid }
+                    if (idx != -1 && idx < sortedVideos.size - 1) viewModel.playVideo(context, latestSeries, sortedVideos[idx + 1])
                 }
             }
             delay(1000)
         }
     }
 
-    LaunchedEffect(showEpisodeDrawer, latestSeries.videos) { if (showEpisodeDrawer) { val idx = latestSeries.videos.indexOfFirst { it.fid == currentFile.fid }; if (idx != -1) episodeListState.animateScrollToItem(idx) } }
+    LaunchedEffect(showEpisodeDrawer, sortedVideos) { if (showEpisodeDrawer) { val idx = sortedVideos.indexOfFirst { it.fid == currentFile.fid }; if (idx != -1) episodeListState.animateScrollToItem(idx) } }
     LaunchedEffect(showControls, isPlaying, gestureType, showSettingsPanel, showEpisodeDrawer) { if (showControls && isPlaying && !isLocked && gestureType.isEmpty() && !showSettingsPanel && !showEpisodeDrawer && !isInPip.value) { delay(3000); showControls = false } }
     LaunchedEffect(isLocked, showUnlockIcon) { if (isLocked && showUnlockIcon) { delay(3000); showUnlockIcon = false } }
     LaunchedEffect(seekMessage) { if (seekMessage != null) { delay(1500); seekMessage = null } }
@@ -1135,12 +1157,8 @@ fun InternalVideoPlayer(url: String, title: String, cookie: String, series: Medi
                 Column(modifier = Modifier.align(Alignment.CenterStart).padding(start = 16.dp), verticalArrangement = Arrangement.spacedBy(30.dp)) {
                     Surface(color = Color.White.copy(alpha = 0.1f), shape = CircleShape, border = BorderStroke(1.dp, Color.White.copy(alpha = 0.2f))) {
                         IconButton(onClick = {
-                            // 🌟 修复点：横屏双方向重力，竖屏强制锁定
-                            if (isLandscape) {
-                                activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
-                            } else {
-                                activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
-                            }
+                            if (isLandscape) activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
+                            else activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
                         }) { Icon(Icons.Default.ScreenRotation, null, tint = Color.White) }
                     }
                 }
@@ -1150,19 +1168,16 @@ fun InternalVideoPlayer(url: String, title: String, cookie: String, series: Medi
                         IconButton(onClick = {
                             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                                 if (!context.packageManager.hasSystemFeature(PackageManager.FEATURE_PICTURE_IN_PICTURE)) { Toast.makeText(context, "当前设备不支持画中画功能", Toast.LENGTH_SHORT).show(); return@IconButton }
-                                
                                 val safeActivity = activity as? ComponentActivity
                                 if (safeActivity == null || safeActivity.lifecycle.currentState != Lifecycle.State.RESUMED) {
                                     Toast.makeText(context, "请等待视频播放界面完全加载后再试", Toast.LENGTH_SHORT).show(); return@IconButton
                                 }
-                                
                                 try {
                                     val prevAction = RemoteAction(Icon.createWithBitmap(createPipIcon("prev", context)), "上一集", "上一集", PendingIntent.getBroadcast(context, 100, Intent(PIP_ACTION).setPackage(context.packageName).putExtra(EXTRA_CONTROL, CONTROL_PREV), PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE))
                                     val playPauseAction = RemoteAction(Icon.createWithBitmap(createPipIcon(if (isPlaying) "pause" else "play", context)), if (isPlaying) "暂停" else "播放", if (isPlaying) "暂停" else "播放", PendingIntent.getBroadcast(context, 101, Intent(PIP_ACTION).setPackage(context.packageName).putExtra(EXTRA_CONTROL, CONTROL_PLAY_PAUSE), PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE))
                                     val nextAction = RemoteAction(Icon.createWithBitmap(createPipIcon("next", context)), "下一集", "下一集", PendingIntent.getBroadcast(context, 102, Intent(PIP_ACTION).setPackage(context.packageName).putExtra(EXTRA_CONTROL, CONTROL_NEXT), PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE))
                                     val paramsBuilder = PictureInPictureParams.Builder().setAspectRatio(Rational(16, 9)).setActions(listOf(prevAction, playPauseAction, nextAction)).setSeamlessResizeEnabled(true)
                                     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) paramsBuilder.setAutoEnterEnabled(true)
-                                    
                                     safeActivity.window.decorView.post {
                                         val success = safeActivity.enterPictureInPictureMode(paramsBuilder.build())
                                         if (success) isInPip.value = true else Toast.makeText(context, "画中画启动失败，请检查系统权限是否已开启", Toast.LENGTH_SHORT).show()
@@ -1219,9 +1234,9 @@ fun InternalVideoPlayer(url: String, title: String, cookie: String, series: Medi
                             Text(text = "${playbackSpeed}x", color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.Bold, modifier = Modifier.clickable { val nextSpeed = when(playbackSpeed) { 0.5f -> 0.75f; 0.75f -> 1.0f; 1.0f -> 1.25f; 1.25f -> 1.5f; 1.5f -> 2.0f; 2.0f -> 3.0f; else -> 0.5f }; playbackSpeed = nextSpeed; exoPlayer.setPlaybackSpeed(nextSpeed) }.padding(8.dp))
                             Row(modifier = Modifier.weight(1f), horizontalArrangement = Arrangement.Center, verticalAlignment = Alignment.CenterVertically) {
                                 if (isLandscape) AppText(text = if (introSeconds > 0) formatIntroOutro(introSeconds) else "片头", color = Color.White, fontSize = 12.sp, modifier = Modifier.combinedClickable(onClick = { introSeconds = (currentPosition / 1000).toInt(); viewModel.saveIntroOutro(latestSeries.title, season, introSeconds, outroSeconds); Toast.makeText(context, "片头已设为 ${formatIntroOutro(introSeconds)}", Toast.LENGTH_SHORT).show() }, onLongClick = { introSeconds = 0; viewModel.saveIntroOutro(latestSeries.title, season, introSeconds, outroSeconds); Toast.makeText(context, "已清空片头", Toast.LENGTH_SHORT).show() }).padding(horizontal = 8.dp, vertical = 4.dp))
-                                IconButton(onClick = { val videos = latestSeries.videos; val idx = videos.indexOfFirst { it.fid == currentFile.fid }; if (idx > 0) viewModel.playVideo(context, latestSeries, videos[idx - 1]) }, modifier = Modifier.size(36.dp)) { Icon(Icons.Default.SkipPrevious, null, tint = Color.White, modifier = Modifier.size(24.dp)) }
+                                IconButton(onClick = { val videos = sortedVideos; val idx = videos.indexOfFirst { it.fid == currentFile.fid }; if (idx > 0) viewModel.playVideo(context, latestSeries, videos[idx - 1]) }, modifier = Modifier.size(36.dp)) { Icon(Icons.Default.SkipPrevious, null, tint = Color.White, modifier = Modifier.size(24.dp)) }
                                 IconButton(onClick = { if (isPlaying) exoPlayer.pause() else exoPlayer.play() }, modifier = Modifier.size(40.dp)) { Icon(if (isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow, null, tint = Color.White, modifier = Modifier.size(28.dp)) }
-                                IconButton(onClick = { val videos = latestSeries.videos; val idx = videos.indexOfFirst { it.fid == currentFile.fid }; if (idx != -1 && idx < videos.size - 1) viewModel.playVideo(context, latestSeries, videos[idx + 1]) }, modifier = Modifier.size(36.dp)) { Icon(Icons.Default.SkipNext, null, tint = Color.White, modifier = Modifier.size(24.dp)) }
+                                IconButton(onClick = { val videos = sortedVideos; val idx = videos.indexOfFirst { it.fid == currentFile.fid }; if (idx != -1 && idx < videos.size - 1) viewModel.playVideo(context, latestSeries, videos[idx + 1]) }, modifier = Modifier.size(36.dp)) { Icon(Icons.Default.SkipNext, null, tint = Color.White, modifier = Modifier.size(24.dp)) }
                                 if (isLandscape) AppText(text = if (outroSeconds > 0) formatIntroOutro(outroSeconds) else "片尾", color = Color.White, fontSize = 12.sp, modifier = Modifier.combinedClickable(onClick = { val remain = duration - currentPosition; if (remain > 0) { outroSeconds = (remain / 1000).toInt(); viewModel.saveIntroOutro(latestSeries.title, season, introSeconds, outroSeconds); Toast.makeText(context, "片尾已设为剩余 ${formatIntroOutro(outroSeconds)}", Toast.LENGTH_SHORT).show() } }, onLongClick = { outroSeconds = 0; viewModel.saveIntroOutro(latestSeries.title, season, introSeconds, outroSeconds); Toast.makeText(context, "已清空片尾", Toast.LENGTH_SHORT).show() }).padding(horizontal = 8.dp, vertical = 4.dp))
                             }
                             if (isLandscape) AppText(text = "选集", color = Color.White, modifier = Modifier.clickable { showEpisodeDrawer = true }.padding(8.dp)) else Spacer(modifier = Modifier.width(32.dp))
@@ -1242,7 +1257,7 @@ fun InternalVideoPlayer(url: String, title: String, cookie: String, series: Medi
                         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) { AppText("选集", color = Color.White, fontSize = 18.sp, fontWeight = FontWeight.Bold); IconButton(onClick = { showEpisodeDrawer = false }) { Icon(Icons.Default.Close, null, tint = Color.White) } }
                         Spacer(modifier = Modifier.height(16.dp))
                         LazyColumn(state = episodeListState) {
-                            items(latestSeries.videos) { file ->
+                            items(sortedVideos) { file ->
                                 val e = file.parsedInfo?.episode; val s = file.parsedInfo?.season ?: 1
                                 val tmdbTitle = if (e != null) latestSeries.seasonEpisodeTitles["${s}_${e}"] ?: latestSeries.episodeTitles[e] else null
                                 val label = if (e != null && latestSeries.category != "电影" && latestSeries.videos.size > 1) "第${e}集" + if (!tmdbTitle.isNullOrBlank()) " $tmdbTitle" else "" else if (latestSeries.videos.size == 1) latestSeries.title else (file.folderPath.lastOrNull() ?: file.name.substringBeforeLast("."))
@@ -1382,7 +1397,11 @@ fun MediaDetailScreen(
     }
 
     val currentSeasonVideos = remember(series) {
-        series.videos.sortedWith(compareBy<QuarkFile> { it.parsedInfo?.season ?: 1 }.thenBy { it.parsedInfo?.episode ?: 0 }.thenBy { it.name })
+        series.videos.sortedWith(
+            compareBy<QuarkFile> { it.parsedInfo?.season ?: 1 }
+                .thenBy { extractEpisodeNumber(it.name, it.parsedInfo?.episode) }
+                .thenBy { it.name }
+        )
     }
 
     val latestWatchedInCurrentSeason = remember(currentSeasonVideos) { currentSeasonVideos.maxByOrNull { viewModel.getVideoProgress(it.fid) } }
