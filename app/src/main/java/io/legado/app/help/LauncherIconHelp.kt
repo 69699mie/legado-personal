@@ -2,6 +2,7 @@ package io.legado.app.help
 
 import android.content.ComponentName
 import android.content.pm.PackageManager
+import android.widget.Toast
 import io.legado.app.ui.main.Launcher0
 import io.legado.app.ui.main.Launcher1
 import io.legado.app.ui.main.Launcher2
@@ -19,6 +20,8 @@ import splitties.init.appCtx
  */
 object LauncherIconHelp {
     private val packageManager: PackageManager = appCtx.packageManager
+    
+    // 如需隐藏多余图标，请直接把不需要的 ComponentName 从这里删掉即可
     private val componentNames = arrayListOf(
         ComponentName(appCtx, LauncherW::class.java.name),
         ComponentName(appCtx, Launcher0::class.java.name),
@@ -36,34 +39,37 @@ object LauncherIconHelp {
         componentNames.forEach {
             if (icon.equals(it.className.substringAfterLast("."), true)) {
                 hasEnabled = true
-                //启用
-                packageManager.setComponentEnabledSetting(
-                    it,
-                    PackageManager.COMPONENT_ENABLED_STATE_ENABLED,
-                    PackageManager.DONT_KILL_APP
-                )
+                safelySetComponentEnabled(it, PackageManager.COMPONENT_ENABLED_STATE_ENABLED)
             } else {
-                //禁用
-                packageManager.setComponentEnabledSetting(
-                    it,
-                    PackageManager.COMPONENT_ENABLED_STATE_DISABLED,
-                    PackageManager.DONT_KILL_APP
-                )
+                safelySetComponentEnabled(it, PackageManager.COMPONENT_ENABLED_STATE_DISABLED)
             }
         }
         if (hasEnabled) {
-            packageManager.setComponentEnabledSetting(
+            safelySetComponentEnabled(
                 ComponentName(appCtx, MainActivity::class.java.name),
-                PackageManager.COMPONENT_ENABLED_STATE_DISABLED,
-                PackageManager.DONT_KILL_APP
+                PackageManager.COMPONENT_ENABLED_STATE_DISABLED
             )
         } else {
-            packageManager.setComponentEnabledSetting(
+            safelySetComponentEnabled(
                 ComponentName(appCtx, MainActivity::class.java.name),
-                PackageManager.COMPONENT_ENABLED_STATE_ENABLED,
-                PackageManager.DONT_KILL_APP
+                PackageManager.COMPONENT_ENABLED_STATE_ENABLED
             )
         }
     }
 
+    // 🌟 核心修复：加入 try-catch 防止 R8 混淆导致系统抛出 IllegalArgumentException 崩溃
+    private fun safelySetComponentEnabled(componentName: ComponentName, newState: Int) {
+        try {
+            packageManager.setComponentEnabledSetting(
+                componentName,
+                newState,
+                PackageManager.DONT_KILL_APP
+            )
+        } catch (e: IllegalArgumentException) {
+            e.printStackTrace()
+            Toast.makeText(appCtx, "切换图标失败，请尝试重启应用", Toast.LENGTH_SHORT).show()
+        } catch (e: SecurityException) {
+            e.printStackTrace()
+        }
+    }
 }
