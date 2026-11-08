@@ -159,3 +159,13 @@
 # 核心新增：Ktor Server 防混淆（保障本地代理正常运行）
 -keep class io.ktor.** { *; }
 -dontwarn io.ktor.**
+# 保留所有 Launcher 图标组件类（防止 R8 重命名导致切换图标崩溃）
+-keep class io.legado.app.ui.main.LauncherW { *; }
+-keep class io.legado.app.ui.main.Launcher0 { *; }
+-keep class io.legado.app.ui.main.Launcher1 { *; }
+-keep class io.legado.app.ui.main.Launcher2 { *; }
+-keep class io.legado.app.ui.main.Launcher3 { *; }
+-keep class io.legado.app.ui.main.Launcher4 { *; }
+-keep class io.legado.app.ui.main.Launcher5 { *; }
+-keep class io.legado.app.ui.main.Launcher6 { *; }
+-keep class io.legado.app.ui.main.MainActivity { *; }
