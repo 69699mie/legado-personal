@@ -281,6 +281,9 @@ fun ThemeConfigScreen(
                             )
                         }
                     )
+                    
+                    // 🌟 修复点：彻底注释掉切换图标入口
+                    /*
                     ClickableSettingItem(
                         title = stringResource(R.string.change_icon),
                         description = stringResource(R.string.change_icon_summary),
@@ -288,6 +291,8 @@ fun ThemeConfigScreen(
                             onIntent(ThemeConfigIntent.ShowSheet(ThemeConfigSheet.LauncherIcon))
                         }
                     )
+                    */
+                    
                     SwitchSettingItem(
                         title = stringResource(R.string.predictive_back),
                         description = stringResource(R.string.predictive_back_summary),
@@ -883,13 +888,15 @@ fun ThemeConfigScreen(
         onIntent = onIntent,
     )
 
-
+    // 🌟 修复点：彻底注释掉图标选择弹窗
+    /*
     LauncherIconPickerSheet(
         show = state.activeSheet == ThemeConfigSheet.LauncherIcon,
         selectedValue = appShell.launcherIcon,
         onDismissRequest = { onIntent(ThemeConfigIntent.DismissSheet) },
         onValueChange = { onIntent(ThemeConfigIntent.SelectLauncherIcon(it)) }
     )
+    */
 
     ColorPickerSheet(
         show = state.activeSheet == ThemeConfigSheet.DividerColor,
