@@ -36,6 +36,7 @@ import android.webkit.WebView
 import android.webkit.WebViewClient
 import android.widget.FrameLayout
 import android.widget.Toast
+import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.LinearEasing
@@ -371,7 +372,6 @@ fun VideoScraperScreen(
             }
 
             if (latestSeries != null) {
-                // 🌟 修复点：只要刮削中且视频列表为空，必定显示骨架屏，不再判断多余字段
                 val showLoading = uiState.isScraping && latestSeries.videos.isEmpty() && !latestSeries.isManuallyEdited
 
                 if (showLoading) {
@@ -1107,12 +1107,8 @@ fun InternalVideoPlayer(url: String, title: String, cookie: String, series: Medi
                 Column(modifier = Modifier.align(Alignment.CenterStart).padding(start = 16.dp), verticalArrangement = Arrangement.spacedBy(30.dp)) {
                     Surface(color = Color.White.copy(alpha = 0.1f), shape = CircleShape, border = BorderStroke(1.dp, Color.White.copy(alpha = 0.2f))) {
                         IconButton(onClick = {
-                            // 🌟 修复点：彻底解决物理横屏下点击旋转切竖屏又瞬间闪回横屏的问题
-                            if (isLandscape) {
-                                activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_SENSOR_PORTRAIT
-                            } else {
-                                activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
-                            }
+                            if (isLandscape) activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_SENSOR_PORTRAIT
+                            else activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
                         }) { Icon(Icons.Default.ScreenRotation, null, tint = Color.White) }
                     }
                 }
@@ -1122,10 +1118,13 @@ fun InternalVideoPlayer(url: String, title: String, cookie: String, series: Medi
                         IconButton(onClick = {
                             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                                 if (!context.packageManager.hasSystemFeature(PackageManager.FEATURE_PICTURE_IN_PICTURE)) { Toast.makeText(context, "当前设备不支持画中画功能", Toast.LENGTH_SHORT).show(); return@IconButton }
-                                // 🌟 修复点：必须检查 Activity 是否处于 RESUMED 状态，否则 HyperOS 必定报错
-                                if (activity == null || activity.lifecycle.currentState != Lifecycle.State.RESUMED) {
+                                
+                                // 🌟 修复点：强转 ComponentActivity 解决编译报错
+                                val safeActivity = activity as? ComponentActivity
+                                if (safeActivity == null || safeActivity.lifecycle.currentState != Lifecycle.State.RESUMED) {
                                     Toast.makeText(context, "请等待视频播放界面完全加载后再试", Toast.LENGTH_SHORT).show(); return@IconButton
                                 }
+                                
                                 try {
                                     val prevAction = RemoteAction(Icon.createWithBitmap(createPipIcon("prev", context)), "上一集", "上一集", PendingIntent.getBroadcast(context, 100, Intent(PIP_ACTION).setPackage(context.packageName).putExtra(EXTRA_CONTROL, CONTROL_PREV), PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE))
                                     val playPauseAction = RemoteAction(Icon.createWithBitmap(createPipIcon(if (isPlaying) "pause" else "play", context)), if (isPlaying) "暂停" else "播放", if (isPlaying) "暂停" else "播放", PendingIntent.getBroadcast(context, 101, Intent(PIP_ACTION).setPackage(context.packageName).putExtra(EXTRA_CONTROL, CONTROL_PLAY_PAUSE), PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE))
@@ -1133,9 +1132,8 @@ fun InternalVideoPlayer(url: String, title: String, cookie: String, series: Medi
                                     val paramsBuilder = PictureInPictureParams.Builder().setAspectRatio(Rational(16, 9)).setActions(listOf(prevAction, playPauseAction, nextAction)).setSeamlessResizeEnabled(true)
                                     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) paramsBuilder.setAutoEnterEnabled(true)
                                     
-                                    // 🌟 修复点：使用 post 延迟执行，确保 HyperOS 窗口状态就绪
-                                    activity.window.decorView.post {
-                                        val success = activity.enterPictureInPictureMode(paramsBuilder.build())
+                                    safeActivity.window.decorView.post {
+                                        val success = safeActivity.enterPictureInPictureMode(paramsBuilder.build())
                                         if (success) isInPip.value = true else Toast.makeText(context, "画中画启动失败，请检查系统权限是否已开启", Toast.LENGTH_SHORT).show()
                                     }
                                 } catch (e: Exception) { Toast.makeText(context, "画中画启动异常：${e.message ?: "权限被系统拦截"}", Toast.LENGTH_SHORT).show() }
@@ -1347,8 +1345,6 @@ fun MediaDetailScreen(
             }
         }
     }
-
-    // 🌟 修复点：彻底删除原代码的 CircularProgressIndicator 拦截逻辑
 
     val relatedSeries = remember(series, allSeries) {
         if (series.groupName.isNullOrBlank()) emptyList() else allSeries.filter { it.groupName == series.groupName && it.id != series.id }
