@@ -212,6 +212,8 @@ class OnboardingViewModel(
             }
             try {
                 webDavBackupUseCase.restore(name)
+                // 🌟 修复点：恢复成功后，提示成功，但因为图标恢复可能引发异常，此处仅负责收尾
+                appCtx.toastOnUi("恢复成功，即将重启应用") 
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
@@ -236,6 +238,8 @@ class OnboardingViewModel(
             }
             try {
                 Restore.restore(appCtx, uriString.toUri())
+                // 🌟 修复点：恢复成功后，提示成功
+                appCtx.toastOnUi("恢复成功，即将重启应用")
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
