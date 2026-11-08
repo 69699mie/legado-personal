@@ -14,29 +14,28 @@ import io.legado.app.ui.main.MainActivity
 import splitties.init.appCtx
 
 /**
- * 修改为：强制启用第 7 个图标（Launcher6），禁用其他所有图标。
+ * 强制启用第 7 个图标（对应代码里的 Launcher4），禁用其他所有图标。
  */
 object LauncherIconHelp {
     private val packageManager: PackageManager = appCtx.packageManager
 
     fun changeIcon(icon: String?) {
-        // 🌟 无论传入什么参数，强制指定使用 Launcher6
-        val targetComponent = ComponentName(appCtx, Launcher6::class.java.name)
+        // 强制指定使用 Launcher4
+        val targetComponent = ComponentName(appCtx, Launcher4::class.java.name)
         val mainActivityComponent = ComponentName(appCtx, MainActivity::class.java.name)
         
-        // 需要禁用的其他 Launcher 列表
         val disabledComponents = listOf(
             ComponentName(appCtx, LauncherW::class.java.name),
             ComponentName(appCtx, Launcher0::class.java.name),
             ComponentName(appCtx, Launcher1::class.java.name),
             ComponentName(appCtx, Launcher2::class.java.name),
             ComponentName(appCtx, Launcher3::class.java.name),
-            ComponentName(appCtx, Launcher4::class.java.name),
-            ComponentName(appCtx, Launcher5::class.java.name)
+            ComponentName(appCtx, Launcher5::class.java.name),
+            ComponentName(appCtx, Launcher6::class.java.name)
         )
 
         try {
-            // 1. 启用 Launcher6
+            // 1. 启用 Launcher4
             packageManager.setComponentEnabledSetting(
                 targetComponent,
                 PackageManager.COMPONENT_ENABLED_STATE_ENABLED,
@@ -50,7 +49,7 @@ object LauncherIconHelp {
                 PackageManager.DONT_KILL_APP
             )
             
-            // 3. 禁用其他所有 Launcher 图标（防止用户以前切换过导致桌面残留多个图标）
+            // 3. 禁用其他所有 Launcher 图标
             disabledComponents.forEach {
                 packageManager.setComponentEnabledSetting(
                     it,
@@ -59,7 +58,6 @@ object LauncherIconHelp {
                 )
             }
         } catch (e: Exception) {
-            // 捕获异常防止崩溃
             e.printStackTrace()
         }
     }
