@@ -386,6 +386,42 @@ object Restore : KoinComponent {
             }
         }
 
+        // 🌟 核心新增：恢复 VideoSettingsRepository (包含影视库、Cookie、进度等)
+        val videoConfigFile = File(path, "video_settings.json")
+        if (videoConfigFile.exists()) {
+            try {
+                val json = videoConfigFile.readText()
+                // 使用 GSON 将 JSON 解析回 Map
+                val mapType = object : com.google.gson.reflect.TypeToken<Map<String, Any>>() {}.type
+                val videoMap: Map<String, Any> = GSON.fromJson(json, mapType)
+                val editor = appCtx.getSharedPreferences("video_settings", Context.MODE_PRIVATE).edit()
+                // 全量覆盖，与备份保持一致
+                editor.clear() 
+                videoMap.forEach { (key, value) ->
+                    when (value) {
+                        is String -> editor.putString(key, value)
+                        is Boolean -> editor.putBoolean(key, value)
+                        is Number -> {
+                            // GSON 解析出来的数字默认是 Double，这里需要判断原本的数值类型
+                            val num = value.toDouble()
+                            if (num % 1.0 == 0.0) {
+                                if (num >= Int.MIN_VALUE && num <= Int.MAX_VALUE) {
+                                    editor.putInt(key, num.toInt())
+                                } else {
+                                    editor.putLong(key, num.toLong())
+                                }
+                            } else {
+                                editor.putFloat(key, num.toFloat())
+                            }
+                        }
+                    }
+                }
+                editor.apply()
+            } catch (e: Exception) {
+                AppLog.put("恢复影视库配置出错\n${e.localizedMessage}", e)
+            }
+        }
+
         appCtx.toastOnUi(R.string.restore_success)
         withContext(Main) {
             delay(100)
@@ -582,5 +618,4 @@ object Restore : KoinComponent {
         }
         return null
     }
-
 }
