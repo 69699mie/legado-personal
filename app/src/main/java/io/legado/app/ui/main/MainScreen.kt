@@ -36,8 +36,10 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -464,9 +466,11 @@ fun MainScreen(
                             animationSpec = spring(dampingRatio = 1f, stiffness = 260f, visibilityThreshold = 0.0001f),
                             label = "homePlaybackControls",
                         )
+                        val localView = LocalView.current // 🌟 修复点：获取 View 用于强制刷新 Insets
                         BoxWithConstraints(
                             modifier = Modifier.align(Alignment.BottomCenter).fillMaxWidth().padding(horizontal = 16.dp)
                                 .padding(bottom = 12.dp + WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding())
+                                .onSizeChanged { localView.requestApplyInsets() } // 🌟 修复点：兜底强制刷新 Insets
                         ) {
                             val gap = ReadAloudBarCapsuleEndPadding
                             val capsuleReserve by animateDpAsState(
@@ -557,6 +561,7 @@ fun MainScreen(
                 viewModel = videoViewModel,
                 downloadThreads = videoUiState.downloadThreads,
                 onBack = {
+                    // 🌟 修复点：退出播放器时，彻底重置 Activity 的全局 Window 状态，恢复底部导航栏
                     (context as? ComponentActivity)?.window?.let { window ->
                         WindowCompat.setDecorFitsSystemWindows(window, true)
                         val controller = WindowCompat.getInsetsController(window, window.decorView)
@@ -564,6 +569,9 @@ fun MainScreen(
                         window.decorView.systemUiVisibility = android.view.View.SYSTEM_UI_FLAG_VISIBLE
                         window.decorView.post {
                             window.decorView.requestApplyInsets()
+                            window.decorView.postDelayed({
+                                window.decorView.requestApplyInsets()
+                            }, 100)
                         }
                     }
                     (context as? ComponentActivity)?.requestedOrientation = android.content.pm.ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
