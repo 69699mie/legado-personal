@@ -48,6 +48,7 @@ import io.legado.app.help.AppWebDav
 import io.legado.app.help.CrashHandler
 import io.legado.app.help.DefaultData
 import io.legado.app.help.DispatchersMonitor
+import io.legado.app.help.LauncherIconHelp // 🌟 确保引入
 import io.legado.app.help.LifecycleHelp
 import io.legado.app.help.RuleBigDataHelp
 import io.legado.app.help.book.BookHelp
@@ -248,6 +249,12 @@ class App : Application(), SingletonImageLoader.Factory {
                 AppWebDav.upConfig()
                 AppWebDav.downloadAllBookProgress()
             }
+        }
+
+        // 🌟 核心修复：应用启动时强制触发一次图标切换！
+        // 防止因缺失调用导致图标维持在旧状态（如果不是正式版，可以暂时不切以免影响调试）
+        if (!BuildConfig.DEBUG) {
+            LauncherIconHelp.changeIcon("Launcher6")
         }
     }
 
