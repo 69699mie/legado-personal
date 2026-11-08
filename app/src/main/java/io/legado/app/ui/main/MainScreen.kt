@@ -466,7 +466,7 @@ fun MainScreen(
                             animationSpec = spring(dampingRatio = 1f, stiffness = 260f, visibilityThreshold = 0.0001f),
                             label = "homePlaybackControls",
                         )
-                        val localView = LocalView.current // 🌟 修复点：获取 View 用于强制刷新 Insets
+                        val localView = LocalView.current
                         BoxWithConstraints(
                             modifier = Modifier.align(Alignment.BottomCenter).fillMaxWidth().padding(horizontal = 16.dp)
                                 .padding(bottom = 12.dp + WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding())
@@ -561,7 +561,7 @@ fun MainScreen(
                 viewModel = videoViewModel,
                 downloadThreads = videoUiState.downloadThreads,
                 onBack = {
-                    // 🌟 修复点：退出播放器时，彻底重置 Activity 的全局 Window 状态，恢复底部导航栏
+                    // 🌟 修复点：退出播放器时，双重延迟强制重置 Insets 恢复底部导航栏
                     (context as? ComponentActivity)?.window?.let { window ->
                         WindowCompat.setDecorFitsSystemWindows(window, true)
                         val controller = WindowCompat.getInsetsController(window, window.decorView)
@@ -571,7 +571,7 @@ fun MainScreen(
                             window.decorView.requestApplyInsets()
                             window.decorView.postDelayed({
                                 window.decorView.requestApplyInsets()
-                            }, 100)
+                            }, 200)
                         }
                     }
                     (context as? ComponentActivity)?.requestedOrientation = android.content.pm.ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
