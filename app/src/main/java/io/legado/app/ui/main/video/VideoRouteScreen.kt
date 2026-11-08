@@ -937,11 +937,15 @@ fun InternalVideoPlayer(url: String, title: String, cookie: String, series: Medi
         val mediaItem = MediaItem.Builder()
             .setUri(url)
             .setMediaMetadata(MediaMetadata.Builder().setTitle(title).build())
-            .setStartPosition(startPositionMs)
             .build()
         val mediaSource = ProgressiveMediaSource.Factory(dataSourceFactory).createMediaSource(mediaItem)
-
+        
         exoPlayer.setMediaSource(mediaSource)
+        
+        if (startPositionMs > 0L) {
+            exoPlayer.seekTo(startPositionMs)
+        }
+        
         exoPlayer.prepare()
         exoPlayer.playWhenReady = true
     }
