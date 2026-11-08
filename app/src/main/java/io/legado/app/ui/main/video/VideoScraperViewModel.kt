@@ -183,18 +183,13 @@ class VideoScraperViewModel(
                 for (key in jsonObj.keys()) {
                     try {
                         val itemObj = jsonObj.getJSONObject(key)
-                        
                         val epTitlesObj = itemObj.optJSONObject("episodeTitles")
                         val epTitles = mutableMapOf<Int, String>()
-                        epTitlesObj?.keys()?.forEach { k -> 
-                            k.toIntOrNull()?.let { num -> epTitles[num] = epTitlesObj.getString(k) }
-                        }
+                        epTitlesObj?.keys()?.forEach { k -> k.toIntOrNull()?.let { num -> epTitles[num] = epTitlesObj.getString(k) } }
                         
                         val epStillsObj = itemObj.optJSONObject("episodeStills")
                         val epStills = mutableMapOf<Int, String>()
-                        epStillsObj?.keys()?.forEach { k -> 
-                            k.toIntOrNull()?.let { num -> epStills[num] = epStillsObj.getString(k) }
-                        }
+                        epStillsObj?.keys()?.forEach { k -> k.toIntOrNull()?.let { num -> epStills[num] = epStillsObj.getString(k) } }
 
                         val seasonDetailsObj = itemObj.optJSONObject("seasonDetails")
                         val seasonDetails = mutableMapOf<Int, SeasonDetail>()
@@ -232,14 +227,10 @@ class VideoScraperViewModel(
                             isManuallyEdited = itemObj.optBoolean("isManuallyEdited", false),
                             fileListSignature = itemObj.optString("fileListSignature", "")
                         )
-                    } catch (e: Exception) {
-                        e.printStackTrace()
-                    }
+                    } catch (e: Exception) { e.printStackTrace() }
                 }
             }
-        } catch(e: Exception) { 
-            e.printStackTrace() 
-        }
+        } catch(e: Exception) { e.printStackTrace() }
     }
 
     private fun saveScrapedCache() {
@@ -408,8 +399,11 @@ class VideoScraperViewModel(
                     val isSignatureChanged = cached == null || newSignature != cached.fileListSignature
                     val isEmptyPoster = cached?.posterUrl.isNullOrBlank()
                     val shouldRetryEmptyPoster = isEmptyPoster && emptyPosterRetryCount < maxEmptyPosterRetry
+                    
+                    // 🌟 核心修复：只要被手动编辑过，绝对不允许自动覆盖！
+                    val isManuallyEdited = cached?.isManuallyEdited == true
+                    val needScrape = !isManuallyEdited && (isSignatureChanged || shouldRetryEmptyPoster)
 
-                    val needScrape = isSignatureChanged || shouldRetryEmptyPoster
                     if (needScrape) {
                         needScrapeList.add(series)
                         if (isEmptyPoster) emptyPosterRetryCount++
@@ -424,14 +418,16 @@ class VideoScraperViewModel(
                             )
                         } else series
                     } else {
-                        series.copy(
-                            title = cached!!.title, category = cached.category, posterUrl = cached.posterUrl,
-                            backdropUrl = cached.backdropUrl, overview = cached.overview, rating = cached.rating,
-                            seasonDetails = cached.seasonDetails, episodeTitles = cached.episodeTitles,
-                            episodeStills = cached.episodeStills, seasonEpisodeTitles = cached.seasonEpisodeTitles,
-                            seasonEpisodeStills = cached.seasonEpisodeStills, groupName = cached.groupName,
-                            isManuallyEdited = cached.isManuallyEdited
-                        )
+                        if (cached != null) {
+                            series.copy(
+                                title = cached.title, category = cached.category, posterUrl = cached.posterUrl,
+                                backdropUrl = cached.backdropUrl, overview = cached.overview, rating = cached.rating,
+                                seasonDetails = cached.seasonDetails, episodeTitles = cached.episodeTitles,
+                                episodeStills = cached.episodeStills, seasonEpisodeTitles = cached.seasonEpisodeTitles,
+                                seasonEpisodeStills = cached.seasonEpisodeStills, groupName = cached.groupName,
+                                isManuallyEdited = cached.isManuallyEdited
+                            )
+                        } else series
                     }
                 }.sortedWith(compareBy(pinyinCollator) { it.title })
 
@@ -453,11 +449,7 @@ class VideoScraperViewModel(
 
     private fun aggregateToSeries(videos: List<QuarkFile>): List<MediaSeries> {
         val seriesMap = mutableMapOf<String, MediaSeries>()
-        val categoryMap = mapOf(
-            "电视剧" to "剧集", "剧集" to "剧集",
-            "动漫" to "动漫", "动画" to "动漫",
-            "电影" to "电影", "纪录片" to "纪录片", "综艺" to "综艺"
-        )
+        val categoryMap = mapOf("电视剧" to "剧集", "剧集" to "剧集", "动漫" to "动漫", "动画" to "动漫", "电影" to "电影", "纪录片" to "纪录片", "综艺" to "综艺")
         val excludeFolders = categoryMap.keys + setOf("未观看", "已观看", "其他", "未分类")
 
         for (v in videos) {
@@ -477,7 +469,6 @@ class VideoScraperViewModel(
 
             if (meaningfulPaths.isNotEmpty()) {
                 var lastPath = meaningfulPaths.last()
-                
                 if (lastPath.matches(Regex("^\\d+$")) && meaningfulPaths.size >= 2) {
                     lastPath = meaningfulPaths[meaningfulPaths.size - 2]
                 }
@@ -504,29 +495,15 @@ class VideoScraperViewModel(
             if (baseTitle.isBlank() || baseTitle == "未知影视") baseTitle = parsed.title
 
             val key = baseTitle
-
-            val finalParsedInfo = if (folderSeason != null) {
-                parsed.copy(season = folderSeason)
-            } else {
-                parsed
-            }
-
+            val finalParsedInfo = if (folderSeason != null) parsed.copy(season = folderSeason) else parsed
             val updatedV = v.copy(parsedInfo = finalParsedInfo)
 
             if (seriesMap.containsKey(key)) {
                 val exist = seriesMap[key]!!
-                val combinedVideos = (exist.videos + updatedV).sortedWith(
-                    compareBy<QuarkFile> { it.parsedInfo?.season ?: 1 }
-                        .thenBy { it.parsedInfo?.episode ?: 0 }
-                        .thenBy { it.name }
-                )
+                val combinedVideos = (exist.videos + updatedV).sortedWith(compareBy<QuarkFile> { it.parsedInfo?.season ?: 1 }.thenBy { it.parsedInfo?.episode ?: 0 }.thenBy { it.name })
                 seriesMap[key] = exist.copy(videos = combinedVideos)
             } else {
-                seriesMap[key] = MediaSeries(
-                    id = key, title = baseTitle, originalParsedTitle = baseTitle,
-                    year = parsed.year, category = finalCategory, videos = listOf(updatedV),
-                    groupName = groupName
-                )
+                seriesMap[key] = MediaSeries(id = key, title = baseTitle, originalParsedTitle = baseTitle, year = parsed.year, category = finalCategory, videos = listOf(updatedV), groupName = groupName)
             }
         }
         return seriesMap.values.toList().sortedWith(compareBy(pinyinCollator) { it.title })
@@ -536,19 +513,13 @@ class VideoScraperViewModel(
         val cnMatch = Regex("第([0-9一二三四五六七八九十]+)季").find(folderName)
         if (cnMatch != null) {
             val sStr = cnMatch.groupValues[1]
-            return when(sStr) {
-                "一" -> 1; "二" -> 2; "三" -> 3; "四" -> 4; "五" -> 5
-                "六" -> 6; "七" -> 7; "八" -> 8; "九" -> 9; "十" -> 10
-                else -> sStr.toIntOrNull()
-            }
+            return when(sStr) { "一" -> 1; "二" -> 2; "三" -> 3; "四" -> 4; "五" -> 5; "六" -> 6; "七" -> 7; "八" -> 8; "九" -> 9; "十" -> 10; else -> sStr.toIntOrNull() }
         }
         val enMatch = Regex("(?i)season\\s*(\\d+)").find(folderName) ?: Regex("(?i)^s(\\d{1,2})$").find(folderName)
         return enMatch?.groupValues?.get(1)?.toIntOrNull()
     }
 
-    private suspend fun fetchVideosRecursively(
-        cookie: String, parentFid: String, currentPath: List<String>, resultList: MutableList<QuarkFile>
-    ) {
+    private suspend fun fetchVideosRecursively(cookie: String, parentFid: String, currentPath: List<String>, resultList: MutableList<QuarkFile>) {
         withContext(Dispatchers.IO) {
             var page = 1
             var hasMore = true
@@ -558,7 +529,6 @@ class VideoScraperViewModel(
                 try {
                     client.newCall(request).execute().use { response ->
                         updateCookieFromResponse(response.headers)
-                        
                         val body = response.body?.string()
                         if (!body.isNullOrBlank()) {
                             val json = JSONObject(body)
@@ -580,25 +550,12 @@ class VideoScraperViewModel(
                                             }
                                         }
                                     }
-                                    if (list.length() < 100) {
-                                        hasMore = false
-                                    } else {
-                                        page++
-                                    }
-                                } else {
-                                    hasMore = false
-                                }
-                            } else {
-                                hasMore = false
-                            }
-                        } else {
-                            hasMore = false
-                        }
+                                    if (list.length() < 100) hasMore = false else page++
+                                } else hasMore = false
+                            } else hasMore = false
+                        } else hasMore = false
                     }
-                } catch (e: Exception) {
-                    e.printStackTrace()
-                    hasMore = false
-                }
+                } catch (e: Exception) { e.printStackTrace(); hasMore = false }
             }
         }
     }
@@ -654,14 +611,8 @@ class VideoScraperViewModel(
                                     sEpTitles.putAll(detail.second)
                                     sEpStills.putAll(detail.third)
                                     if (season == 1) {
-                                        detail.second.forEach { (k, v) ->
-                                            val epNum = k.substringAfter("_").toIntOrNull()
-                                            if (epNum != null) epTitles[epNum] = v
-                                        }
-                                        detail.third.forEach { (k, v) ->
-                                            val epNum = k.substringAfter("_").toIntOrNull()
-                                            if (epNum != null) epStills[epNum] = v
-                                        }
+                                        detail.second.forEach { (k, v) -> val epNum = k.substringAfter("_").toIntOrNull(); if (epNum != null) epTitles[epNum] = v }
+                                        detail.third.forEach { (k, v) -> val epNum = k.substringAfter("_").toIntOrNull(); if (epNum != null) epStills[epNum] = v }
                                     }
                                 }
                             }
@@ -675,6 +626,7 @@ class VideoScraperViewModel(
                         )
 
                         val newSignature = newSeries.videos.map { it.fid }.sorted().joinToString("|")
+                        val isEdited = oldCached?.isManuallyEdited ?: false
 
                         scrapedCache[newSeries.id] = ScrapeCacheItem(
                             title = newSeries.title, category = newSeries.category, posterUrl = newSeries.posterUrl,
@@ -682,7 +634,7 @@ class VideoScraperViewModel(
                             seasonDetails = newSeries.seasonDetails, episodeTitles = newSeries.episodeTitles,
                             episodeStills = newSeries.episodeStills, seasonEpisodeTitles = newSeries.seasonEpisodeTitles,
                             seasonEpisodeStills = newSeries.seasonEpisodeStills, groupName = newSeries.groupName,
-                            isManuallyEdited = false, fileListSignature = newSignature 
+                            isManuallyEdited = isEdited, fileListSignature = newSignature 
                         )
                         newSeries
                     } else {
@@ -709,14 +661,11 @@ class VideoScraperViewModel(
                 
                 val oldCurrent = _uiState.value.currentSeries
                 val newCurrent = if (oldCurrent != null) {
-                    currentList.find { it.id == oldCurrent.id } 
-                        ?: currentList.find { it.title == oldCurrent.title }
-                        ?: oldCurrent
+                    currentList.find { it.id == oldCurrent.id } ?: currentList.find { it.title == oldCurrent.title } ?: oldCurrent
                 } else null
 
                 hasLoadedLibrary = true
                 _uiState.update { it.copy(isLoading = false, isScraping = false, seriesList = currentList, currentSeries = newCurrent) }
-                
                 handlePendingPlayRequest()
             }
         }
@@ -750,10 +699,7 @@ class VideoScraperViewModel(
                 client.newCall(request).execute().use { response ->
                     val code = response.code
                     if (code == 401 || code == 403) return null
-                    if (code == 429 || code in 500..599) {
-                        lastException = IOException("HTTP $code")
-                        return@use
-                    }
+                    if (code == 429 || code in 500..599) { lastException = IOException("HTTP $code"); return@use }
                     if (code != 200) return null
 
                     val body = response.body?.string()
@@ -782,35 +728,20 @@ class VideoScraperViewModel(
                         val mediaType = bestItem.optString("media_type", "tv")
                         val genreIdsList = mutableListOf<Int>()
                         val genreIdsArray = bestItem.optJSONArray("genre_ids")
-                        if (genreIdsArray != null) {
-                            for (j in 0 until genreIdsArray.length()) genreIdsList.add(genreIdsArray.getInt(j))
-                        }
+                        if (genreIdsArray != null) { for (j in 0 until genreIdsArray.length()) genreIdsList.add(genreIdsArray.getInt(j)) }
                         
-                        val posterUrl = if (posterPath.isNotBlank() && posterPath != "null") {
-                            if (isProxy) "$baseUrl/img/t/p/w500$posterPath" else "https://image.tmdb.org/t/p/w500$posterPath"
-                        } else null
-                        
-                        val backdropUrl = if (backdropPath.isNotBlank() && backdropPath != "null") {
-                            if (isProxy) "$baseUrl/img/t/p/w780$backdropPath" else "https://image.tmdb.org/t/p/w780$backdropPath"
-                        } else null
+                        val posterUrl = if (posterPath.isNotBlank() && posterPath != "null") { if (isProxy) "$baseUrl/img/t/p/w500$posterPath" else "https://image.tmdb.org/t/p/w500$posterPath" } else null
+                        val backdropUrl = if (backdropPath.isNotBlank() && backdropPath != "null") { if (isProxy) "$baseUrl/img/t/p/w780$backdropPath" else "https://image.tmdb.org/t/p/w780$backdropPath" } else null
 
                         return TmdbSearchResult(
-                            id = bestItem.optInt("id"),
-                            title = officialName,
-                            year = (bestItem.optString("release_date").take(4).ifBlank { bestItem.optString("first_air_date").take(4) }),
-                            posterUrl = posterUrl, 
-                            backdropUrl = backdropUrl, 
-                            overview = bestItem.optString("overview"), rating = ratingStr,
+                            id = bestItem.optInt("id"), title = officialName, year = (bestItem.optString("release_date").take(4).ifBlank { bestItem.optString("first_air_date").take(4) }),
+                            posterUrl = posterUrl, backdropUrl = backdropUrl, overview = bestItem.optString("overview"), rating = ratingStr,
                             mediaType = mediaType, genreIds = genreIdsList
                         )
                     }
                     return null
                 }
-            } catch (e: IOException) {
-                lastException = e
-            } catch (e: Exception) {
-                return null
-            }
+            } catch (e: IOException) { lastException = e } catch (e: Exception) { return null }
         }
         return null
     }
@@ -827,12 +758,9 @@ class VideoScraperViewModel(
                 val body = response.body?.string()
                 if (!body.isNullOrBlank()) {
                     val json = JSONObject(body)
-                    
                     val seasonPosterPath = json.optString("poster_path")
                     val seasonOverview = json.optString("overview")
-                    val seasonPosterUrl = if (seasonPosterPath.isNotBlank() && seasonPosterPath != "null") {
-                        if (isProxy) "$baseUrl/img/t/p/w500$seasonPosterPath" else "https://image.tmdb.org/t/p/w500$seasonPosterPath"
-                    } else null
+                    val seasonPosterUrl = if (seasonPosterPath.isNotBlank() && seasonPosterPath != "null") { if (isProxy) "$baseUrl/img/t/p/w500$seasonPosterPath" else "https://image.tmdb.org/t/p/w500$seasonPosterPath" } else null
                     
                     val episodes = json.optJSONArray("episodes")
                     if (episodes != null) {
@@ -844,9 +772,7 @@ class VideoScraperViewModel(
                             if (epNum > 0) {
                                 val key = "${season}_${epNum}"
                                 if (epName.isNotBlank()) titles[key] = epName
-                                if (stillPath.isNotBlank() && stillPath != "null") {
-                                    stills[key] = if (isProxy) "$baseUrl/img/t/p/w300$stillPath" else "https://image.tmdb.org/t/p/w300$stillPath"
-                                }
+                                if (stillPath.isNotBlank() && stillPath != "null") { stills[key] = if (isProxy) "$baseUrl/img/t/p/w300$stillPath" else "https://image.tmdb.org/t/p/w300$stillPath" }
                             }
                         }
                     }
@@ -882,24 +808,10 @@ class VideoScraperViewModel(
                                 val backdropPath = item.optString("backdrop_path")
                                 val voteAverage = item.optDouble("vote_average", 0.0)
                                 
-                                val posterUrl = if (posterPath.isNotBlank() && posterPath != "null") {
-                                    if (isProxy) "$baseUrl/img/t/p/w300$posterPath" else "https://image.tmdb.org/t/p/w300$posterPath"
-                                } else null
-                                
-                                val backdropUrl = if (backdropPath.isNotBlank() && backdropPath != "null") {
-                                    if (isProxy) "$baseUrl/img/t/p/w780$backdropPath" else "https://image.tmdb.org/t/p/w780$backdropPath"
-                                } else null
+                                val posterUrl = if (posterPath.isNotBlank() && posterPath != "null") { if (isProxy) "$baseUrl/img/t/p/w300$posterPath" else "https://image.tmdb.org/t/p/w300$posterPath" } else null
+                                val backdropUrl = if (backdropPath.isNotBlank() && backdropPath != "null") { if (isProxy) "$baseUrl/img/t/p/w780$backdropPath" else "https://image.tmdb.org/t/p/w780$backdropPath" } else null
 
-                                list.add(
-                                    TmdbSearchResult(
-                                        id = item.optInt("id"), title = title,
-                                        year = item.optString("release_date").take(4).ifBlank { item.optString("first_air_date").take(4) },
-                                        posterUrl = posterUrl, 
-                                        backdropUrl = backdropUrl,
-                                        overview = item.optString("overview"),
-                                        rating = if (voteAverage > 0) String.format("%.1f", voteAverage) else null
-                                    )
-                                )
+                                list.add(TmdbSearchResult(id = item.optInt("id"), title = title, year = item.optString("release_date").take(4).ifBlank { item.optString("first_air_date").take(4) }, posterUrl = posterUrl, backdropUrl = backdropUrl, overview = item.optString("overview"), rating = if (voteAverage > 0) String.format("%.1f", voteAverage) else null))
                             }
                         }
                     }
@@ -909,7 +821,44 @@ class VideoScraperViewModel(
         }
     }
 
-    fun applyManualScrape(seriesId: String, result: TmdbSearchResult?, newCategory: String, newTitle: String) {
+    fun fetchTmdbImages(tvId: Int, mediaType: String, onResult: (List<String>, List<String>) -> Unit) {
+        val apiKey = _uiState.value.tmdbApiKey
+        val baseUrl = _uiState.value.tmdbBaseUrl
+        if (apiKey.isBlank()) return
+        viewModelScope.launch(Dispatchers.IO) {
+            val posters = mutableListOf<String>()
+            val backdrops = mutableListOf<String>()
+            try {
+                val isProxy = baseUrl.contains("quarkalist") || baseUrl.contains("proxy")
+                val apiPath = if (isProxy) "/api/3/$mediaType/$tvId/images" else "/3/$mediaType/$tvId/images"
+                val url = "$baseUrl$apiPath?api_key=$apiKey&language=zh-CN"
+                val request = Request.Builder().url(url).build()
+                client.newCall(request).execute().use { response ->
+                    val body = response.body?.string()
+                    if (!body.isNullOrBlank()) {
+                        val json = JSONObject(body)
+                        val postersArray = json.optJSONArray("posters")
+                        if (postersArray != null) {
+                            for (i in 0 until postersArray.length()) {
+                                val path = postersArray.getJSONObject(i).optString("file_path")
+                                if (path.isNotBlank() && path != "null") { posters.add(if (isProxy) "$baseUrl/img/t/p/w500$path" else "https://image.tmdb.org/t/p/w500$path") }
+                            }
+                        }
+                        val backdropsArray = json.optJSONArray("backdrops")
+                        if (backdropsArray != null) {
+                            for (i in 0 until backdropsArray.length()) {
+                                val path = backdropsArray.getJSONObject(i).optString("file_path")
+                                if (path.isNotBlank() && path != "null") { backdrops.add(if (isProxy) "$baseUrl/img/t/p/w780$path" else "https://image.tmdb.org/t/p/w780$path") }
+                            }
+                        }
+                    }
+                }
+            } catch (e: Exception) {}
+            withContext(Dispatchers.Main) { onResult(posters, backdrops) }
+        }
+    }
+
+    fun applyManualScrape(seriesId: String, result: TmdbSearchResult?, newCategory: String, newTitle: String, customPoster: String? = null, customBackdrop: String? = null) {
         val apiKey = _uiState.value.tmdbApiKey
         val baseUrl = _uiState.value.tmdbBaseUrl
 
@@ -917,8 +866,8 @@ class VideoScraperViewModel(
             if (it.id == seriesId) {
                 it.copy(
                     title = result?.title ?: newTitle, 
-                    posterUrl = result?.posterUrl ?: it.posterUrl,
-                    backdropUrl = result?.backdropUrl ?: it.backdropUrl,
+                    posterUrl = customPoster ?: result?.posterUrl ?: it.posterUrl,
+                    backdropUrl = customBackdrop ?: result?.backdropUrl ?: it.backdropUrl,
                     overview = result?.overview ?: it.overview, 
                     rating = result?.rating ?: it.rating, 
                     category = newCategory,
@@ -944,51 +893,27 @@ class VideoScraperViewModel(
                 val seasonEpisodeStills = mutableMapOf<String, String>()
                 val episodeStills = mutableMapOf<Int, String>()
 
-                val allSeasons = updatedSeries.videos
-                    .mapNotNull { it.parsedInfo?.season }
-                    .distinct()
-                    .sorted()
+                val allSeasons = updatedSeries.videos.mapNotNull { it.parsedInfo?.season }.distinct().sorted()
                 val targetSeasons = if (allSeasons.isEmpty()) listOf(1) else allSeasons
 
                 for (season in targetSeasons) {
-                    val detail = tmdbSemaphore.withPermit {
-                        fetchSeasonDetail(result.id, season, apiKey, baseUrl)
-                    }
+                    val detail = tmdbSemaphore.withPermit { fetchSeasonDetail(result.id, season, apiKey, baseUrl) }
                     if (detail != null) {
                         seasonTitles.putAll(detail.second)
                         seasonEpisodeStills.putAll(detail.third)
                         if (targetSeasons.size == 1) {
-                            detail.second.forEach { (k, v) ->
-                                val epNum = k.substringAfter("_").toIntOrNull()
-                                if (epNum != null) episodeTitles[epNum] = v
-                            }
-                            detail.third.forEach { (k, v) ->
-                                val epNum = k.substringAfter("_").toIntOrNull()
-                                if (epNum != null) episodeStills[epNum] = v
-                            }
+                            detail.second.forEach { (k, v) -> val epNum = k.substringAfter("_").toIntOrNull(); if (epNum != null) episodeTitles[epNum] = v }
+                            detail.third.forEach { (k, v) -> val epNum = k.substringAfter("_").toIntOrNull(); if (epNum != null) episodeStills[epNum] = v }
                         }
                     }
                 }
 
-                val existingCache = scrapedCache[seriesId]
-                val mergedSeasonTitles = if (existingCache != null) {
-                    (existingCache.seasonEpisodeTitles + seasonTitles).toMutableMap()
-                } else seasonTitles.toMutableMap()
-                val mergedEpisodeTitles = if (existingCache != null) {
-                    (existingCache.episodeTitles + episodeTitles).toMutableMap()
-                } else episodeTitles.toMutableMap()
-                val mergedSeasonStills = if (existingCache != null) {
-                    (existingCache.seasonEpisodeStills + seasonEpisodeStills).toMutableMap()
-                } else seasonEpisodeStills.toMutableMap()
-                val mergedEpisodeStills = if (existingCache != null) {
-                    (existingCache.episodeStills + episodeStills).toMutableMap()
-                } else episodeStills.toMutableMap()
-
+                // 🌟 直接覆盖旧标题数据，防止不同版本串台
                 val finalSeries = updatedSeries.copy(
-                    seasonEpisodeTitles = mergedSeasonTitles,
-                    episodeTitles = mergedEpisodeTitles,
-                    seasonEpisodeStills = mergedSeasonStills,
-                    episodeStills = mergedEpisodeStills
+                    seasonEpisodeTitles = seasonTitles,
+                    episodeTitles = episodeTitles,
+                    seasonEpisodeStills = seasonEpisodeStills,
+                    episodeStills = episodeStills
                 )
 
                 withContext(Dispatchers.Main) {
@@ -996,9 +921,7 @@ class VideoScraperViewModel(
                         if (it.id == seriesId) finalSeries else it
                     }.sortedWith(compareBy(pinyinCollator) { it.title })
                     
-                    _uiState.update {
-                        it.copy(seriesList = newList, currentSeries = finalSeries)
-                    }
+                    _uiState.update { it.copy(seriesList = newList, currentSeries = finalSeries) }
                 }
 
                 saveManualScrapeComplete(finalSeries)
@@ -1009,20 +932,11 @@ class VideoScraperViewModel(
     private fun saveManualScrapeBasic(series: MediaSeries) {
         val newSignature = series.videos.map { it.fid }.sorted().joinToString("|")
         scrapedCache[series.id] = ScrapeCacheItem(
-            title = series.title,
-            category = series.category,
-            posterUrl = series.posterUrl,
-            backdropUrl = series.backdropUrl,
-            overview = series.overview,
-            rating = series.rating,
-            seasonDetails = series.seasonDetails,
-            episodeTitles = series.episodeTitles,
-            episodeStills = series.episodeStills,
-            seasonEpisodeTitles = series.seasonEpisodeTitles,
-            seasonEpisodeStills = series.seasonEpisodeStills,
-            groupName = series.groupName,
-            isManuallyEdited = true,
-            fileListSignature = newSignature
+            title = series.title, category = series.category, posterUrl = series.posterUrl, backdropUrl = series.backdropUrl,
+            overview = series.overview, rating = series.rating, seasonDetails = series.seasonDetails,
+            episodeTitles = series.episodeTitles, episodeStills = series.episodeStills,
+            seasonEpisodeTitles = series.seasonEpisodeTitles, seasonEpisodeStills = series.seasonEpisodeStills,
+            groupName = series.groupName, isManuallyEdited = true, fileListSignature = newSignature
         )
         saveScrapedCache()
     }
@@ -1030,31 +944,18 @@ class VideoScraperViewModel(
     private fun saveManualScrapeComplete(series: MediaSeries) {
         val newSignature = series.videos.map { it.fid }.sorted().joinToString("|")
         scrapedCache[series.id] = ScrapeCacheItem(
-            title = series.title,
-            category = series.category,
-            posterUrl = series.posterUrl,
-            backdropUrl = series.backdropUrl,
-            overview = series.overview,
-            rating = series.rating,
-            seasonDetails = series.seasonDetails,
-            episodeTitles = series.episodeTitles,
-            episodeStills = series.episodeStills,
-            seasonEpisodeTitles = series.seasonEpisodeTitles,
-            seasonEpisodeStills = series.seasonEpisodeStills,
-            groupName = series.groupName,
-            isManuallyEdited = true,
-            fileListSignature = newSignature
+            title = series.title, category = series.category, posterUrl = series.posterUrl, backdropUrl = series.backdropUrl,
+            overview = series.overview, rating = series.rating, seasonDetails = series.seasonDetails,
+            episodeTitles = series.episodeTitles, episodeStills = series.episodeStills,
+            seasonEpisodeTitles = series.seasonEpisodeTitles, seasonEpisodeStills = series.seasonEpisodeStills,
+            groupName = series.groupName, isManuallyEdited = true, fileListSignature = newSignature
         )
         saveScrapedCache()
     }
 
     fun playVideo(context: Context, series: MediaSeries, file: QuarkFile) {
-        val realSeries = if (series.id.startsWith("temp_")) {
-            _uiState.value.seriesList.find { s -> s.videos.any { it.fid == file.fid } } ?: series
-        } else series
-
+        val realSeries = if (series.id.startsWith("temp_")) { _uiState.value.seriesList.find { s -> s.videos.any { it.fid == file.fid } } ?: series } else series
         val cookie = _uiState.value.cookie
-        
         val parsedInfo = file.parsedInfo ?: VideoFileNameParser.parse(file.name)
         val epNum = parsedInfo.episode
         val season = parsedInfo.season ?: 1
@@ -1064,11 +965,8 @@ class VideoScraperViewModel(
             val realEpNum = epNum ?: Regex("第\\s*([0-9]+)\\s*集").find(file.name)?.groupValues?.get(1)?.toIntOrNull()
             if (realEpNum != null) {
                 val tmdbEpTitle = realSeries.seasonEpisodeTitles["${season}_${realEpNum}"] ?: realSeries.episodeTitles[realEpNum]
-                titleText = if (!tmdbEpTitle.isNullOrBlank()) "${realSeries.title} 第${realEpNum}集 $tmdbEpTitle"
-                else "${realSeries.title} 第${realEpNum}集"
-            } else if (file.name.contains("第") && file.name.contains("集")) {
-                titleText = file.name 
-            }
+                titleText = if (!tmdbEpTitle.isNullOrBlank()) "${realSeries.title} 第${realEpNum}集 $tmdbEpTitle" else "${realSeries.title} 第${realEpNum}集"
+            } else if (file.name.contains("第") && file.name.contains("集")) { titleText = file.name }
         }
 
         try {
@@ -1076,19 +974,13 @@ class VideoScraperViewModel(
             val newList = mutableListOf<JSONObject>()
             for (i in 0 until jsonArray.length()) {
                 val obj = jsonArray.getJSONObject(i)
-                if (obj.optString("seriesTitle") != realSeries.title) {
-                    newList.add(obj)
-                }
+                if (obj.optString("seriesTitle") != realSeries.title) newList.add(obj)
             }
             val newObj = JSONObject().apply {
-                put("fid", file.fid)
-                put("title", titleText) 
-                put("seriesTitle", realSeries.title)
-                put("coverPath", realSeries.posterUrl ?: "")
-                put("timestamp", System.currentTimeMillis())
+                put("fid", file.fid); put("title", titleText); put("seriesTitle", realSeries.title)
+                put("coverPath", realSeries.posterUrl ?: ""); put("timestamp", System.currentTimeMillis())
             }
             newList.add(0, newObj)
-            
             val resultArray = JSONArray()
             newList.take(50).forEach { resultArray.put(it) }
             videoSettingsRepository.recentWatchedVideos = resultArray.toString()
@@ -1103,22 +995,13 @@ class VideoScraperViewModel(
         }
 
         viewModelScope.launch {
-            val url = withContext(Dispatchers.IO) {
-                fetchDirectDownloadUrl(file.fid, cookie)
-            }
-
+            val url = withContext(Dispatchers.IO) { fetchDirectDownloadUrl(file.fid, cookie) }
             if (url != null) {
                 _uiState.update { it.copy(playUrl = url, currentPlayFile = file) }
             } else {
                 val detail = lastQuarkError ?: "未知错误"
                 stopPlaying()
-                withContext(Dispatchers.Main) {
-                    AlertDialog.Builder(context)
-                        .setTitle("获取原画直链失败")
-                        .setMessage(detail)
-                        .setPositiveButton("确定", null)
-                        .show()
-                }
+                withContext(Dispatchers.Main) { AlertDialog.Builder(context).setTitle("获取原画直链失败").setMessage(detail).setPositiveButton("确定", null).show() }
             }
         }
     }
@@ -1126,39 +1009,27 @@ class VideoScraperViewModel(
     fun handlePendingPlayRequest() {
         if (isHandlingPendingRequest) return
         val fid = videoSettingsRepository.pendingPlayFid ?: return
-        
         val series = _uiState.value.seriesList.find { it.videos.any { v -> v.fid == fid } }
         val file = series?.videos?.find { it.fid == fid }
         
         if (series != null && file != null) {
             isHandlingPendingRequest = true
             videoSettingsRepository.pendingPlayFid = null
-            
             val parsedInfo = file.parsedInfo ?: VideoFileNameParser.parse(file.name)
             val epNum = parsedInfo.episode
             val season = parsedInfo.season ?: 1
-            
             var titleText = series.title
             if (series.category != "电影") {
                 val realEpNum = epNum ?: Regex("第\\s*([0-9]+)\\s*集").find(file.name)?.groupValues?.get(1)?.toIntOrNull()
                 if (realEpNum != null) {
                     val tmdbEpTitle = series.seasonEpisodeTitles["${season}_${realEpNum}"] ?: series.episodeTitles[realEpNum]
-                    titleText = if (!tmdbEpTitle.isNullOrBlank()) "${series.title} 第${realEpNum}集 $tmdbEpTitle"
-                    else "${series.title} 第${realEpNum}集"
-                } else if (file.name.contains("第") && file.name.contains("集")) {
-                    titleText = file.name
-                }
+                    titleText = if (!tmdbEpTitle.isNullOrBlank()) "${series.title} 第${realEpNum}集 $tmdbEpTitle" else "${series.title} 第${realEpNum}集"
+                } else if (file.name.contains("第") && file.name.contains("集")) { titleText = file.name }
             }
-
             _uiState.update { it.copy(playUrl = null, playTitle = titleText, currentSeries = series, currentPlayFile = file, isDirectPlay = true) }
-            
             viewModelScope.launch {
                 val url = withContext(Dispatchers.IO) { fetchDirectDownloadUrl(file.fid, _uiState.value.cookie) }
-                if (url != null) {
-                    _uiState.update { it.copy(playUrl = url) }
-                } else {
-                    stopPlaying()
-                }
+                if (url != null) _uiState.update { it.copy(playUrl = url) } else stopPlaying()
                 isHandlingPendingRequest = false
             }
         }
@@ -1167,32 +1038,19 @@ class VideoScraperViewModel(
     private fun updateCookieFromResponse(headers: okhttp3.Headers) {
         val setCookies = headers.values("Set-Cookie")
         if (setCookies.isEmpty()) return
-
         var currentCookie = _uiState.value.cookie.ifBlank { videoSettingsRepository.quarkCookie }
         if (currentCookie.isBlank()) return
-
         val cookieMap = mutableMapOf<String, String>()
-        currentCookie.split(";").forEach {
-            val parts = it.trim().split("=", limit = 2)
-            if (parts.size == 2) cookieMap[parts[0]] = parts[1]
-        }
-
+        currentCookie.split(";").forEach { val parts = it.trim().split("=", limit = 2); if (parts.size == 2) cookieMap[parts[0]] = parts[1] }
         var changed = false
         setCookies.forEach { setCookie ->
             val firstPart = setCookie.split(";").firstOrNull() ?: return@forEach
             val parts = firstPart.trim().split("=", limit = 2)
             if (parts.size == 2) {
-                val key = parts[0].trim()
-                val value = parts[1].trim()
-                if (key == "__puus" || key == "__pus" || key == "__uid") {
-                    if (cookieMap[key] != value) {
-                        cookieMap[key] = value
-                        changed = true
-                    }
-                }
+                val key = parts[0].trim(); val value = parts[1].trim()
+                if (key == "__puus" || key == "__pus" || key == "__uid") { if (cookieMap[key] != value) { cookieMap[key] = value; changed = true } }
             }
         }
-
         if (changed) {
             val newCookie = cookieMap.entries.joinToString(";") { "${it.key}=${it.value}" }
             videoSettingsRepository.quarkCookie = newCookie
@@ -1206,81 +1064,44 @@ class VideoScraperViewModel(
             val apiUrl = "https://drive-pc.quark.cn/1/clouddrive/file/download?pr=ucpro&fr=pc"
             val jsonBody = JSONObject().apply { put("fids", JSONArray().put(fid)) }
             val body = jsonBody.toString().toRequestBody("application/json".toMediaType())
-
-            val request = Request.Builder()
-                .url(apiUrl).post(body)
+            val request = Request.Builder().url(apiUrl).post(body)
                 .header("Cookie", cookie)
                 .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) quark-cloud-drive/2.5.20 Chrome/100.0.4896.160 Electron/18.3.5.4-b478491100 Safari/537.36 Channel/pckk_other_ch")
-                .header("Referer", "https://pan.quark.cn/")
-                .header("Accept", "application/json, text/plain, */*")
-                .build()
+                .header("Referer", "https://pan.quark.cn/").header("Accept", "application/json, text/plain, */*").build()
 
             client.newCall(request).execute().use { response ->
                 updateCookieFromResponse(response.headers)
-
                 val httpCode = response.code
                 val resBody = response.body?.string()
-
-                if (httpCode != 200) {
-                    lastQuarkError = "HTTP $httpCode\n\n$resBody"
-                    return null
-                }
-                if (resBody.isNullOrBlank()) {
-                    lastQuarkError = "响应体为空 (HTTP $httpCode)"
-                    return null
-                }
-
+                if (httpCode != 200) { lastQuarkError = "HTTP $httpCode\n\n$resBody"; return null }
+                if (resBody.isNullOrBlank()) { lastQuarkError = "响应体为空 (HTTP $httpCode)"; return null }
                 val json = JSONObject(resBody)
                 val code = json.optInt("code", -1)
                 val message = json.optString("message")
-                if (code != 0) {
-                    lastQuarkError = "code=$code\nmessage=$message\n\n$resBody"
-                    return null
-                }
-
+                if (code != 0) { lastQuarkError = "code=$code\nmessage=$message\n\n$resBody"; return null }
                 val data = json.optJSONArray("data")
-                if (data == null || data.length() == 0) {
-                    lastQuarkError = "data 为空\n\n$resBody"
-                    return null
-                }
-
+                if (data == null || data.length() == 0) { lastQuarkError = "data 为空\n\n$resBody"; return null }
                 val downloadUrl = data.getJSONObject(0).optString("download_url")
-                if (downloadUrl.isBlank()) {
-                    lastQuarkError = "download_url 为空\n\n$resBody"
-                    return null
-                }
+                if (downloadUrl.isBlank()) { lastQuarkError = "download_url 为空\n\n$resBody"; return null }
                 return downloadUrl
             }
-        } catch (e: Exception) {
-            lastQuarkError = "异常: ${e.message}\n\n${e.stackTraceToString()}"
-            null
-        }
+        } catch (e: Exception) { lastQuarkError = "异常: ${e.message}\n\n${e.stackTraceToString()}"; null }
     }
 
     fun getVideoProgress(fid: String): Long {
-        try {
-            val json = JSONObject(videoSettingsRepository.videoProgressData)
-            if (json.has(fid)) return json.getLong(fid)
-        } catch (e: Exception) {}
+        try { val json = JSONObject(videoSettingsRepository.videoProgressData); if (json.has(fid)) return json.getLong(fid) } catch (e: Exception) {}
         return 0L
     }
 
     fun saveVideoProgress(fid: String, position: Long) {
-        try {
-            val json = JSONObject(videoSettingsRepository.videoProgressData)
-            json.put(fid, position)
-            videoSettingsRepository.videoProgressData = json.toString()
-        } catch (e: Exception) {}
+        try { val json = JSONObject(videoSettingsRepository.videoProgressData); json.put(fid, position); videoSettingsRepository.videoProgressData = json.toString() } catch (e: Exception) {}
     }
 
     fun getIntroOutro(seriesTitle: String, season: Int): Pair<Int, Int> {
         try {
             val json = JSONObject(videoSettingsRepository.introOutroData)
             val key = "${seriesTitle}_S$season"
-            if (json.has(key)) {
-                val obj = json.getJSONObject(key)
-                return Pair(obj.optInt("intro", 0), obj.optInt("outro", 0))
-            }
+            if (json.has(key)) { val obj = json.getJSONObject(key); return Pair(obj.optInt("intro", 0), obj.optInt("outro", 0)) }
         } catch (e: Exception) {}
         return Pair(0, 0)
     }
@@ -1309,9 +1130,7 @@ class VideoScraperViewModel(
             val newList = mutableListOf<JSONObject>()
             for (i in 0 until jsonArray.length()) {
                 val obj = jsonArray.getJSONObject(i)
-                if (!seriesTitles.contains(obj.optString("seriesTitle"))) {
-                    newList.add(obj)
-                }
+                if (!seriesTitles.contains(obj.optString("seriesTitle"))) newList.add(obj)
             }
             val resultArray = JSONArray()
             newList.forEach { resultArray.put(it) }
@@ -1322,21 +1141,13 @@ class VideoScraperViewModel(
 
     fun fetchQuarkFiles(fid: String = "0", isBack: Boolean = false, folderName: String? = null) {
         val cookie = _uiState.value.cookie
-        if (cookie.isBlank()) {
-            _uiState.update { it.copy(errorMsg = "请先设置 Cookie 或扫码登录") }
-            return
-        }
+        if (cookie.isBlank()) { _uiState.update { it.copy(errorMsg = "请先设置 Cookie 或扫码登录") }; return }
         
-        if (fid == "0") {
-            pathHistory.clear()
-            browsePath.clear()
-        } else if (!isBack && _uiState.value.currentFid != fid) {
+        if (fid == "0") { pathHistory.clear(); browsePath.clear() } 
+        else if (!isBack && _uiState.value.currentFid != fid) {
             pathHistory.add(_uiState.value.currentFid)
-            if (folderName != null) {
-                browsePath.add(folderName)
-            }
+            if (folderName != null) browsePath.add(folderName)
         }
-        
         _uiState.update { it.copy(currentFid = fid, errorMsg = null) }
 
         viewModelScope.launch {
@@ -1377,9 +1188,7 @@ class VideoScraperViewModel(
 
     fun goBack() {
         if (pathHistory.isNotEmpty()) {
-            if (browsePath.isNotEmpty()) {
-                browsePath.removeAt(browsePath.size - 1)
-            }
+            if (browsePath.isNotEmpty()) browsePath.removeAt(browsePath.size - 1)
             fetchQuarkFiles(pathHistory.removeAt(pathHistory.size - 1), isBack = true) 
         } else {
             fetchQuarkFiles("0")
