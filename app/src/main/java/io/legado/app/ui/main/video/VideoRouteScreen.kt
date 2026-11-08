@@ -398,7 +398,19 @@ fun VideoScraperScreen(
                         }
                     }
                 } else {
-                    MediaDetailScreen(series = latestSeries, allSeries = uiState.seriesList, isScraping = uiState.isScraping, onBack = { viewModel.selectSeries(null) }, onPlay = { series, file -> viewModel.playVideo(context, series, file) }, onLongClickPoster = { manualScrapeSeries = it; showManualScrapeDialog = true }, onSelectSeries = { viewModel.selectSeries(it) })
+                    MediaDetailScreen(
+                        series = latestSeries, allSeries = uiState.seriesList, isScraping = uiState.isScraping, 
+                        onBack = { viewModel.selectSeries(null) }, 
+                        onPlay = { series, file -> 
+                            // 🌟 修复点：提前发横屏请求防闪烁
+                            if (activity != null && !activity.isInMultiWindowMode) {
+                                activity.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
+                            }
+                            viewModel.playVideo(context, series, file) 
+                        }, 
+                        onLongClickPoster = { manualScrapeSeries = it; showManualScrapeDialog = true }, 
+                        onSelectSeries = { viewModel.selectSeries(it) }
+                    )
                 }
             }
         } else if (viewAllCategory != null) {
@@ -436,6 +448,9 @@ fun VideoScraperScreen(
                                     if (isSelectionMode) {
                                         if (selectedTitles.contains(historyItem.seriesTitle)) selectedTitles.remove(historyItem.seriesTitle) else selectedTitles.add(historyItem.seriesTitle)
                                     } else {
+                                        if (activity != null && !activity.isInMultiWindowMode) {
+                                            activity.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
+                                        }
                                         val series = uiState.seriesList.find { it.title == historyItem.seriesTitle }
                                         val file = series?.videos?.find { it.fid == historyItem.fid }
                                         if (series != null && file != null) viewModel.playVideo(context, series, file)
@@ -484,7 +499,12 @@ fun VideoScraperScreen(
                                         else -> list.shuffled()
                                     }.take(10)
                                 }
-                                if (bannerList.isNotEmpty()) BannerCarousel(bannerList, onSelect = { viewModel.selectSeries(it) })
+                                if (bannerList.isNotEmpty()) BannerCarousel(bannerList, onSelect = { 
+                                    if (activity != null && !activity.isInMultiWindowMode) {
+                                        activity.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
+                                    }
+                                    viewModel.selectSeries(it) 
+                                })
                             }
 
                             finalOrderList.forEach { categoryName ->
@@ -500,6 +520,9 @@ fun VideoScraperScreen(
                                             LazyRow(contentPadding = PaddingValues(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                                                 items(recentWatchedList.take(10)) { item ->
                                                     RecentWatchedCard(item = item, onClick = {
+                                                        if (activity != null && !activity.isInMultiWindowMode) {
+                                                            activity.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
+                                                        }
                                                         val series = uiState.seriesList.find { it.title == item.seriesTitle }
                                                         val file = series?.videos?.find { it.fid == item.fid }
                                                         if (series != null && file != null) viewModel.playVideo(context, series, file)
@@ -792,7 +815,11 @@ fun InternalVideoPlayer(url: String, title: String, cookie: String, series: Medi
     var hasRequestedLandscape = remember { false }
 
     LaunchedEffect(Unit) {
-        if (!hasRequestedLandscape && !isInMultiWindowMode && activity?.isInPictureInPictureMode != true) { activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE; hasRequestedLandscape = true }
+        // 🌟 修复点：进入播放器时，使用 SENSOR_LANDSCAPE 双方向感应
+        if (!hasRequestedLandscape && !isInMultiWindowMode && activity?.isInPictureInPictureMode != true) { 
+            activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
+            hasRequestedLandscape = true 
+        }
         while (true) { currentSystemTime = SimpleDateFormat("HH:mm", Locale.getDefault()).format(Date()); delay(1000) }
     }
 
@@ -1108,8 +1135,12 @@ fun InternalVideoPlayer(url: String, title: String, cookie: String, series: Medi
                 Column(modifier = Modifier.align(Alignment.CenterStart).padding(start = 16.dp), verticalArrangement = Arrangement.spacedBy(30.dp)) {
                     Surface(color = Color.White.copy(alpha = 0.1f), shape = CircleShape, border = BorderStroke(1.dp, Color.White.copy(alpha = 0.2f))) {
                         IconButton(onClick = {
-                            // 🌟 方案一修复点：直接发送 UNSPECIFIED，让系统读取当前物理方向（横屏），并交还重力感应
-                            activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
+                            // 🌟 修复点：横屏双方向重力，竖屏强制锁定
+                            if (isLandscape) {
+                                activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
+                            } else {
+                                activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
+                            }
                         }) { Icon(Icons.Default.ScreenRotation, null, tint = Color.White) }
                     }
                 }
