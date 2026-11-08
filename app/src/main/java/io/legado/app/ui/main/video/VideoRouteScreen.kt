@@ -1068,7 +1068,7 @@ fun InternalVideoPlayer(
 
     var currentSystemTime by remember { mutableStateOf("") }
 
-    // 🌟 核心修复：不再使用重力传感器去干预，完全交由 Activity 响应 requestOrientation
+    // 🌟 核心修复：手动控制方向，绝不被重力感应骚扰
     var hasRequestedLandscape = remember { false }
     LaunchedEffect(Unit) {
         if (!hasRequestedLandscape && !isInMultiWindowMode && activity?.isInPictureInPictureMode != true) {
@@ -1188,7 +1188,7 @@ fun InternalVideoPlayer(
                 prepare()
                 playWhenReady = true
                 setWakeMode(androidx.media3.common.C.WAKE_MODE_NETWORK)
-                volume = 1f // 🌟 核心修复：强制音量系数 1
+                // 🌟 核心修复：不要强制修改音量，让其默认即可
             }
     }
 
@@ -1516,7 +1516,7 @@ fun InternalVideoPlayer(
                                 val maxVol = audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC)
                                 val newVolFloat = (startVolume.toFloat() / maxVol) - (deltaY / size.height)
                                 gestureValue = newVolFloat.coerceIn(0f, 1f)
-                                // 🌟 核心修复：静默调起系统音量
+                                // 🌟 核心修复：直接调系统音量，不做任何强制
                                 audioManager.setStreamVolume(AudioManager.STREAM_MUSIC, (gestureValue * maxVol).roundToInt(), 0)
                             }
                         }
