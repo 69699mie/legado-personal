@@ -116,7 +116,8 @@
             <meta-data android:name="com.samsung.android.support.REMOTE_ACTION" android:resource="@xml/spen_remote_actions" />
         </activity>
 
-        <!-- 主界面：添加了 screenOrientation="locked" -->
+        <!-- 🌟 修复点1：将 screenOrientation 改为 unspecified 解决旋转跳变 -->
+        <!-- 🌟 修复点2：configChanges 包含 screenLayout 以配合 PiP -->
         <activity
             android:name=".ui.main.MainActivity"
             android:alwaysRetainTaskState="true"
@@ -125,7 +126,7 @@
             android:windowSoftInputMode="adjustResize"
             android:supportsPictureInPicture="true"
             android:resizeableActivity="true"
-            android:screenOrientation="locked"
+            android:screenOrientation="unspecified"
             android:exported="true">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
