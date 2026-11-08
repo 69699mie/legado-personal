@@ -2,7 +2,6 @@ package io.legado.app.help
 
 import android.content.ComponentName
 import android.content.pm.PackageManager
-import android.widget.Toast
 import io.legado.app.ui.main.Launcher0
 import io.legado.app.ui.main.Launcher1
 import io.legado.app.ui.main.Launcher2
@@ -15,60 +14,52 @@ import io.legado.app.ui.main.MainActivity
 import splitties.init.appCtx
 
 /**
- * Created by GKF on 2018/2/27.
- * 更换图标
+ * 修改为：强制启用第 7 个图标（Launcher6），禁用其他所有图标。
  */
 object LauncherIconHelp {
     private val packageManager: PackageManager = appCtx.packageManager
-    
-    // 如需隐藏多余图标，请直接把不需要的 ComponentName 从这里删掉即可
-    private val componentNames = arrayListOf(
-        ComponentName(appCtx, LauncherW::class.java.name),
-        ComponentName(appCtx, Launcher0::class.java.name),
-        ComponentName(appCtx, Launcher1::class.java.name),
-        ComponentName(appCtx, Launcher2::class.java.name),
-        ComponentName(appCtx, Launcher3::class.java.name),
-        ComponentName(appCtx, Launcher4::class.java.name),
-        ComponentName(appCtx, Launcher5::class.java.name),
-        ComponentName(appCtx, Launcher6::class.java.name)
-    )
 
     fun changeIcon(icon: String?) {
-        if (icon.isNullOrEmpty()) return
-        var hasEnabled = false
-        componentNames.forEach {
-            if (icon.equals(it.className.substringAfterLast("."), true)) {
-                hasEnabled = true
-                safelySetComponentEnabled(it, PackageManager.COMPONENT_ENABLED_STATE_ENABLED)
-            } else {
-                safelySetComponentEnabled(it, PackageManager.COMPONENT_ENABLED_STATE_DISABLED)
-            }
-        }
-        if (hasEnabled) {
-            safelySetComponentEnabled(
-                ComponentName(appCtx, MainActivity::class.java.name),
-                PackageManager.COMPONENT_ENABLED_STATE_DISABLED
-            )
-        } else {
-            safelySetComponentEnabled(
-                ComponentName(appCtx, MainActivity::class.java.name),
-                PackageManager.COMPONENT_ENABLED_STATE_ENABLED
-            )
-        }
-    }
+        // 🌟 无论传入什么参数，强制指定使用 Launcher6
+        val targetComponent = ComponentName(appCtx, Launcher6::class.java.name)
+        val mainActivityComponent = ComponentName(appCtx, MainActivity::class.java.name)
+        
+        // 需要禁用的其他 Launcher 列表
+        val disabledComponents = listOf(
+            ComponentName(appCtx, LauncherW::class.java.name),
+            ComponentName(appCtx, Launcher0::class.java.name),
+            ComponentName(appCtx, Launcher1::class.java.name),
+            ComponentName(appCtx, Launcher2::class.java.name),
+            ComponentName(appCtx, Launcher3::class.java.name),
+            ComponentName(appCtx, Launcher4::class.java.name),
+            ComponentName(appCtx, Launcher5::class.java.name)
+        )
 
-    // 🌟 核心修复：加入 try-catch 防止 R8 混淆导致系统抛出 IllegalArgumentException 崩溃
-    private fun safelySetComponentEnabled(componentName: ComponentName, newState: Int) {
         try {
+            // 1. 启用 Launcher6
             packageManager.setComponentEnabledSetting(
-                componentName,
-                newState,
+                targetComponent,
+                PackageManager.COMPONENT_ENABLED_STATE_ENABLED,
                 PackageManager.DONT_KILL_APP
             )
-        } catch (e: IllegalArgumentException) {
-            e.printStackTrace()
-            Toast.makeText(appCtx, "切换图标失败，请尝试重启应用", Toast.LENGTH_SHORT).show()
-        } catch (e: SecurityException) {
+            
+            // 2. 禁用默认的 MainActivity 图标
+            packageManager.setComponentEnabledSetting(
+                mainActivityComponent,
+                PackageManager.COMPONENT_ENABLED_STATE_DISABLED,
+                PackageManager.DONT_KILL_APP
+            )
+            
+            // 3. 禁用其他所有 Launcher 图标（防止用户以前切换过导致桌面残留多个图标）
+            disabledComponents.forEach {
+                packageManager.setComponentEnabledSetting(
+                    it,
+                    PackageManager.COMPONENT_ENABLED_STATE_DISABLED,
+                    PackageManager.DONT_KILL_APP
+                )
+            }
+        } catch (e: Exception) {
+            // 捕获异常防止崩溃
             e.printStackTrace()
         }
     }
