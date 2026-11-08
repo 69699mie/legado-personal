@@ -88,6 +88,7 @@ object Backup {
             "highlightTagRule.json",
             "tagGroupRule.json",
             "servers.json",
+            "video_settings.json", // 🌟 新增：影视库与 Cookie 备份文件
             DirectLinkUpload.ruleFileName,
             ReadBookConfig.configFileName,
             ReadBookConfig.shareConfigFileName,
@@ -145,6 +146,7 @@ object Backup {
         LocalConfig.lastBackup = System.currentTimeMillis()
         val aes = BackupAES()
         FileUtils.delete(backupPath)
+        
         writeListToJson(
             appDb.bookDao.all.filterNot { BackupConfig.backupIgnoreLocalBook && it.isLocal },
             "bookshelf.json",
@@ -300,6 +302,14 @@ object Backup {
         FileUtils.createFileIfNotExist(backupPath + File.separator + "config.xml")
             .writeText(xmlBuilder.toString())
 
+        // 🌟 核心新增：打包 VideoSettingsRepository 独立配置 (包含 Cookie, 影视库刮削等)
+        val videoPrefs = appCtx.getSharedPreferences("video_settings", Context.MODE_PRIVATE)
+        val videoMap = videoPrefs.all
+        if (videoMap.isNotEmpty()) {
+            FileUtils.createFileIfNotExist(backupPath + File.separator + "video_settings.json")
+                .writeText(GSON.toJson(videoMap))
+        }
+
         currentCoroutineContext().ensureActive()
         val zipFileName = getNowZipFileName()
         val paths = backupFileNames
@@ -319,11 +329,9 @@ object Backup {
                     path.isNullOrBlank() -> {
                         copyBackup(context.getExternalFilesDir(null)!!, backupFileName)
                     }
-
                     path.isContentScheme() -> {
                         copyBackup(context, path.toUri(), backupFileName)
                     }
-
                     else -> {
                         copyBackup(File(path), backupFileName)
                     }
