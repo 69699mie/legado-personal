@@ -238,6 +238,7 @@ fun VideoLibraryScreen(
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val context = LocalContext.current
+
     var showSettingsDialog by remember { mutableStateOf(false) }
 
     BackHandler(enabled = uiState.currentFid != "0") { viewModel.goBack() }
@@ -416,6 +417,7 @@ fun VideoScraperScreen(
                 val showLoading = uiState.isScraping && isDataIncomplete && !latestSeries.isManuallyEdited
 
                 if (showLoading) {
+                    // 骨架屏
                     Column(modifier = Modifier.fillMaxSize().background(Color.White).statusBarsPadding().verticalScroll(rememberScrollState())) {
                         Box(modifier = Modifier.fillMaxWidth().height(350.dp)) {
                             ShimmerBox(modifier = Modifier.fillMaxSize())
@@ -461,7 +463,15 @@ fun VideoScraperScreen(
                     horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(16.dp)
                 ) {
                     items(categorySeries.sortedWith(compareBy(pinyinCollator) { it.title })) { series ->
-                        SeriesPosterCard(series = series, onClick = { viewModel.selectSeries(series) }, onLongClick = { manualScrapeSeries = series; showManualScrapeDialog = true })
+                        // 🌟 核心修复：点击分类卡片进入详情
+                        SeriesPosterCard(
+                            series = series, isScraping = uiState.isScraping,
+                            onClick = { 
+                                viewModel.stopPlaying() // 强制清空残留的播放状态，防止抢占详情页
+                                viewModel.selectSeries(series) 
+                            },
+                            onLongClick = { manualScrapeSeries = series; showManualScrapeDialog = true }
+                        )
                     }
                 }
             }
@@ -503,7 +513,6 @@ fun VideoScraperScreen(
                                             if (selectedTitles.contains(historyItem.seriesTitle)) selectedTitles.remove(historyItem.seriesTitle)
                                             else selectedTitles.add(historyItem.seriesTitle)
                                         } else {
-                                            // 🌟 最近观看：直接播放
                                             val series = uiState.seriesList.find { it.title == historyItem.seriesTitle }
                                             val file = series?.videos?.find { it.fid == historyItem.fid }
                                             if (series != null && file != null) {
@@ -581,7 +590,6 @@ fun VideoScraperScreen(
                                         item {
                                             LazyRow(contentPadding = PaddingValues(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                                                 items(recentWatchedList.take(10)) { item ->
-                                                    // 🌟 最近观看：直接播放
                                                     RecentWatchedCard(
                                                         item = item,
                                                         onClick = {
@@ -612,10 +620,13 @@ fun VideoScraperScreen(
                                         item {
                                             LazyRow(contentPadding = PaddingValues(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                                                 items(seriesList.sortedWith(compareBy(pinyinCollator) { it.title })) { series ->
-                                                    // 🌟 分类卡片：进详情页
+                                                    // 🌟 核心修复：点击主页分类卡片进入详情
                                                     SeriesPosterCard(
                                                         series = series, isScraping = uiState.isScraping,
-                                                        onClick = { viewModel.selectSeries(series) },
+                                                        onClick = { 
+                                                            viewModel.stopPlaying() // 强制清空残留的播放状态，防止抢占详情页
+                                                            viewModel.selectSeries(series) 
+                                                        },
                                                         onLongClick = { manualScrapeSeries = series; showManualScrapeDialog = true }
                                                     )
                                                 }
@@ -1068,7 +1079,6 @@ fun InternalVideoPlayer(
 
     var currentSystemTime by remember { mutableStateOf("") }
 
-    // 🌟 核心修复：手动控制方向，绝不被重力感应骚扰
     var hasRequestedLandscape = remember { false }
     LaunchedEffect(Unit) {
         if (!hasRequestedLandscape && !isInMultiWindowMode && activity?.isInPictureInPictureMode != true) {
@@ -1188,7 +1198,6 @@ fun InternalVideoPlayer(
                 prepare()
                 playWhenReady = true
                 setWakeMode(androidx.media3.common.C.WAKE_MODE_NETWORK)
-                // 🌟 核心修复：不要强制修改音量，让其默认即可
             }
     }
 
@@ -1273,7 +1282,7 @@ fun InternalVideoPlayer(
     }
 
     LaunchedEffect(url) {
-        // 🌟 核心修复：切换源时瞬间清空状态，防止旧数据流入
+        // 🌟 核心修复：瞬间清空所有进度和 UI 状态，防止新集继承了旧集的画面和进度
         currentPosition = 0L
         duration = 0L
         bufferedPosition = 0L
@@ -1296,7 +1305,7 @@ fun InternalVideoPlayer(
         exoPlayer.playWhenReady = true
     }
 
-    // 🌟 核心修复：定时保存进度，严格绑定当前 fid
+    // 🌟 核心修复：定时保存进度，彻底消灭进度串台
     LaunchedEffect(currentFile.fid, isPlaying) {
         while (isPlaying) {
             delay(1000)
@@ -1516,7 +1525,6 @@ fun InternalVideoPlayer(
                                 val maxVol = audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC)
                                 val newVolFloat = (startVolume.toFloat() / maxVol) - (deltaY / size.height)
                                 gestureValue = newVolFloat.coerceIn(0f, 1f)
-                                // 🌟 核心修复：直接调系统音量，不做任何强制
                                 audioManager.setStreamVolume(AudioManager.STREAM_MUSIC, (gestureValue * maxVol).roundToInt(), 0)
                             }
                         }
@@ -1639,7 +1647,6 @@ fun InternalVideoPlayer(
                 Column(modifier = Modifier.align(Alignment.CenterStart).padding(start = 16.dp), verticalArrangement = Arrangement.spacedBy(30.dp)) {
                     Surface(color = Color.White.copy(alpha = 0.1f), shape = CircleShape, border = BorderStroke(1.dp, Color.White.copy(alpha = 0.2f))) {
                         IconButton(onClick = {
-                            // 🌟 手动旋转直接请求，绝不和重力感应打架
                             if (isLandscape) {
                                 activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
                             } else {
@@ -1654,7 +1661,6 @@ fun InternalVideoPlayer(
                         IconButton(onClick = {
                             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                                 try {
-                                    // 🌟 直接 try-catch 唤起画中画，不依赖不可靠的 hasSystemFeature
                                     val prevBitmap = createPipIcon("prev", context)
                                     val playPauseBitmap = createPipIcon(if (isPlaying) "pause" else "play", context)
                                     val nextBitmap = createPipIcon("next", context)
@@ -1668,9 +1674,18 @@ fun InternalVideoPlayer(
                                     val nextPendingIntent = PendingIntent.getBroadcast(context, 102, Intent(PIP_ACTION).setPackage(context.packageName).putExtra(EXTRA_CONTROL, CONTROL_NEXT), PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
                                     val nextAction = RemoteAction(Icon.createWithBitmap(nextBitmap), "下一集", "下一集", nextPendingIntent)
 
-                                    val params = PictureInPictureParams.Builder().setAspectRatio(Rational(16, 9)).setActions(listOf(prevAction, playPauseAction, nextAction)).build()
+                                    val params = PictureInPictureParams.Builder()
+                                        .setAspectRatio(Rational(16, 9))
+                                        .setActions(listOf(prevAction, playPauseAction, nextAction))
+                                        .setSeamlessResizeEnabled(true)
+                                        .setAutoEnterEnabled(false)
+                                        .build()
                                     val success = activity?.enterPictureInPictureMode(params) ?: false
-                                    if (success) isInPip.value = true
+                                    if (success) {
+                                        isInPip.value = true
+                                    } else {
+                                        Toast.makeText(context, "画中画启动失败，可能是系统限制", Toast.LENGTH_SHORT).show()
+                                    }
                                 } catch (e: Exception) {
                                     Toast.makeText(context, "设备不支持画中画", Toast.LENGTH_SHORT).show()
                                 }
