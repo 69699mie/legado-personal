@@ -52,9 +52,8 @@
             </intent-filter>
             <meta-data android:name="com.samsung.android.support.REMOTE_ACTION" android:resource="@xml/spen_remote_actions" />
         </activity>
-        <!-- 其他 Launcher 界面省略，保持你原有的即可 -->
-
-        <!-- 🌟 核心修复：MainActivity 配置 -->
+        
+        <!-- 🌟 修复点：将 screenOrientation 改为 sensor，配合方案一 -->
         <activity
             android:name=".ui.main.MainActivity"
             android:alwaysRetainTaskState="true"
@@ -63,7 +62,7 @@
             android:windowSoftInputMode="adjustResize"
             android:supportsPictureInPicture="true"
             android:resizeableActivity="true"
-            android:screenOrientation="unspecified"
+            android:screenOrientation="sensor"
             android:exported="true">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
@@ -73,8 +72,6 @@
             <meta-data android:name="com.samsung.android.support.REMOTE_ACTION" android:resource="@xml/spen_remote_actions" />
         </activity>
 
-        <!-- 其他 Activity, Service 等保持原样即可 -->
-        
         <activity android:name=".ui.welcome.WelcomeActivity" android:configChanges="locale|layoutDirection|uiMode|screenLayout" android:enableOnBackInvokedCallback="true" android:exported="false" android:windowSoftInputMode="adjustPan|stateHidden" />
         <activity android:name="io.legado.app.lib.permission.PermissionActivity" android:enableOnBackInvokedCallback="true" android:theme="@style/Activity.Permission" />
         <activity android:name=".ui.qrcode.QrCodeActivity" android:configChanges="locale|layoutDirection|uiMode|screenLayout" android:enableOnBackInvokedCallback="true" android:launchMode="singleTask" />
