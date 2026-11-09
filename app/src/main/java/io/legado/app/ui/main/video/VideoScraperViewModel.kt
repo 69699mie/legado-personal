@@ -257,7 +257,7 @@ class VideoScraperViewModel(
                     }
                     
                     if (entitiesToInsert.isNotEmpty()) {
-                        videoScrapedDao.upsertAll(entitiesToInsert)
+                        videoScrapedDao.replaceAll(entitiesToInsert)
                     }
                     // 迁移完毕，清空旧的 SP 数据释放空间
                     videoSettingsRepository.scrapedCacheData = ""
@@ -273,8 +273,8 @@ class VideoScraperViewModel(
         val entities = scrapedCache.map { (id, item) -> item.toEntity(id) }
         viewModelScope.launch(Dispatchers.IO) {
             try {
-                videoScrapedDao.deleteAll()
-                videoScrapedDao.upsertAll(entities)
+                // 使用 DAO 里的 replaceAll 事务方法
+                videoScrapedDao.replaceAll(entities)
             } catch (e: Exception) {
                 e.printStackTrace()
             }
