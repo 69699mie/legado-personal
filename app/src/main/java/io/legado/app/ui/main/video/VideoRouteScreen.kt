@@ -90,6 +90,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
@@ -682,7 +683,9 @@ private fun ManualScrapeDialog(series: MediaSeries, viewModel: VideoScraperViewM
                                             modifier = Modifier
                                                 .size(90.dp, 135.dp)
                                                 .clip(RoundedCornerShape(8.dp))
-                                                .border(if (isSelected) 3.dp else 0.dp, MaterialTheme.colorScheme.primary, RoundedCornerShape(8.dp))
+                                                // 🌟 使用纯白边框 + 阴影凸显选中状态
+                                                .border(if (isSelected) 3.dp else 0.dp, Color.White, RoundedCornerShape(8.dp))
+                                                .shadow(if (isSelected) 8.dp else 0.dp, RoundedCornerShape(8.dp))
                                                 .clickable { selectedPoster = url }
                                         ) {
                                             AsyncImage(model = url, contentDescription = null, modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
@@ -690,8 +693,9 @@ private fun ManualScrapeDialog(series: MediaSeries, viewModel: VideoScraperViewM
                                                 Icon(
                                                     imageVector = Icons.Default.CheckCircle,
                                                     contentDescription = null,
-                                                    tint = MaterialTheme.colorScheme.primary,
-                                                    modifier = Modifier.align(Alignment.TopEnd).padding(4.dp).size(20.dp).background(Color.White, CircleShape)
+                                                    // 🌟 纯白图标 + 黑色半透明背景防止反光看不清
+                                                    tint = Color.White,
+                                                    modifier = Modifier.align(Alignment.TopEnd).padding(4.dp).size(20.dp).background(Color.Black.copy(alpha = 0.5f), CircleShape)
                                                 )
                                             }
                                         }
@@ -709,7 +713,9 @@ private fun ManualScrapeDialog(series: MediaSeries, viewModel: VideoScraperViewM
                                             modifier = Modifier
                                                 .size(160.dp, 90.dp)
                                                 .clip(RoundedCornerShape(8.dp))
-                                                .border(if (isSelected) 3.dp else 0.dp, MaterialTheme.colorScheme.primary, RoundedCornerShape(8.dp))
+                                                // 🌟 使用纯白边框
+                                                .border(if (isSelected) 3.dp else 0.dp, Color.White, RoundedCornerShape(8.dp))
+                                                .shadow(if (isSelected) 8.dp else 0.dp, RoundedCornerShape(8.dp))
                                                 .clickable { selectedBackdrop = url }
                                         ) {
                                             AsyncImage(model = url, contentDescription = null, modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
@@ -717,8 +723,8 @@ private fun ManualScrapeDialog(series: MediaSeries, viewModel: VideoScraperViewM
                                                 Icon(
                                                     imageVector = Icons.Default.CheckCircle,
                                                     contentDescription = null,
-                                                    tint = MaterialTheme.colorScheme.primary,
-                                                    modifier = Modifier.align(Alignment.TopEnd).padding(4.dp).size(20.dp).background(Color.White, CircleShape)
+                                                    tint = Color.White,
+                                                    modifier = Modifier.align(Alignment.TopEnd).padding(4.dp).size(20.dp).background(Color.Black.copy(alpha = 0.5f), CircleShape)
                                                 )
                                             }
                                         }
@@ -789,7 +795,10 @@ fun InternalVideoPlayer(url: String, title: String, cookie: String, series: Medi
     val latestSeries = uiState.seriesList.find { it.id == series.id || it.title == series.title } ?: series
     
     val sortedVideos = remember(latestSeries.videos) {
-        latestSeries.videos.sortedWith(compareBy<QuarkFile> { it.parsedInfo?.season ?: 1 }.thenBy { extractEpisodeNumber(it.name, it.parsedInfo?.episode) }.thenBy { it.name })
+        latestSeries.videos.sortedWith(
+            compareBy<QuarkFile> { extractEpisodeNumber(it.name, it.parsedInfo?.episode) }
+                .thenBy { it.name }
+        )
     }
 
     val isInMultiWindowMode = remember { activity?.isInMultiWindowMode == true }
@@ -1336,7 +1345,10 @@ fun MediaDetailScreen(
     }
 
     val currentSeasonVideos = remember(series) {
-        series.videos.sortedWith(compareBy<QuarkFile> { it.parsedInfo?.season ?: 1 }.thenBy { extractEpisodeNumber(it.name, it.parsedInfo?.episode) }.thenBy { it.name })
+        series.videos.sortedWith(
+            compareBy<QuarkFile> { extractEpisodeNumber(it.name, it.parsedInfo?.episode) }
+                .thenBy { it.name }
+        )
     }
 
     val latestWatchedInCurrentSeason = remember(currentSeasonVideos) { currentSeasonVideos.maxByOrNull { viewModel.getVideoProgress(it.fid) } }
@@ -1355,7 +1367,6 @@ fun MediaDetailScreen(
     LazyColumn(state = listState, modifier = Modifier.fillMaxSize().background(Color.White), contentPadding = PaddingValues(bottom = 100.dp)) {
         item {
             Box(modifier = Modifier.fillMaxWidth().height(350.dp)) {
-                // 🌟 优先加载横屏背景图 backdropUrl，如果没有才用 posterUrl 兜底
                 val bgUrl = series.backdropUrl ?: series.posterUrl
                 if (bgUrl != null) {
                     AsyncImage(model = bgUrl, contentDescription = null, modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
