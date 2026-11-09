@@ -131,9 +131,6 @@ open class MainActivity : BaseComposeActivity(), AudioPlay.CallBack {
     /** 全局 Compose 文本弹层状态，供遗留命令式路径展示 Markdown/文本内容 */
     private val textSheetFlow = MutableStateFlow<TextSheetData?>(null)
 
-    /** 画中画状态监听器 */
-    private var pipModeChangedListener: ((android.app.PictureInPictureModeChangedInfo) -> Unit)? = null
-
     fun showTextSheet(title: String, content: String, onDismiss: (() -> Unit)? = null) {
         textSheetFlow.value = TextSheetData(title, content, onDismiss)
     }
@@ -399,18 +396,6 @@ open class MainActivity : BaseComposeActivity(), AudioPlay.CallBack {
         lifecycleScope.launch {
             runCatching { bookshelfCoverPreloader.preloadCurrentGroupFirstScreen() }
         }
-
-        // 🌟 安全注册画中画状态监听，退出时强制刷新 Insets 防截断
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            pipModeChangedListener = { info ->
-                if (!info.isInPictureInPictureMode) {
-                    window?.decorView?.postDelayed({
-                        requestInsetsAndLayout()
-                    }, 300L)
-                }
-            }
-            addOnPictureInPictureModeChangedListener(pipModeChangedListener!!)
-        }
     }
 
     private fun startWebServiceWithLocalNetworkPermission() {
@@ -464,6 +449,20 @@ open class MainActivity : BaseComposeActivity(), AudioPlay.CallBack {
     override fun onConfigurationChanged(newConfig: Configuration) {
         super.onConfigurationChanged(newConfig)
         requestInsetsAndLayout()
+    }
+
+    // 🌟 原生重写画中画回调，彻底杜绝任何类型/包名解析错误
+    override fun onPictureInPictureModeChanged(isInPictureInPictureMode: Boolean, newConfig: Configuration) {
+        super.onPictureInPictureModeChanged(isInPictureInPictureMode, newConfig)
+        if (!isInPictureInPictureMode) {
+            // 退出画中画时，延迟 300ms 等待系统窗口动画稳定，再强制刷新
+            window?.decorView?.postDelayed({
+                // 增加安全锁：确保视图依然附着在窗口上，防止销毁瞬间引发空指针
+                if (window?.decorView?.isAttachedToWindow == true) {
+                    requestInsetsAndLayout()
+                }
+            }, 300L)
+        }
     }
 
     // 🌟 强制系统重算 Insets 并重新布局
@@ -1056,11 +1055,6 @@ open class MainActivity : BaseComposeActivity(), AudioPlay.CallBack {
     }
 
     override fun onDestroy() {
-        // 🌟 安全注销画中画监听器
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            pipModeChangedListener?.let { removeOnPictureInPictureModeChangedListener(it) }
-        }
-
         // 🌟 解除 WindowInsets 监听，防止窗口抛掷销毁时系统回调引发崩溃
         window?.decorView?.let { decorView ->
             ViewCompat.setWindowInsetsAnimationCallback(decorView, null)
