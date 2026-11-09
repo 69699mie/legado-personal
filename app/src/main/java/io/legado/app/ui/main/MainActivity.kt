@@ -132,7 +132,7 @@ open class MainActivity : BaseComposeActivity(), AudioPlay.CallBack {
     private val textSheetFlow = MutableStateFlow<TextSheetData?>(null)
 
     /** 画中画状态监听器 */
-    private var pipModeChangedListener: ((Boolean) -> Unit)? = null
+    private var pipModeChangedListener: ((android.app.PictureInPictureModeChangedInfo) -> Unit)? = null
 
     fun showTextSheet(title: String, content: String, onDismiss: (() -> Unit)? = null) {
         textSheetFlow.value = TextSheetData(title, content, onDismiss)
@@ -400,10 +400,10 @@ open class MainActivity : BaseComposeActivity(), AudioPlay.CallBack {
             runCatching { bookshelfCoverPreloader.preloadCurrentGroupFirstScreen() }
         }
 
-        // 🌟 新增：安全注册画中画状态监听，退出时强制刷新 Insets 防截断
+        // 🌟 安全注册画中画状态监听，退出时强制刷新 Insets 防截断
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            pipModeChangedListener = { isInPip ->
-                if (!isInPip) {
+            pipModeChangedListener = { info ->
+                if (!info.isInPictureInPictureMode) {
                     window?.decorView?.postDelayed({
                         requestInsetsAndLayout()
                     }, 300L)
