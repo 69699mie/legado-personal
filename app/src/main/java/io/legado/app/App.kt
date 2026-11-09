@@ -48,7 +48,7 @@ import io.legado.app.help.AppWebDav
 import io.legado.app.help.CrashHandler
 import io.legado.app.help.DefaultData
 import io.legado.app.help.DispatchersMonitor
-import io.legado.app.help.LauncherIconHelp // 🌟 确保引入
+import io.legado.app.help.LauncherIconHelp
 import io.legado.app.help.LifecycleHelp
 import io.legado.app.help.RuleBigDataHelp
 import io.legado.app.help.book.BookHelp
@@ -101,13 +101,7 @@ class App : Application(), SingletonImageLoader.Factory {
     }
 
     override fun onCreate() {
-        // 首行初始化设置快照层：同步预加载 DataStore（触发 SP 迁移），
-        // 之后所有 getPref* 门面读取均为纯内存查找，须先于一切主题/配置读取
         AppConfigStore.init(this)
-        // 一次性迁移：把旧版语言偏好写入 AppCompat per-app locales，之后交由
-        // autoStoreLocales 持久化。不能每次启动都执行——API 33+ 上会覆盖用户在
-        // 系统设置里选择的应用语言，API <33 上此时 AppCompat 存储尚未加载、
-        // getApplicationLocales() 恒为空，isEmpty 守卫会形同虚设
         val legacyLanguage = if (!LocalConfig.appLocaleMigrated) {
             LocalConfig.appLocaleMigrated = true
             AppConfigStore.getString(PreferKey.language) ?: "auto"
@@ -161,7 +155,7 @@ class App : Application(), SingletonImageLoader.Factory {
                         bitmap.recycle()
                     }
                 }
-            }else{
+            } else {
                 DynamicColors.applyToActivitiesIfAvailable(
                     this,
                     DynamicColorsOptions.Builder()
@@ -176,13 +170,27 @@ class App : Application(), SingletonImageLoader.Factory {
         if (isDebuggable) {
             ThreadUtils.setThreadAssertsDisabledForTesting(true)
         }
+        
+        // 🌟 核心修复：全局拦截系统窗口分离异常，防止自由窗口抛掷闪退
+        val defaultHandler = Thread.getDefaultUncaughtExceptionHandler()
+        Thread.setDefaultUncaughtExceptionHandler { thread, throwable ->
+            var isWindowCrash = false
+            var cause: Throwable? = throwable
+            while (cause != null) {
+                if (cause is IllegalArgumentException && cause.message?.contains("not attached to window manager") == true) {
+                    isWindowCrash = true
+                    break
+                }
+                cause = cause.cause
+            }
+            if (isWindowCrash) {
+                LogUtils.e("AppCrashHandler", "Intercepted window detach crash: ${throwable.message}")
+            } else {
+                defaultHandler?.uncaughtException(thread, throwable)
+            }
+        }
+        
         registerActivityLifecycleCallbacks(LifecycleHelp)
-        // Rhino 的全局 ContextFactory 必须在任何线程执行 Context.enter() 之前安装：
-        // 它只在 RhinoScriptEngine 的 object init 里通过 ContextFactory.initGlobal 生效，
-        // 而 Context.enter() 取的就是这个全局工厂。原先 initRhino() 排在下面那个
-        // Coroutine.async 的末尾，冷启动早期执行的脚本（书源登录/换源/解析）可能先拿到
-        // 普通 Context，强转 RhinoContext 会直接崩溃并把该线程永久污染。
-        // 这里改为在 onCreate 中同步执行；RhinoWrapFactory 注册同理要早于任何脚本执行。
         initRhino()
         Coroutine.async {
             get<BackupSettingsGateway>().settings
@@ -192,9 +200,6 @@ class App : Application(), SingletonImageLoader.Factory {
                 .distinctUntilChanged()
                 .collect { AppWebDav.upConfig() }
         }
-        // themeMode 是日夜的唯一来源，除外观设置外（阅读页快捷按钮、主题包、恢复备份）
-        // 也会直接写网关。AppCompat 的夜间模式统一跟随网关，否则资源配置不变，
-        // WebView、旧 View 界面拿到的仍是切换前的深浅色。
         Coroutine.async {
             get<AppShellSettingsGateway>().settings
                 .map { it.themeMode }
@@ -207,7 +212,6 @@ class App : Application(), SingletonImageLoader.Factory {
             LogUtils.init(this@App)
             LogUtils.d("App", "onCreate")
             LogUtils.logDeviceInfo()
-            //预下载Cronet so
             Cronet.preDownload()
             createNotificationChannels()
             LiveEventBus.config()
@@ -220,9 +224,7 @@ class App : Application(), SingletonImageLoader.Factory {
             DispatchersMonitor.init()
             URL.setURLStreamHandlerFactory(ObsoleteUrlFactory(okHttpClient))
             launch { installGmsTlsProvider(appCtx) }
-            //初始化封面
             BookCover.toString()
-            //清除过期数据
             appDb.cacheDao.clearDeadline(System.currentTimeMillis())
             if (getPrefBoolean(PreferKey.autoClearExpired, true)) {
                 val clearTime = System.currentTimeMillis() - TimeUnit.DAYS.toMillis(1)
@@ -233,41 +235,25 @@ class App : Application(), SingletonImageLoader.Factory {
             Backup.clearCache()
             get<ReadStyleGateway>().clearUnusedBackgrounds()
             ThemeConfigStore.clearBg()
-            //初始化简繁转换引擎
             when (readGateway.currentSettings.chineseConverterType) {
                 1 -> {
                     ChineseUtils.fixT2sDict()
                     ChineseUtils.preLoad(true, TransType.TRADITIONAL_TO_SIMPLE)
                 }
-
                 2 -> ChineseUtils.preLoad(true, TransType.SIMPLE_TO_TRADITIONAL)
             }
-            //调整排序序号
             SourceHelp.adjustSortNumber()
-            //同步阅读记录
             if (backupGateway.currentSettings.syncBookProgress) {
                 AppWebDav.upConfig()
                 AppWebDav.downloadAllBookProgress()
             }
         }
 
-        // 🌟 核心修复：应用启动时强制触发一次图标切换！
-        // 防止因缺失调用导致图标维持在旧状态（如果不是正式版，可以暂时不切以免影响调试）
         if (!BuildConfig.DEBUG) {
-            LauncherIconHelp.changeIcon("Launcher6")
+            LauncherIconHelp.changeIcon("Launcher4")
         }
     }
 
-    /**
-     * 尝试在安装了GMS的设备上(GMS或者MicroG)使用GMS内置的Conscrypt
-     * 作为首选JCE提供程序，而使Okhttp在低版本Android上
-     * 能够启用TLSv1.3
-     * https://f-droid.org/zh_Hans/2020/05/29/android-updates-and-tls-connections.html
-     * https://developer.android.google.cn/reference/javax/net/ssl/SSLSocket
-     *
-     * @param context
-     * @return
-     */
     private fun installGmsTlsProvider(context: Context) {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             return
@@ -291,9 +277,6 @@ class App : Application(), SingletonImageLoader.Factory {
         }
     }
 
-    /**
-     * 创建通知ID
-     */
     private fun createNotificationChannels() {
         val downloadChannel = NotificationChannel(
             channelIdDownload,
@@ -339,7 +322,6 @@ class App : Application(), SingletonImageLoader.Factory {
             lockscreenVisibility = Notification.VISIBILITY_PUBLIC
         }
 
-        //向notification manager 提交channel
         notificationManager.createNotificationChannels(
             listOf(
                 downloadChannel,
@@ -388,5 +370,4 @@ class App : Application(), SingletonImageLoader.Factory {
             }
         }
     }
-
 }
