@@ -517,7 +517,7 @@ fun RecentWatchedGridCard(item: RecentWatchedItem, isSelectionMode: Boolean, isS
     Column(modifier = Modifier.fillMaxWidth().clickable { onClick() }) {
         Box(modifier = Modifier.fillMaxWidth().aspectRatio(2f / 3f).clip(RoundedCornerShape(8.dp)).background(Color.DarkGray), contentAlignment = Alignment.Center) {
             if (item.coverPath.isNotEmpty()) AsyncImage(model = item.coverPath, contentDescription = null, modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Crop) else Icon(Icons.Default.Movie, null, tint = Color.LightGray)
-            if (isSelectionMode) Box(modifier = Modifier.align(Alignment.TopEnd).padding(8.dp).size(24.dp).background(if (isSelected) MaterialTheme.colorScheme.primary else Color.Black.copy(alpha = 0.5f), RoundedCornerShape(4.dp)).border(1.dp, Color.White, RoundedCornerShape(4.dp)), contentAlignment = Alignment.Center) { if (isSelected) Icon(Icons.Default.Check, null, tint = Color.White, modifier = Modifier.size(16.dp)) }
+            if (isSelectionMode) Box(modifier = Modifier.align(Alignment.TopEnd).padding(8.dp).size(24.dp).background(if (isSelected) Color(0xFF333333) else Color.Black.copy(alpha = 0.5f), RoundedCornerShape(4.dp)).border(1.dp, Color.White, RoundedCornerShape(4.dp)), contentAlignment = Alignment.Center) { if (isSelected) Icon(Icons.Default.Check, null, tint = Color.White, modifier = Modifier.size(16.dp)) }
         }
         AppText(text = item.seriesTitle, style = MaterialTheme.typography.bodySmall, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 4.dp), fontWeight = FontWeight.Bold)
     }
@@ -555,8 +555,8 @@ private fun SettingsDialog(uiState: VideoUiState, viewModel: VideoScraperViewMod
             }
         }
     }
-    if (showThreadSelection) { AlertDialog(onDismissRequest = { showThreadSelection = false }, title = { AppText("极速播放线程数", fontWeight = FontWeight.Bold) }, text = { Column { listOf(3, 6, 10, 16, 24, 32).forEach { count -> Row(modifier = Modifier.fillMaxWidth().clickable { viewModel.saveDownloadThreads(count); showThreadSelection = false }.padding(vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) { AppText("$count", modifier = Modifier.weight(1f)); if (uiState.downloadThreads == count) Icon(Icons.Default.Check, contentDescription = null, tint = MaterialTheme.colorScheme.primary) } } } }, confirmButton = { TextButton(onClick = { showThreadSelection = false }) { AppText("取消") } }) }
-    if (showBannerLogicSelection) { AlertDialog(onDismissRequest = { showBannerLogicSelection = false }, title = { AppText("首页轮播海报显示逻辑", fontWeight = FontWeight.Bold) }, text = { Column { listOf("智能推荐", "最近新增", "最近播放").forEach { logic -> Row(modifier = Modifier.fillMaxWidth().clickable { viewModel.saveBannerLogic(logic); showBannerLogicSelection = false }.padding(vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) { AppText(logic, modifier = Modifier.weight(1f)); if (uiState.bannerLogic == logic) Icon(Icons.Default.Check, contentDescription = null, tint = MaterialTheme.colorScheme.primary) } } } }, confirmButton = { TextButton(onClick = { showBannerLogicSelection = false }) { AppText("取消") } }) }
+    if (showThreadSelection) { AlertDialog(onDismissRequest = { showThreadSelection = false }, title = { AppText("极速播放线程数", fontWeight = FontWeight.Bold) }, text = { Column { listOf(3, 6, 10, 16, 24, 32).forEach { count -> Row(modifier = Modifier.fillMaxWidth().clickable { viewModel.saveDownloadThreads(count); showThreadSelection = false }.padding(vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) { AppText("$count", modifier = Modifier.weight(1f)); if (uiState.downloadThreads == count) Icon(Icons.Default.Check, contentDescription = null, tint = Color(0xFF333333)) } } } }, confirmButton = { TextButton(onClick = { showThreadSelection = false }) { AppText("取消") } }) }
+    if (showBannerLogicSelection) { AlertDialog(onDismissRequest = { showBannerLogicSelection = false }, title = { AppText("首页轮播海报显示逻辑", fontWeight = FontWeight.Bold) }, text = { Column { listOf("智能推荐", "最近新增", "最近播放").forEach { logic -> Row(modifier = Modifier.fillMaxWidth().clickable { viewModel.saveBannerLogic(logic); showBannerLogicSelection = false }.padding(vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) { AppText(logic, modifier = Modifier.weight(1f)); if (uiState.bannerLogic == logic) Icon(Icons.Default.Check, contentDescription = null, tint = Color(0xFF333333)) } } } }, confirmButton = { TextButton(onClick = { showBannerLogicSelection = false }) { AppText("取消") } }) }
     if (showCategoryOrderDialog) CategoryOrderDialog(uiState, viewModel, onDismiss = { showCategoryOrderDialog = false })
 }
 
@@ -687,20 +687,24 @@ private fun ManualScrapeDialog(series: MediaSeries, viewModel: VideoScraperViewM
                                         Box(
                                             modifier = Modifier
                                                 .size(90.dp, 135.dp)
-                                                .background(Color(0xFFF5F5F5), RoundedCornerShape(8.dp))
-                                                .clip(RoundedCornerShape(8.dp))
-                                                .border(if (isSelected) 3.dp else 0.dp, Color.White, RoundedCornerShape(8.dp))
                                                 .shadow(if (isSelected) 12.dp else 0.dp, RoundedCornerShape(8.dp))
+                                                .clip(RoundedCornerShape(8.dp))
+                                                .border(if (isSelected) 3.dp else 0.dp, Color(0xFF333333), RoundedCornerShape(8.dp))
                                                 .clickable { selectedPoster = url }
                                         ) {
                                             AsyncImage(model = url, contentDescription = null, modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
                                             if (isSelected) {
-                                                Icon(
-                                                    imageVector = Icons.Default.CheckCircle,
-                                                    contentDescription = null,
-                                                    tint = Color.White,
-                                                    modifier = Modifier.align(Alignment.TopEnd).padding(4.dp).size(20.dp).background(Color.Black.copy(alpha = 0.7f), CircleShape)
-                                                )
+                                                Box(
+                                                    modifier = Modifier
+                                                        .align(Alignment.TopEnd)
+                                                        .padding(6.dp)
+                                                        .size(22.dp)
+                                                        .background(Color(0xFF333333), CircleShape)
+                                                        .border(1.5.dp, Color.White, CircleShape),
+                                                    contentAlignment = Alignment.Center
+                                                ) {
+                                                    Icon(Icons.Default.Check, contentDescription = null, tint = Color.White, modifier = Modifier.size(14.dp))
+                                                }
                                             }
                                         }
                                     }
@@ -716,20 +720,24 @@ private fun ManualScrapeDialog(series: MediaSeries, viewModel: VideoScraperViewM
                                         Box(
                                             modifier = Modifier
                                                 .size(160.dp, 90.dp)
-                                                .background(Color(0xFFF5F5F5), RoundedCornerShape(8.dp))
-                                                .clip(RoundedCornerShape(8.dp))
-                                                .border(if (isSelected) 3.dp else 0.dp, Color.White, RoundedCornerShape(8.dp))
                                                 .shadow(if (isSelected) 12.dp else 0.dp, RoundedCornerShape(8.dp))
+                                                .clip(RoundedCornerShape(8.dp))
+                                                .border(if (isSelected) 3.dp else 0.dp, Color(0xFF333333), RoundedCornerShape(8.dp))
                                                 .clickable { selectedBackdrop = url }
                                         ) {
                                             AsyncImage(model = url, contentDescription = null, modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
                                             if (isSelected) {
-                                                Icon(
-                                                    imageVector = Icons.Default.CheckCircle,
-                                                    contentDescription = null,
-                                                    tint = Color.White,
-                                                    modifier = Modifier.align(Alignment.TopEnd).padding(4.dp).size(20.dp).background(Color.Black.copy(alpha = 0.7f), CircleShape)
-                                                )
+                                                Box(
+                                                    modifier = Modifier
+                                                        .align(Alignment.TopEnd)
+                                                        .padding(6.dp)
+                                                        .size(22.dp)
+                                                        .background(Color(0xFF333333), CircleShape)
+                                                        .border(1.5.dp, Color.White, CircleShape),
+                                                    contentAlignment = Alignment.Center
+                                                ) {
+                                                    Icon(Icons.Default.Check, contentDescription = null, tint = Color.White, modifier = Modifier.size(14.dp))
+                                                }
                                             }
                                         }
                                     }
@@ -768,7 +776,7 @@ fun WebLoginView(onLoginSuccess: (String) -> Unit, onCancel: () -> Unit) {
             AppText("夸克扫码/账号登录", fontWeight = FontWeight.Bold)
             Row {
                 TextButton(onClick = { CookieManager.getInstance().removeAllCookies(null); CookieManager.getInstance().flush(); reloadTrigger++ }) { AppText("清空缓存", color = Color.Red) }
-                TextButton(onClick = { val cookie = CookieManager.getInstance().getCookie("https://pan.quark.cn/"); if (!cookie.isNullOrBlank() && cookie.contains("__uid=")) onLoginSuccess(cookie) else Toast.makeText(context, "尚未检测到有效登录，请完成扫码或授权", Toast.LENGTH_SHORT).show() }) { AppText("完成登录", color = MaterialTheme.colorScheme.primary) }
+                TextButton(onClick = { val cookie = CookieManager.getInstance().getCookie("https://pan.quark.cn/"); if (!cookie.isNullOrBlank() && cookie.contains("__uid=")) onLoginSuccess(cookie) else Toast.makeText(context, "尚未检测到有效登录，请完成扫码或授权", Toast.LENGTH_SHORT).show() }) { AppText("完成登录", color = Color(0xFF333333)) }
             }
         }
         if (loadingProgress < 1f) LinearProgressIndicator(progress = { loadingProgress }, modifier = Modifier.fillMaxWidth().height(2.dp))
@@ -829,6 +837,15 @@ fun InternalVideoPlayer(url: String, title: String, cookie: String, series: Medi
     var currentSystemTime by remember { mutableStateOf("") }
     var hasRequestedLandscape = remember { false }
 
+    // 自定义提示框状态
+    var playerToastMessage by remember { mutableStateOf<String?>(null) }
+    LaunchedEffect(playerToastMessage) {
+        if (playerToastMessage != null) {
+            delay(2500)
+            playerToastMessage = null
+        }
+    }
+
     LaunchedEffect(Unit) {
         if (!hasRequestedLandscape && !isInMultiWindowMode && activity?.isInPictureInPictureMode != true) { activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE; hasRequestedLandscape = true }
         while (true) { currentSystemTime = SimpleDateFormat("HH:mm", Locale.getDefault()).format(Date()); delay(1000) }
@@ -881,6 +898,7 @@ fun InternalVideoPlayer(url: String, title: String, cookie: String, series: Medi
 
     var hasTriggeredAutoPlay by remember { mutableStateOf(false) }
     var hasAutoSkippedIntro by remember { mutableStateOf(false) }
+    var outroWarningTriggered by remember { mutableStateOf(false) } // 提前6秒提示标记
     val audioManager = remember { context.getSystemService(Context.AUDIO_SERVICE) as AudioManager }
     var hasRestoredProgress by remember { mutableStateOf(false) }
     var entryTime by remember { mutableLongStateOf(0L) }
@@ -929,6 +947,7 @@ fun InternalVideoPlayer(url: String, title: String, cookie: String, series: Medi
     val pipActionReceiver = remember {
         object : BroadcastReceiver() {
             override fun onReceive(ctx: Context?, intent: Intent?) {
+                // 画中画内由于界面的自定义提示框不可见，保留系统 Toast 以防没有反馈
                 when (intent?.getIntExtra(EXTRA_CONTROL, -1)) {
                     CONTROL_PREV -> { val idx = sortedVideos.indexOfFirst { it.fid == currentFile.fid }; if (idx > 0) viewModel.playVideo(ctx ?: return, latestSeriesForReceiver, sortedVideos[idx - 1]) else Toast.makeText(ctx, "已经是第一集了", Toast.LENGTH_SHORT).show() }
                     CONTROL_NEXT -> { val idx = sortedVideos.indexOfFirst { it.fid == currentFile.fid }; if (idx != -1 && idx < sortedVideos.size - 1) viewModel.playVideo(ctx ?: return, latestSeriesForReceiver, sortedVideos[idx + 1]) else Toast.makeText(ctx, "已经是最后一集了", Toast.LENGTH_SHORT).show() }
@@ -958,6 +977,7 @@ fun InternalVideoPlayer(url: String, title: String, cookie: String, series: Medi
     LaunchedEffect(url) {
         currentPosition = 0L; duration = 0L; bufferedPosition = 0L
         hasRestoredProgress = false; hasTriggeredAutoPlay = false; hasAutoSkippedIntro = false
+        outroWarningTriggered = false // 重置片尾提示状态
         exoPlayer.stop(); exoPlayer.clearMediaItems()
 
         val savedPos = viewModel.getVideoProgress(currentFile.fid)
@@ -988,11 +1008,18 @@ fun InternalVideoPlayer(url: String, title: String, cookie: String, series: Medi
                 if (state == Player.STATE_READY) {
                     duration = exoPlayer.duration.coerceAtLeast(0L)
                     if (introSeconds > 0 && !hasAutoSkippedIntro && exoPlayer.currentPosition < introSeconds * 1000L) {
-                        exoPlayer.seekTo(introSeconds * 1000L); currentPosition = introSeconds * 1000L; hasAutoSkippedIntro = true; Toast.makeText(context, "已自动跳过片头", Toast.LENGTH_SHORT).show()
+                        exoPlayer.seekTo(introSeconds * 1000L); currentPosition = introSeconds * 1000L; hasAutoSkippedIntro = true
+                        playerToastMessage = "已跳过片头"
                     }
                 } else if (state == Player.STATE_ENDED) {
                     val idx = sortedVideos.indexOfFirst { it.fid == currentFile.fid }
-                    if (idx != -1 && idx < sortedVideos.size - 1) viewModel.playVideo(context, latestSeries, sortedVideos[idx + 1])
+                    if (idx != -1 && idx < sortedVideos.size - 1) {
+                        viewModel.playVideo(context, latestSeries, sortedVideos[idx + 1])
+                    } else {
+                        if (!outroWarningTriggered) { // 避免与片尾倒计时提示重复
+                            playerToastMessage = "已是最新集"
+                        }
+                    }
                 }
             }
             override fun onTracksChanged(tracks: Tracks) {
@@ -1019,11 +1046,34 @@ fun InternalVideoPlayer(url: String, title: String, cookie: String, series: Medi
     LaunchedEffect(isPlaying) {
         while (isPlaying) {
             if (!isDraggingSeekBar) { currentPosition = exoPlayer.currentPosition; bufferedPosition = exoPlayer.bufferedPosition }
-            if (outroSeconds > 0 && duration > 0 && outroSeconds * 1000L < duration && currentPosition >= (duration - outroSeconds * 1000L)) {
-                if (!hasTriggeredAutoPlay) {
-                    hasTriggeredAutoPlay = true
+            
+            // 片尾逻辑（精确提前6秒判断）
+            if (outroSeconds > 0 && duration > 0 && outroSeconds * 1000L < duration) {
+                val outroTriggerPos = duration - outroSeconds * 1000L
+                val warningPos = outroTriggerPos - 6000L // 提前6秒
+
+                // 到达提前6秒的判断点
+                if (currentPosition >= warningPos && !outroWarningTriggered) {
+                    outroWarningTriggered = true
                     val idx = sortedVideos.indexOfFirst { it.fid == currentFile.fid }
-                    if (idx != -1 && idx < sortedVideos.size - 1) viewModel.playVideo(context, latestSeries, sortedVideos[idx + 1])
+                    if (idx == sortedVideos.size - 1) {
+                        // 最后一集不执行跳过，只提示
+                        playerToastMessage = "已是最新集"
+                    } else {
+                        playerToastMessage = "即将跳过片尾"
+                    }
+                }
+
+                // 到达真实的片尾触发点
+                if (currentPosition >= outroTriggerPos) {
+                    val idx = sortedVideos.indexOfFirst { it.fid == currentFile.fid }
+                    // 最后一集自然播放，非最后一集则切集（且只切一次）
+                    if (idx != -1 && idx < sortedVideos.size - 1) {
+                        if (!hasTriggeredAutoPlay) {
+                            hasTriggeredAutoPlay = true
+                            viewModel.playVideo(context, latestSeries, sortedVideos[idx + 1])
+                        }
+                    }
                 }
             }
             delay(1000)
@@ -1043,7 +1093,7 @@ fun InternalVideoPlayer(url: String, title: String, cookie: String, series: Medi
     }
 
     if (errorDialogMsg != null) {
-        AlertDialog(onDismissRequest = { errorDialogMsg = null }, title = { AppText("播放失败详情", fontWeight = FontWeight.Bold) }, text = { Column { SelectionContainer { Text(text = errorDialogMsg ?: "", modifier = Modifier.heightIn(max = 400.dp).verticalScroll(rememberScrollState()), fontSize = 12.sp, color = Color.DarkGray) } } }, confirmButton = { Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) { TextButton(onClick = { val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager; clipboard.setPrimaryClip(ClipData.newPlainText("播放错误", errorDialogMsg)); Toast.makeText(context, "已复制到剪贴板", Toast.LENGTH_SHORT).show() }) { AppText("复制全部", color = MaterialTheme.colorScheme.primary) }; TextButton(onClick = { errorDialogMsg = null }) { AppText("关闭") } } })
+        AlertDialog(onDismissRequest = { errorDialogMsg = null }, title = { AppText("播放失败详情", fontWeight = FontWeight.Bold) }, text = { Column { SelectionContainer { Text(text = errorDialogMsg ?: "", modifier = Modifier.heightIn(max = 400.dp).verticalScroll(rememberScrollState()), fontSize = 12.sp, color = Color.DarkGray) } } }, confirmButton = { Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) { TextButton(onClick = { val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager; clipboard.setPrimaryClip(ClipData.newPlainText("播放错误", errorDialogMsg)); Toast.makeText(context, "已复制到剪贴板", Toast.LENGTH_SHORT).show() }) { AppText("复制全部", color = Color(0xFF333333)) }; TextButton(onClick = { errorDialogMsg = null }) { AppText("关闭") } } })
     }
 
     Box(modifier = Modifier.fillMaxSize().background(Color.Black).pointerInput(isLocked, isInPip.value) {
@@ -1086,6 +1136,28 @@ fun InternalVideoPlayer(url: String, title: String, cookie: String, series: Medi
 
         if (activity?.isInPictureInPictureMode == true || isInPip.value) { Box(modifier = Modifier.fillMaxSize()) {}; return@Box }
 
+        // 🌟 自定义提示层：完全取代系统 Toast
+        AnimatedVisibility(
+            visible = playerToastMessage != null,
+            enter = fadeIn(animationSpec = tween(200)),
+            exit = fadeOut(animationSpec = tween(300)),
+            modifier = Modifier.align(Alignment.Center)
+        ) {
+            Box(
+                modifier = Modifier
+                    .background(Color.Black.copy(alpha = 0.85f), RoundedCornerShape(10.dp))
+                    .border(1.dp, Color.White.copy(alpha = 0.1f), RoundedCornerShape(10.dp))
+                    .padding(horizontal = 20.dp, vertical = 12.dp)
+            ) {
+                AppText(
+                    text = playerToastMessage ?: "",
+                    color = Color.White,
+                    fontSize = 14.sp,
+                    fontWeight = FontWeight.Medium
+                )
+            }
+        }
+
         if (isBuffering || duration == 0L) {
             Box(modifier = Modifier.align(Alignment.Center).padding(16.dp), contentAlignment = Alignment.Center) {
                 Column(horizontalAlignment = Alignment.CenterHorizontally) { CircularProgressIndicator(color = Color.White, modifier = Modifier.size(36.dp)); Spacer(modifier = Modifier.height(12.dp)); AnimatedLoadingDots(color = Color.White, fontSize = 14.sp) }
@@ -1127,18 +1199,18 @@ fun InternalVideoPlayer(url: String, title: String, cookie: String, series: Medi
                     Surface(color = Color.White.copy(alpha = 0.1f), shape = CircleShape, border = BorderStroke(1.dp, Color.White.copy(alpha = 0.2f))) {
                         IconButton(onClick = {
                             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                                if (!context.packageManager.hasSystemFeature(PackageManager.FEATURE_PICTURE_IN_PICTURE)) { Toast.makeText(context, "当前设备不支持画中画功能", Toast.LENGTH_SHORT).show(); return@IconButton }
+                                if (!context.packageManager.hasSystemFeature(PackageManager.FEATURE_PICTURE_IN_PICTURE)) { playerToastMessage = "当前设备不支持画中画功能"; return@IconButton }
                                 val safeActivity = activity as? ComponentActivity
-                                if (safeActivity == null || safeActivity.lifecycle.currentState != Lifecycle.State.RESUMED) { Toast.makeText(context, "请等待视频播放界面完全加载后再试", Toast.LENGTH_SHORT).show(); return@IconButton }
+                                if (safeActivity == null || safeActivity.lifecycle.currentState != Lifecycle.State.RESUMED) { playerToastMessage = "请等待视频播放界面完全加载后再试"; return@IconButton }
                                 try {
                                     val prevAction = RemoteAction(Icon.createWithBitmap(createPipIcon("prev", context)), "上一集", "上一集", PendingIntent.getBroadcast(context, 100, Intent(PIP_ACTION).setPackage(context.packageName).putExtra(EXTRA_CONTROL, CONTROL_PREV), PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE))
                                     val playPauseAction = RemoteAction(Icon.createWithBitmap(createPipIcon(if (isPlaying) "pause" else "play", context)), if (isPlaying) "暂停" else "播放", if (isPlaying) "暂停" else "播放", PendingIntent.getBroadcast(context, 101, Intent(PIP_ACTION).setPackage(context.packageName).putExtra(EXTRA_CONTROL, CONTROL_PLAY_PAUSE), PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE))
                                     val nextAction = RemoteAction(Icon.createWithBitmap(createPipIcon("next", context)), "下一集", "下一集", PendingIntent.getBroadcast(context, 102, Intent(PIP_ACTION).setPackage(context.packageName).putExtra(EXTRA_CONTROL, CONTROL_NEXT), PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE))
                                     val paramsBuilder = PictureInPictureParams.Builder().setAspectRatio(Rational(16, 9)).setActions(listOf(prevAction, playPauseAction, nextAction)).setSeamlessResizeEnabled(true)
                                     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) paramsBuilder.setAutoEnterEnabled(true)
-                                    safeActivity.window.decorView.post { val success = safeActivity.enterPictureInPictureMode(paramsBuilder.build()); if (success) isInPip.value = true else Toast.makeText(context, "画中画启动失败，请检查系统权限是否已开启", Toast.LENGTH_SHORT).show() }
-                                } catch (e: Exception) { Toast.makeText(context, "画中画启动异常：${e.message ?: "权限被系统拦截"}", Toast.LENGTH_SHORT).show() }
-                            } else Toast.makeText(context, "Android 8.0 及以上才支持画中画", Toast.LENGTH_SHORT).show()
+                                    safeActivity.window.decorView.post { val success = safeActivity.enterPictureInPictureMode(paramsBuilder.build()); if (success) isInPip.value = true else playerToastMessage = "画中画启动失败，请检查系统权限是否已开启" }
+                                } catch (e: Exception) { playerToastMessage = "画中画启动异常：${e.message ?: "权限被系统拦截"}" }
+                            } else playerToastMessage = "Android 8.0 及以上才支持画中画"
                         }) { Icon(Icons.Default.PictureInPicture, null, tint = Color.White) }
                     }
                     Surface(color = Color.White.copy(alpha = 0.1f), shape = CircleShape, border = BorderStroke(1.dp, Color.White.copy(alpha = 0.2f))) { IconButton(onClick = { isLocked = true; showControls = false; showUnlockIcon = true }) { Icon(Icons.Default.Lock, null, tint = Color.White) } }
@@ -1188,11 +1260,11 @@ fun InternalVideoPlayer(url: String, title: String, cookie: String, series: Medi
                         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                             Text(text = "${playbackSpeed}x", color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.Bold, modifier = Modifier.clickable { val nextSpeed = when(playbackSpeed) { 0.5f -> 0.75f; 0.75f -> 1.0f; 1.0f -> 1.25f; 1.25f -> 1.5f; 1.5f -> 2.0f; 2.0f -> 3.0f; else -> 0.5f }; playbackSpeed = nextSpeed; exoPlayer.setPlaybackSpeed(nextSpeed) }.padding(8.dp))
                             Row(modifier = Modifier.weight(1f), horizontalArrangement = Arrangement.Center, verticalAlignment = Alignment.CenterVertically) {
-                                if (isLandscape) AppText(text = if (introSeconds > 0) formatIntroOutro(introSeconds) else "片头", color = Color.White, fontSize = 12.sp, modifier = Modifier.combinedClickable(onClick = { introSeconds = (currentPosition / 1000).toInt(); viewModel.saveIntroOutro(latestSeries.title, season, introSeconds, outroSeconds); Toast.makeText(context, "片头已设为 ${formatIntroOutro(introSeconds)}", Toast.LENGTH_SHORT).show() }, onLongClick = { introSeconds = 0; viewModel.saveIntroOutro(latestSeries.title, season, introSeconds, outroSeconds); Toast.makeText(context, "已清空片头", Toast.LENGTH_SHORT).show() }).padding(horizontal = 8.dp, vertical = 4.dp))
+                                if (isLandscape) AppText(text = if (introSeconds > 0) formatIntroOutro(introSeconds) else "片头", color = Color.White, fontSize = 12.sp, modifier = Modifier.combinedClickable(onClick = { introSeconds = (currentPosition / 1000).toInt(); viewModel.saveIntroOutro(latestSeries.title, season, introSeconds, outroSeconds); playerToastMessage = "片头已设为 ${formatIntroOutro(introSeconds)}" }, onLongClick = { introSeconds = 0; viewModel.saveIntroOutro(latestSeries.title, season, introSeconds, outroSeconds); playerToastMessage = "已清空片头" }).padding(horizontal = 8.dp, vertical = 4.dp))
                                 IconButton(onClick = { val videos = sortedVideos; val idx = videos.indexOfFirst { it.fid == currentFile.fid }; if (idx > 0) viewModel.playVideo(context, latestSeries, videos[idx - 1]) }, modifier = Modifier.size(36.dp)) { Icon(Icons.Default.SkipPrevious, null, tint = Color.White, modifier = Modifier.size(24.dp)) }
                                 IconButton(onClick = { if (isPlaying) exoPlayer.pause() else exoPlayer.play() }, modifier = Modifier.size(40.dp)) { Icon(if (isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow, null, tint = Color.White, modifier = Modifier.size(28.dp)) }
                                 IconButton(onClick = { val videos = sortedVideos; val idx = videos.indexOfFirst { it.fid == currentFile.fid }; if (idx != -1 && idx < videos.size - 1) viewModel.playVideo(context, latestSeries, videos[idx + 1]) }, modifier = Modifier.size(36.dp)) { Icon(Icons.Default.SkipNext, null, tint = Color.White, modifier = Modifier.size(24.dp)) }
-                                if (isLandscape) AppText(text = if (outroSeconds > 0) formatIntroOutro(outroSeconds) else "片尾", color = Color.White, fontSize = 12.sp, modifier = Modifier.combinedClickable(onClick = { val remain = duration - currentPosition; if (remain > 0) { outroSeconds = (remain / 1000).toInt(); viewModel.saveIntroOutro(latestSeries.title, season, introSeconds, outroSeconds); Toast.makeText(context, "片尾已设为剩余 ${formatIntroOutro(outroSeconds)}", Toast.LENGTH_SHORT).show() } }, onLongClick = { outroSeconds = 0; viewModel.saveIntroOutro(latestSeries.title, season, introSeconds, outroSeconds); Toast.makeText(context, "已清空片尾", Toast.LENGTH_SHORT).show() }).padding(horizontal = 8.dp, vertical = 4.dp))
+                                if (isLandscape) AppText(text = if (outroSeconds > 0) formatIntroOutro(outroSeconds) else "片尾", color = Color.White, fontSize = 12.sp, modifier = Modifier.combinedClickable(onClick = { val remain = duration - currentPosition; if (remain > 0) { outroSeconds = (remain / 1000).toInt(); viewModel.saveIntroOutro(latestSeries.title, season, introSeconds, outroSeconds); playerToastMessage = "片尾已设为剩余 ${formatIntroOutro(outroSeconds)}"; outroWarningTriggered = false } }, onLongClick = { outroSeconds = 0; viewModel.saveIntroOutro(latestSeries.title, season, introSeconds, outroSeconds); playerToastMessage = "已清空片尾"; outroWarningTriggered = false }).padding(horizontal = 8.dp, vertical = 4.dp))
                             }
                             if (isLandscape) AppText(text = "选集", color = Color.White, modifier = Modifier.clickable { showEpisodeDrawer = true }.padding(8.dp)) else Spacer(modifier = Modifier.width(32.dp))
                         }
@@ -1234,9 +1306,9 @@ fun InternalVideoPlayer(url: String, title: String, cookie: String, series: Medi
                         Spacer(modifier = Modifier.height(16.dp))
                         Row(modifier = Modifier.fillMaxWidth().background(Color(0xFF333333), RoundedCornerShape(8.dp)).clickable { showIntroOutroDialog = true; showSettingsPanel = false }.padding(16.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) { Column { AppText("设置片头片尾", color = Color.White, fontSize = 16.sp, fontWeight = FontWeight.Bold); Spacer(modifier = Modifier.height(4.dp)); AppText("片头: ${formatIntroOutro(introSeconds)}  片尾: ${formatIntroOutro(outroSeconds)}", color = Color.Gray, fontSize = 12.sp) }; Icon(Icons.Default.KeyboardArrowRight, null, tint = Color.Gray) }
                         Spacer(modifier = Modifier.height(16.dp)); AppText("音频轨道", color = Color.Gray, fontSize = 14.sp)
-                        audioTracks.forEachIndexed { index, trackGroup -> val format = trackGroup.getTrackFormat(0); val label = format.label ?: format.language ?: "音轨 ${index + 1}"; val isSelected = remember(trackSelectionVersion, audioTracks) { trackGroup.isTrackSelected(0) }; Row(modifier = Modifier.fillMaxWidth().clickable { exoPlayer.trackSelectionParameters = exoPlayer.trackSelectionParameters.buildUpon().setOverrideForType(TrackSelectionOverride(trackGroup.mediaTrackGroup, 0)).build(); trackSelectionVersion++; Toast.makeText(context, "已切换至 $label", Toast.LENGTH_SHORT).show() }.padding(vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) { AppText(label, color = if (isSelected) Color.White else Color.Gray, fontSize = 15.sp, modifier = Modifier.weight(1f)) } }
+                        audioTracks.forEachIndexed { index, trackGroup -> val format = trackGroup.getTrackFormat(0); val label = format.label ?: format.language ?: "音轨 ${index + 1}"; val isSelected = remember(trackSelectionVersion, audioTracks) { trackGroup.isTrackSelected(0) }; Row(modifier = Modifier.fillMaxWidth().clickable { exoPlayer.trackSelectionParameters = exoPlayer.trackSelectionParameters.buildUpon().setOverrideForType(TrackSelectionOverride(trackGroup.mediaTrackGroup, 0)).build(); trackSelectionVersion++; playerToastMessage = "已切换至 $label" }.padding(vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) { AppText(label, color = if (isSelected) Color.White else Color.Gray, fontSize = 15.sp, modifier = Modifier.weight(1f)) } }
                         Spacer(modifier = Modifier.height(16.dp)); AppText("字幕轨道", color = Color.Gray, fontSize = 14.sp)
-                        textTracks.forEachIndexed { index, trackGroup -> val format = trackGroup.getTrackFormat(0); val label = format.label ?: format.language ?: "字幕 ${index + 1}"; val isSelected = remember(trackSelectionVersion, textTracks) { trackGroup.isTrackSelected(0) }; Row(modifier = Modifier.fillMaxWidth().clickable { exoPlayer.trackSelectionParameters = exoPlayer.trackSelectionParameters.buildUpon().setOverrideForType(TrackSelectionOverride(trackGroup.mediaTrackGroup, 0)).build(); trackSelectionVersion++; Toast.makeText(context, "已切换至 $label", Toast.LENGTH_SHORT).show() }.padding(vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) { AppText(label, color = if (isSelected) Color.White else Color.Gray, fontSize = 15.sp, modifier = Modifier.weight(1f)) } }
+                        textTracks.forEachIndexed { index, trackGroup -> val format = trackGroup.getTrackFormat(0); val label = format.label ?: format.language ?: "字幕 ${index + 1}"; val isSelected = remember(trackSelectionVersion, textTracks) { trackGroup.isTrackSelected(0) }; Row(modifier = Modifier.fillMaxWidth().clickable { exoPlayer.trackSelectionParameters = exoPlayer.trackSelectionParameters.buildUpon().setOverrideForType(TrackSelectionOverride(trackGroup.mediaTrackGroup, 0)).build(); trackSelectionVersion++; playerToastMessage = "已切换至 $label" }.padding(vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) { AppText(label, color = if (isSelected) Color.White else Color.Gray, fontSize = 15.sp, modifier = Modifier.weight(1f)) } }
                     }
                 }
             }
@@ -1254,7 +1326,7 @@ fun InternalVideoPlayer(url: String, title: String, cookie: String, series: Medi
                 Spacer(modifier = Modifier.height(8.dp)); AppText("片尾时长: ${formatIntroOutro(inputOutro.toInt())}", color = Color.White)
                 Slider(value = inputOutro, onValueChange = { inputOutro = it }, valueRange = 0f..300f)
                 Spacer(modifier = Modifier.height(16.dp))
-                Button(onClick = { viewModel.saveIntroOutro(latestSeries.title, season, inputIntro.toInt(), inputOutro.toInt()); introSeconds = inputIntro.toInt(); outroSeconds = inputOutro.toInt(); showIntroOutroDialog = false }, modifier = Modifier.align(Alignment.End)) { AppText("保存设置") }
+                Button(onClick = { viewModel.saveIntroOutro(latestSeries.title, season, inputIntro.toInt(), inputOutro.toInt()); introSeconds = inputIntro.toInt(); outroSeconds = inputOutro.toInt(); outroWarningTriggered = false; showIntroOutroDialog = false }, modifier = Modifier.align(Alignment.End)) { AppText("保存设置") }
             }
         }
     }
