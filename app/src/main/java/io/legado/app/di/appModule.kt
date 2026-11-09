@@ -102,7 +102,7 @@ import io.legado.app.data.repository.manga.DefaultMangaReaderSession
 import io.legado.app.data.repository.manga.MangaReaderActionRepository
 import io.legado.app.data.repository.manga.MangaReaderDataRepository
 import io.legado.app.data.repository.VideoSettingsRepository
-import io.legado.app.data.security.CloudTtsCredentialCipher // ✅ 这里修正了导入路径
+import io.legado.app.data.security.CloudTtsCredentialCipher
 import io.legado.app.domain.gateway.AiArtifactGateway
 import io.legado.app.domain.gateway.AiChatGateway
 import io.legado.app.domain.gateway.AiMemoryGateway
@@ -402,7 +402,6 @@ val appModule = module {
     singleOf(::StartBookSourceCheckUseCase)
     single<DirectLinkSettingsGateway> { DirectLinkSettingsRepository() }
     single<LocalPasswordGateway> { LocalPasswordRepository() }
-    // 私密内容：解锁凭据与书籍标记分开绑定，接口归属保持显式
     single<PrivateAccessGateway> { PrivateAccessRepository(get(), get()) }
     single<PrivateContentGateway> { PrivateContentRepository(get()) }
     single<OtherConfigSystemGateway> { OtherConfigSystemRepository(get()) }
@@ -421,9 +420,6 @@ val appModule = module {
     singleOf(::ReadAloudSessionStore)
     single<PlaybackCapsuleGateway> { PlaybackCapsuleGatewayAdapter(get(), get()) }
     singleOf(::MainNavRouteTracker)
-    // 会话每个所有者一份。ReadBook.callBack 的身份是「阅读页已挂载」信号
-    // （prefetchForOpen / upData 判 callBack != null），register 还会给上一个持有者
-    // 发 notifyBookChanged——单例会把两个 ReadBookViewModel 的注册身份混成一个。
     factory<ReaderSession> { LegacyReaderSession() }
     single<HttpTtsEngineGateway> { HttpTtsEngineRepository(get()) }
     single<ReadAloudSettingsGateway> { get<ReadAloudSettingsRepository>() }
@@ -571,9 +567,9 @@ val appModule = module {
                 add(CoverInterceptor())
                 add(CoverFetcher.Factory(okHttpClient, okHttpClientManga))
             }
-            .crossfade(true)
-            // 💡 修复存储暴涨：给 Coil 设置 200MB 磁盘缓存硬上限，超出后按 LRU 自动淘汰最旧图片。
-            // 只作用于 Coil 自己的 image_cache 目录，不会碰到 CacheBook 手动下载的章节文件。
+            // 🌟 核心优化：关闭 crossfade，彻底消除列表快速滑动时的掉帧
+            .crossfade(false)
+            // 💡 修复存储暴涨：给 Coil 设置 200MB 磁盘缓存硬上限
             .diskCache {
                 coil3.disk.DiskCache.Builder()
                     .directory(get<android.content.Context>().cacheDir.resolve("image_cache").toOkioPath())
@@ -582,7 +578,6 @@ val appModule = module {
             }
             .build()
     }
-    // 书架首屏封面预热：依赖上面的 ImageLoader 单例，进程内复用已缓存封面
     singleOf(::BookshelfCoverPreloader)
 
     viewModelOf(::DictRuleViewModel)
@@ -647,7 +642,6 @@ val appModule = module {
         )
     }
     viewModelOf(::PrivateConfigViewModel)
-    // 阅读器入口的私密闸门：阅读记录 / 通知栏 / 深链等直开阅读器的路径都收在这里
     viewModelOf(::PrivateReadGateViewModel)
     viewModelOf(::CustomThemeViewModel)
     viewModelOf(::ReadConfigViewModel)
@@ -756,13 +750,6 @@ val appModule = module {
     viewModelOf(::CloudTtsViewModel)
     viewModelOf(::TtsCacheViewModel)
     singleOf(::ReadAloudPlayerCoordinator)
-    /**
-     * 朗读播放界面状态宿主。
-     *
-     * 用单例而不是 `viewModelOf`：悬浮胶囊（Activity 叠层）与听书页目的地会同时存在，
-     * 若各自持有实例，`activeSheet` 之类的瞬态状态与设置快照就会各改各的。
-     * 播放状态本身在 `ReadAloudSessionStore`/服务里，这里只是界面投影。
-     */
     single { ReadAloudPlayerViewModel(get(), get(), get()) }
     viewModel { (bookUrl: String, entryId: String?) ->
         BookKnowledgeDetailViewModel(
