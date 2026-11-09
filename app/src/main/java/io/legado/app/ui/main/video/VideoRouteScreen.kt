@@ -328,7 +328,9 @@ fun VideoScraperScreen(isActive: Boolean = true, modifier: Modifier = Modifier, 
             }
 
             if (latestSeries != null) {
-                val showLoading = uiState.isScraping && latestSeries.videos.isEmpty() && !latestSeries.isManuallyEdited
+                // 🌟 修复：只要正在刮削，且（没有视频数据 或 海报数据未就绪），且未手动编辑过，就显示骨架屏
+                val showLoading = uiState.isScraping && (latestSeries.videos.isEmpty() || latestSeries.posterUrl == null) && !latestSeries.isManuallyEdited
+                
                 AnimatedContent(targetState = showLoading, transitionSpec = { fadeIn(animationSpec = tween(400)) togetherWith fadeOut(animationSpec = tween(400)) }, label = "detail_transition") { isLoading ->
                     if (isLoading) {
                         Column(modifier = Modifier.fillMaxSize().background(Color.White).statusBarsPadding().verticalScroll(rememberScrollState())) {
