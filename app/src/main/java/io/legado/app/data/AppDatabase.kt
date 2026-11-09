@@ -6,6 +6,7 @@ import androidx.room.AutoMigration
 import androidx.room.Database
 import androidx.room.Room
 import androidx.room.RoomDatabase
+import androidx.room.migration.Migration
 import androidx.sqlite.db.SupportSQLiteDatabase
 import io.legado.app.data.dao.AiArtifactDao
 import io.legado.app.data.dao.AiChatDao
@@ -56,7 +57,7 @@ import io.legado.app.data.dao.ServerDao
 import io.legado.app.data.dao.TagGroupRuleDao
 import io.legado.app.data.dao.TxtTocRuleDao
 import io.legado.app.data.dao.VideoDao
-import io.legado.app.data.dao.VideoScrapedDao // ➕ 新增导入
+import io.legado.app.data.dao.VideoScrapedDao
 import io.legado.app.data.entities.AiArtifact
 import io.legado.app.data.entities.AiChatConversation
 import io.legado.app.data.entities.AiChatMessage
@@ -124,7 +125,7 @@ import io.legado.app.data.entities.readRecord.ReadRecord
 import io.legado.app.data.entities.readRecord.ReadRecordDetail
 import io.legado.app.data.entities.readRecord.ReadRecordSession
 import io.legado.app.data.entities.VideoItem
-import io.legado.app.data.entities.VideoScrapedEntity // ➕ 新增导入
+import io.legado.app.data.entities.VideoScrapedEntity
 import io.legado.app.help.DefaultData
 import org.intellij.lang.annotations.Language
 import splitties.init.appCtx
@@ -134,13 +135,13 @@ val appDb by lazy {
     Room.databaseBuilder(appCtx, AppDatabase::class.java, AppDatabase.DATABASE_NAME)
         .fallbackToDestructiveMigrationFrom(false, 1, 2, 3, 4, 5, 6, 7, 8, 9)
         .addMigrations(*DatabaseMigrations.migrations)
+        .addMigrations(AppDatabase.Migration_131_132) // 🌟 注册手动迁移，彻底解决 schema 缺失问题
         .allowMainThreadQueries()
         .addCallback(AppDatabase.dbCallback)
         .build()
 }
 
 @Database(
-    // ➕ 版本号提升到 132
     version = 132,
     exportSchema = true,
     entities = [Book::class, BookGroup::class, BookSource::class, BookChapter::class,
@@ -165,7 +166,6 @@ val appDb by lazy {
         BgmSceneMark::class, VoiceEffectPreset::class,
         BookMarking::class, ReadAloudAudioDownload::class, RegexCastRule::class, RegexCastGroup::class,
         VideoItem::class,
-        // ➕ 2. 注册新的缓存实体表
         VideoScrapedEntity::class
     ],
     views = [BookSourcePart::class],
@@ -252,8 +252,7 @@ val appDb by lazy {
         AutoMigration(from = 128, to = 129),
         AutoMigration(from = 129, to = 130),
         AutoMigration(from = 130, to = 131),
-        // ➕ 3. 添加 131 到 132 的自动迁移
-        AutoMigration(from = 131, to = 132),
+        // 🌟 移除了 AutoMigration(131, 132)
     ]
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -307,7 +306,6 @@ abstract class AppDatabase : RoomDatabase() {
     abstract val aiMemoryDao: AiMemoryDao
     abstract val aiPromptPresetDao: AiPromptPresetDao
     abstract val videoDao: VideoDao
-    // ➕ 4. 暴露 VideoScrapedDao
     abstract val videoScrapedDao: VideoScrapedDao
 
     companion object {
@@ -317,6 +315,30 @@ abstract class AppDatabase : RoomDatabase() {
         const val BOOK_TABLE_NAME = "books"
         const val BOOK_SOURCE_TABLE_NAME = "book_sources"
         const val RSS_SOURCE_TABLE_NAME = "rssSources"
+
+        // 🌟 新增：131 到 132 的手动迁移，只执行建表操作，绝不依赖 131.json
+        val Migration_131_132 = object : Migration(131, 132) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS `video_scraped_cache` (
+                        `id` TEXT NOT NULL,
+                        `title` TEXT NOT NULL,
+                        `category` TEXT NOT NULL,
+                        `posterUrl` TEXT,
+                        `backdropUrl` TEXT,
+                        `overview` TEXT,
+                        `rating` TEXT,
+                        `groupName` TEXT,
+                        `isManuallyEdited` INTEGER NOT NULL,
+                        `fileListSignature` TEXT NOT NULL,
+                        `extraData` TEXT NOT NULL,
+                        PRIMARY KEY(`id`)
+                    )
+                    """.trimIndent()
+                )
+            }
+        }
 
         val dbCallback = object : Callback() {
 
