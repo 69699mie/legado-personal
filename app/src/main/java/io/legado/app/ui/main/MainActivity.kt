@@ -39,6 +39,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Modifier
 import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
+import androidx.core.view.ViewCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.lifecycleScope
@@ -328,10 +329,7 @@ open class MainActivity : BaseComposeActivity(), AudioPlay.CallBack {
     private val readAloudSettingsRepository by inject<ReadAloudSettingsRepository>()
     internal val navRouteTracker by inject<MainNavRouteTracker>()
     private val routeEvents = MutableSharedFlow<RouteEvent>(extraBufferCapacity = 1)
-    /**
-     * Web 服务与「局域网请求」各自持有独立的 launcher：授权结果互不影响，也不需要用一个可变字段
-     * 记录「本次申请的目的」——那种写法在配置变更/进程重建后会丢失，导致结果被误判为 Web 服务申请。
-     */
+    
     private val webServiceLocalNetworkPermissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestPermission()
     ) { granted ->
@@ -345,7 +343,6 @@ open class MainActivity : BaseComposeActivity(), AudioPlay.CallBack {
     private val localNetworkRequestPermissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestPermission()
     ) { granted ->
-        // 授权后由用户重试原操作；未授权时提示授予方式。
         if (!granted) {
             toastOnUi(R.string.local_network_permission_required)
         }
@@ -368,15 +365,12 @@ open class MainActivity : BaseComposeActivity(), AudioPlay.CallBack {
             otherSettingsGateway.currentSettings.autoCheckUpdateOnStart
         )
 
-        // 智能自启：如果上次是手动开启状态（web_service_auto 为 true），则自启；
-        // 本地网络权限缺失时先申请，磁贴等入口也通过该 extra 转发到这里。
         val requestWebService = otherSettingsGateway.currentSettings.webServiceAutoStart ||
                 intent?.getBooleanExtra(MainIntent.EXTRA_WEB_SERVICE_LOCAL_NETWORK, false) == true
         if (requestWebService) {
             startWebServiceWithLocalNetworkPermission()
         }
 
-        // 局域网请求（书源 / 图源 / WebDAV）被系统拦下时，前台立即补一次本地网络权限申请。
         lifecycleScope.launch {
             repeatOnLifecycle(Lifecycle.State.STARTED) {
                 FlowEventBus.with<Unit>(EventBus.LOCAL_NETWORK_PERMISSION_REQUIRED).collect {
@@ -386,11 +380,8 @@ open class MainActivity : BaseComposeActivity(), AudioPlay.CallBack {
         }
 
         lifecycleScope.launch {
-            //版本更新
             upVersion()
-            //备份同步
             backupSync()
-            //自动更新书籍
             val isAutoRefreshedBook = savedInstanceState?.getBoolean("isAutoRefreshedBook") ?: false
             if (otherSettingsGateway.currentSettings.autoRefresh && !isAutoRefreshedBook) {
                 viewModel.upAllBookToc()
@@ -400,19 +391,11 @@ open class MainActivity : BaseComposeActivity(), AudioPlay.CallBack {
             }
         }
 
-        // 书架封面预热：必须早于书架首帧发起。卡片请求带了 placeholderMemoryCacheKey，
-        // 内存缓存里已有同一键时 Coil 会在真实加载之前就把缓存图交给 target，于是进入书架
-        // 的第一帧就是封面，而不是"灰底 → 稍后出现"。独立协程，不阻塞上面的启动关键路径；
-        // 预热失败对 UI 无影响（卡片自己的请求会照常决定成功/错误态）。
         lifecycleScope.launch {
             runCatching { bookshelfCoverPreloader.preloadCurrentGroupFirstScreen() }
         }
     }
 
-    /**
-     * Android 17 (API 37) 起 Web 服务需要本地网络权限才能接受局域网入站连接。
-     * 已授予直接启动；未授予先申请，授予后由 launcher 回调补启。
-     */
     private fun startWebServiceWithLocalNetworkPermission() {
         if (LocalNetworkAccess.isGranted(this)) {
             WebService.startForeground(this)
@@ -426,10 +409,6 @@ open class MainActivity : BaseComposeActivity(), AudioPlay.CallBack {
         requestLocalNetworkPermissionIfBlocked()
     }
 
-    /**
-     * 书源 / 图源 / WebDAV 等局域网请求被系统拦掉后，网络层会留下标记（见
-     * [LocalNetworkBlockedNotifier]）；回到前台时补一次权限申请，用户重试原操作即可。
-     */
     private fun requestLocalNetworkPermissionIfBlocked() {
         if (!LocalNetworkBlockedNotifier.consumePermissionRequest()) return
         if (LocalNetworkAccess.isGranted(this)) return
@@ -515,7 +494,6 @@ open class MainActivity : BaseComposeActivity(), AudioPlay.CallBack {
         val backStack = rememberNavBackStack(*startRoutes)
         SideEffect { navRouteTracker.onBackStackChanged(backStack) }
 
-        // 悬浮胶囊是全局叠层：数据来自全局朗读会话与设置，不依赖阅读器是否在栈上。
         val pageShellPlayerViewModel: ReadAloudPlayerViewModel =
             org.koin.compose.koinInject()
         val pageShellPlayerState by pageShellPlayerViewModel.uiState.collectAsStateWithLifecycle()
@@ -524,7 +502,6 @@ open class MainActivity : BaseComposeActivity(), AudioPlay.CallBack {
         val pageShellShowCapsule = pageShellAloudSettings.showReadAloudCapsule
         val pageShellCapsuleScope = rememberCoroutineScope()
 
-        // 两种播放页共享同窗口形变容器，导航栈保留原页面作为动画背景。
         val initialAudioRoute =
             remember { MainNavigator.resolveStartRoute(intent) as? MainRouteAudioPlay }
         var initialAudioHandled by rememberSaveable { mutableStateOf(false) }
@@ -555,10 +532,8 @@ open class MainActivity : BaseComposeActivity(), AudioPlay.CallBack {
             val switchingPlayer = playerSource != source ||
                     (source == PlaybackCapsuleSource.AudioBook && audioPlayerBookUrl != request.bookUrl)
             if (switchingPlayer && readAloudMorph.progress.value > 0f) {
-                // 先交回起点，防止两个宿主同时驱动同一进度，或飞行中途换封面。
                 readAloudPlayerVisible = false
                 audioPlayerVisible = false
-                // 当前宿主响应 visible=false 完成收起，避免两个协程争用 Animatable。
                 snapshotFlow { readAloudMorph.progress.value }.first { it <= 0f }
             }
             playerSource = source
@@ -597,11 +572,9 @@ open class MainActivity : BaseComposeActivity(), AudioPlay.CallBack {
             )
             if (!pageShellShowCapsule) readAloudMorph.clearStartAnchors()
         }
-        // 只用于首帧锚点布局，不把尚未启动的朗读伪装成正在播放。
         val capsuleAnchorPreview = if (playerVisible && pageShellShowCapsule) {
             PlaybackCapsuleState(source = playerSource)
         } else null
-        // 两种胶囊互斥：主页悬浮底栏用圆形胶囊，其余页面用全局可拖拽胶囊。
         val currentRoute = backStack.lastOrNull()
         val onMainRoute = currentRoute is MainRouteHome
         val useFloatingBottomBar = LocalAppUiConfiguration.current.appShell.useFloatingBottomBar
@@ -644,14 +617,11 @@ open class MainActivity : BaseComposeActivity(), AudioPlay.CallBack {
         LaunchedEffect(backStack) {
             snapshotFlow { backStack.toList() }
                 .collect {
-                    // 兜底同步：预测性返回、系统返回手势等不经过 navigateToRoute/navigateBack 的路径
                     navRouteTracker.onBackStackChanged(it)
                     MainNavigator.onBackStackChanged()
                 }
         }
         SharedTransitionLayout {
-            // 启动验证做成单独的 screen：门槛未过时完全不组合应用界面，
-            // 因此验证页背后看不到书架/阅读界面，也没有可交互的入口
             PrivateAppStartGate {
                 Box(modifier = Modifier.fillMaxSize()) {
                     Box(
@@ -661,10 +631,6 @@ open class MainActivity : BaseComposeActivity(), AudioPlay.CallBack {
                     ) {
                         NavDisplay(
                             backStack = backStack,
-                            // 交给 nav3 装上 SharedEntryInSceneNavEntryDecorator：这是跨 scene 保持
-                            // 共享元素登记的官方机制。少了它，书架 scene 一被销毁封面的登记就没了——
-                            // 打开书后「马上返回」还有封面转场、'待一会儿再返回'会退化成
-                            // 普通淡入淡出。
                             sharedTransitionScope = this@SharedTransitionLayout,
                             entryDecorators = listOf(
                                 rememberSaveableStateHolderNavEntryDecorator(),
@@ -674,7 +640,6 @@ open class MainActivity : BaseComposeActivity(), AudioPlay.CallBack {
                                 remember {
                                     ModalOverlaySceneStrategy(
                                         isTopEntry = {
-                                            // Nav3's default content key also includes the route type.
                                             backStack.lastOrNull()?.let { top ->
                                                 NavEntry(top) {}.contentKey == it
                                             } == true
@@ -781,10 +746,7 @@ open class MainActivity : BaseComposeActivity(), AudioPlay.CallBack {
                             )
                         )
                     }
-                    // 全局胶囊与导航容器并列，始终画在阅读等 Nav3 叠层之上。
-                    // 主页开启悬浮底栏时仍使用主页自己的圆形胶囊。
                     CompositionLocalProvider(
-                        // 收起完成后不再用残留进度给可点击胶囊加透明层。
                         LocalReadAloudMorph provides readAloudMorph.takeIf {
                             !useHomeCapsule && (playerVisible || readAloudMorph.progress.isRunning)
                         }
@@ -801,7 +763,6 @@ open class MainActivity : BaseComposeActivity(), AudioPlay.CallBack {
                             onOpenPlayer = { ReadAloudPlayerOverlayBus.request(it) },
                         )
                     }
-                    // 听书播放页：同窗口 morph 面板，从胶囊位置长出来。
                     if (playerSource == PlaybackCapsuleSource.ReadAloud) ReadAloudPlayerMorphHost(
                         playerViewModel = pageShellPlayerViewModel,
                         playerState = pageShellPlayerState,
@@ -811,8 +772,6 @@ open class MainActivity : BaseComposeActivity(), AudioPlay.CallBack {
                         predictiveBackEnabled = configuration.appShell.predictiveBackEnabled,
                         onDismiss = { readAloudPlayerVisible = false },
                         onSwitchToClassic = { bookUrl ->
-                            // 栈顶是阅读界面：让它直接落在经典朗读控制页；
-                            // 否则没有可用的阅读界面，打开一个新的。
                             if (isReaderOnTop(backStack)) {
                                 ReadAloudControlsRequestBus.request()
                             } else {
@@ -918,9 +877,6 @@ open class MainActivity : BaseComposeActivity(), AudioPlay.CallBack {
             }
     }
 
-    /**
-     * 版本更新日志
-     */
     private suspend fun upVersion() = suspendCoroutine<Unit?> { block ->
         if (LocalConfig.versionCode == appInfo.versionCode) {
             block.resume(null)
@@ -948,9 +904,6 @@ open class MainActivity : BaseComposeActivity(), AudioPlay.CallBack {
         }
     }
 
-    /**
-     * 备份同步
-     */
     private fun backupSync() {
         if (!backupSettingsGateway.currentSettings.autoCheckNewBackup) {
             return
@@ -1062,6 +1015,12 @@ open class MainActivity : BaseComposeActivity(), AudioPlay.CallBack {
     }
 
     override fun onDestroy() {
+        // 🌟 核心修复：解除 WindowInsets 监听，防止窗口抛掷销毁时系统回调引发崩溃
+        window?.decorView?.let { decorView ->
+            ViewCompat.setWindowInsetsAnimationCallback(decorView, null)
+            ViewCompat.setOnApplyWindowInsetsListener(decorView, null)
+        }
+        
         super.onDestroy()
         Coroutine.async {
             BookHelp.clearInvalidCache()
