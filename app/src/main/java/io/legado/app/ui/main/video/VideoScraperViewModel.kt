@@ -406,7 +406,6 @@ class VideoScraperViewModel(
                     val isEmptyPoster = cached?.posterUrl.isNullOrBlank()
                     val shouldRetryEmptyPoster = isEmptyPoster && emptyPosterRetryCount < maxEmptyPosterRetry
                     
-                    // 🌟 核心拦截：只要被手动编辑过，绝对不允许自动覆盖！
                     val isManuallyEdited = cached?.isManuallyEdited == true
                     val needScrape = !isManuallyEdited && (isSignatureChanged || shouldRetryEmptyPoster)
 
@@ -507,11 +506,9 @@ class VideoScraperViewModel(
 
             val key = baseTitle
 
-            val finalParsedInfo = if (folderSeason != null) {
-                parsed.copy(season = folderSeason)
-            } else {
-                parsed
-            }
+            // 🌟 核心修复：强制同一文件夹下的视频属于同一季
+            // 如果文件夹有明确季数，用文件夹的；如果没有，统一视为第1季，彻底忽略文件名里的 Sxx 干扰
+            val finalParsedInfo = parsed.copy(season = folderSeason ?: 1)
 
             val updatedV = v.copy(parsedInfo = finalParsedInfo)
 
@@ -989,7 +986,6 @@ class VideoScraperViewModel(
 
         if (result != null && apiKey.isNotBlank()) {
             viewModelScope.launch(Dispatchers.IO) {
-                // 🌟 核心修复：因为用户可能换了版本，所以清空旧的标题缓存
                 val seasonTitles = mutableMapOf<String, String>()
                 val episodeTitles = mutableMapOf<Int, String>()
                 val seasonEpisodeStills = mutableMapOf<String, String>()
@@ -1021,7 +1017,6 @@ class VideoScraperViewModel(
                     }
                 }
 
-                // 直接覆盖旧的标题数据，不再合并
                 val finalSeries = updatedSeries.copy(
                     seasonEpisodeTitles = seasonTitles,
                     episodeTitles = episodeTitles,
