@@ -4,6 +4,7 @@ import androidx.room.Dao
 import androidx.room.Insert
 import androidx.room.OnConflictStrategy
 import androidx.room.Query
+import androidx.room.Transaction
 import io.legado.app.data.entities.VideoScrapedEntity
 
 @Dao
@@ -17,6 +18,10 @@ interface VideoScrapedDao {
     @Query("DELETE FROM video_scraped_cache")
     suspend fun deleteAll()
 
-    @Query("DELETE FROM video_scraped_cache WHERE id = :id")
-    suspend fun deleteById(id: String)
+    // ➕ 新增：事务级全量覆盖，确保绝不会因中途退出导致数据丢失
+    @Transaction
+    suspend fun replaceAll(entities: List<VideoScrapedEntity>) {
+        deleteAll()
+        upsertAll(entities)
+    }
 }
