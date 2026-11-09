@@ -174,19 +174,16 @@ val pinyinCollator = Collator.getInstance(Locale.CHINA)
 fun extractEpisodeNumber(fileName: String, parsedEpisode: Int?): Int {
     if (parsedEpisode != null && parsedEpisode > 0) return parsedEpisode
     
-    // 🌟 核心修复：优先匹配 SxxExx 格式（支持 S01E210 这种季数）
     val seasonEpisodeMatch = Regex("(?i)S\\d+E(\\d+)").find(fileName)
     if (seasonEpisodeMatch != null) {
         return seasonEpisodeMatch.groupValues[1].toIntOrNull() ?: 0
     }
     
-    // 匹配“第X集”、“EP X”、“E X”
     val cnMatch = Regex("(?:第|EP|E)\\s*(\\d+)", RegexOption.IGNORE_CASE).find(fileName)
     if (cnMatch != null) {
         return cnMatch.groupValues[1].toIntOrNull() ?: 0
     }
     
-    // 兜底：提取纯数字，但排除分辨率（1080p, 2160p）和年份
     val cleanName = fileName.replace(Regex("\\d{3,4}[pP]", RegexOption.IGNORE_CASE), "").replace(Regex("\\d{4}"), "")
     val numMatch = Regex("(?<!\\d)(\\d{1,4})(?!\\d)").find(cleanName)
     return numMatch?.groupValues?.get(1)?.toIntOrNull() ?: 0
