@@ -22,6 +22,7 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.animation.scaleOut
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
@@ -407,6 +408,8 @@ open class MainActivity : BaseComposeActivity(), AudioPlay.CallBack {
     override fun onResume() {
         super.onResume()
         requestLocalNetworkPermissionIfBlocked()
+        // 🌟 补充：从悬浮态/自由窗口切回时，强制重算一次 Insets 防截断
+        requestInsetsAndLayout()
     }
 
     private fun requestLocalNetworkPermissionIfBlocked() {
@@ -433,6 +436,28 @@ open class MainActivity : BaseComposeActivity(), AudioPlay.CallBack {
                 resetToHome = MainIntent.shouldOpenRouteWithHomeParent(intent),
             )
         )
+    }
+
+    // 🌟 治本修复 1：监听多窗口状态变化，强制重新分发 Insets 与触发 Layout
+    override fun onMultiWindowModeChanged(isInMultiWindowMode: Boolean, newConfig: Configuration) {
+        super.onMultiWindowModeChanged(isInMultiWindowMode, newConfig)
+        requestInsetsAndLayout()
+    }
+
+    // 🌟 治本修复 2：监听全局配置变化（抛掷操作会触发此回调）
+    override fun onConfigurationChanged(newConfig: Configuration) {
+        super.onConfigurationChanged(newConfig)
+        requestInsetsAndLayout()
+    }
+
+    // 🌟 治本修复 3：强制系统重算 Insets 并重新布局
+    private fun requestInsetsAndLayout() {
+        window?.decorView?.let { decorView ->
+            // 向底层系统强制索要最新的 Insets（打破缓存）
+            ViewCompat.requestApplyInsets(decorView)
+            // 强制根 View 重新计算尺寸
+            decorView.requestLayout()
+        }
     }
 
     @OptIn(ExperimentalSharedTransitionApi::class)
@@ -623,7 +648,9 @@ open class MainActivity : BaseComposeActivity(), AudioPlay.CallBack {
         }
         SharedTransitionLayout {
             PrivateAppStartGate {
-                Box(modifier = Modifier.fillMaxSize()) {
+                // 🌟 治本修复 4：替换为 BoxWithConstraints，让 Compose 在测量阶段直接获取最新的窗口尺寸约束
+                BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
+                    // 💡 注意：这里绝对不要使用 key(maxWidth, maxHeight) 来包裹内部内容，否则会导致导航栈和播放器状态丢失
                     Box(
                         Modifier
                             .fillMaxSize()
