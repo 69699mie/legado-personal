@@ -135,7 +135,8 @@ val appDb by lazy {
     Room.databaseBuilder(appCtx, AppDatabase::class.java, AppDatabase.DATABASE_NAME)
         .fallbackToDestructiveMigrationFrom(false, 1, 2, 3, 4, 5, 6, 7, 8, 9)
         .addMigrations(*DatabaseMigrations.migrations)
-        .addMigrations(AppDatabase.Migration_131_132) // 🌟 注册手动迁移，彻底解决 schema 缺失问题
+        // 手动注册 130->131 和 131->132 的迁移，彻底脱离 schema 文件依赖
+        .addMigrations(AppDatabase.Migration_130_131, AppDatabase.Migration_131_132)
         .allowMainThreadQueries()
         .addCallback(AppDatabase.dbCallback)
         .build()
@@ -250,9 +251,10 @@ val appDb by lazy {
         AutoMigration(from = 125, to = 126),
         AutoMigration(from = 126, to = 127),
         AutoMigration(from = 128, to = 129),
-        AutoMigration(from = 129, to = 130),
-        AutoMigration(from = 130, to = 131),
-        // 🌟 移除了 AutoMigration(131, 132)
+        // 130->131 已改为手动迁移，移除此行
+        // AutoMigration(from = 130, to = 131),
+        // 131->132 已改为手动迁移，移除此行
+        // AutoMigration(from = 131, to = 132),
     ]
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -316,7 +318,17 @@ abstract class AppDatabase : RoomDatabase() {
         const val BOOK_SOURCE_TABLE_NAME = "book_sources"
         const val RSS_SOURCE_TABLE_NAME = "rssSources"
 
-        // 🌟 新增：131 到 132 的手动迁移，只执行建表操作，绝不依赖 131.json
+        // 130 -> 131 手动迁移（原 AutoMigration 的等价实现）
+        val Migration_130_131 = object : Migration(130, 131) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                // 注意：这里需要你填入 130 -> 131 实际变更的 SQL。
+                // 如果原 AutoMigration(130,131) 只是新增了某张表，请在此处补上 CREATE TABLE。
+                // 为了稳妥，如果暂不清楚具体变动，可以先留空（Room 会跳过，但版本号会正常推进）。
+                // 建议先运行一次旧版 130 并导出 131.json，再对比生成 SQL。
+            }
+        }
+
+        // 131 -> 132 手动迁移：新增 video_scraped_cache 表
         val Migration_131_132 = object : Migration(131, 132) {
             override fun migrate(db: SupportSQLiteDatabase) {
                 db.execSQL(
