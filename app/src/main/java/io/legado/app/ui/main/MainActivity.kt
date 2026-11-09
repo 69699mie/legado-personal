@@ -409,8 +409,6 @@ open class MainActivity : BaseComposeActivity(), AudioPlay.CallBack {
     override fun onResume() {
         super.onResume()
         requestLocalNetworkPermissionIfBlocked()
-        // 从悬浮态/自由窗口切回时，强制重算一次 Insets 防截断
-        requestInsetsAndLayout()
     }
 
     private fun requestLocalNetworkPermissionIfBlocked() {
@@ -437,40 +435,6 @@ open class MainActivity : BaseComposeActivity(), AudioPlay.CallBack {
                 resetToHome = MainIntent.shouldOpenRouteWithHomeParent(intent),
             )
         )
-    }
-
-    // 🌟 监听多窗口状态变化，强制重新分发 Insets 与触发 Layout
-    override fun onMultiWindowModeChanged(isInMultiWindowMode: Boolean, newConfig: Configuration) {
-        super.onMultiWindowModeChanged(isInMultiWindowMode, newConfig)
-        requestInsetsAndLayout()
-    }
-
-    // 🌟 监听全局配置变化（抛掷操作会触发此回调）
-    override fun onConfigurationChanged(newConfig: Configuration) {
-        super.onConfigurationChanged(newConfig)
-        requestInsetsAndLayout()
-    }
-
-    // 🌟 原生重写画中画回调，彻底杜绝任何类型/包名解析错误
-    override fun onPictureInPictureModeChanged(isInPictureInPictureMode: Boolean, newConfig: Configuration) {
-        super.onPictureInPictureModeChanged(isInPictureInPictureMode, newConfig)
-        if (!isInPictureInPictureMode) {
-            // 退出画中画时，延迟 300ms 等待系统窗口动画稳定，再强制刷新
-            window?.decorView?.postDelayed({
-                // 增加安全锁：确保视图依然附着在窗口上，防止销毁瞬间引发空指针
-                if (window?.decorView?.isAttachedToWindow == true) {
-                    requestInsetsAndLayout()
-                }
-            }, 300L)
-        }
-    }
-
-    // 🌟 强制系统重算 Insets 并重新布局
-    private fun requestInsetsAndLayout() {
-        window?.decorView?.let { decorView ->
-            ViewCompat.requestApplyInsets(decorView)
-            decorView.requestLayout()
-        }
     }
 
     @OptIn(ExperimentalSharedTransitionApi::class)
@@ -661,9 +625,7 @@ open class MainActivity : BaseComposeActivity(), AudioPlay.CallBack {
         }
         SharedTransitionLayout {
             PrivateAppStartGate {
-                // 🌟 替换为 BoxWithConstraints 让 Compose 实时感知窗口物理尺寸
                 BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
-                    // 注意：这里绝不能用 key(maxWidth, maxHeight) 包裹，否则会重置所有状态
                     Box(
                         Modifier
                             .fillMaxSize()
