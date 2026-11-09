@@ -356,6 +356,8 @@ val appModule = module {
     single { get<AppDatabase>().rssStarDao }
     single { get<AppDatabase>().ruleSubDao }
     single { get<AppDatabase>().videoDao }
+    // ➕ 新增 Room 刮削缓存 DAO 注入
+    single { get<AppDatabase>().videoScrapedDao }
 
     singleOf(::ReadRecordRepository)
     single<HomeDashboardGateway> { HomeDashboardRepository(get(), get()) }
