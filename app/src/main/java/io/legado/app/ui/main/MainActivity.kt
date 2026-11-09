@@ -4,6 +4,7 @@ import android.Manifest
 import android.content.Context
 import android.content.Intent
 import android.content.res.Configuration
+import android.os.Build
 import android.os.Bundle
 import android.text.format.DateUtils
 import android.view.InputDevice
@@ -129,6 +130,9 @@ open class MainActivity : BaseComposeActivity(), AudioPlay.CallBack {
 
     /** 全局 Compose 文本弹层状态，供遗留命令式路径展示 Markdown/文本内容 */
     private val textSheetFlow = MutableStateFlow<TextSheetData?>(null)
+
+    /** 画中画状态监听器 */
+    private var pipModeChangedListener: ((Boolean) -> Unit)? = null
 
     fun showTextSheet(title: String, content: String, onDismiss: (() -> Unit)? = null) {
         textSheetFlow.value = TextSheetData(title, content, onDismiss)
@@ -395,6 +399,18 @@ open class MainActivity : BaseComposeActivity(), AudioPlay.CallBack {
         lifecycleScope.launch {
             runCatching { bookshelfCoverPreloader.preloadCurrentGroupFirstScreen() }
         }
+
+        // 🌟 新增：安全注册画中画状态监听，退出时强制刷新 Insets 防截断
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            pipModeChangedListener = { isInPip ->
+                if (!isInPip) {
+                    window?.decorView?.postDelayed({
+                        requestInsetsAndLayout()
+                    }, 300L)
+                }
+            }
+            addOnPictureInPictureModeChangedListener(pipModeChangedListener!!)
+        }
     }
 
     private fun startWebServiceWithLocalNetworkPermission() {
@@ -408,7 +424,7 @@ open class MainActivity : BaseComposeActivity(), AudioPlay.CallBack {
     override fun onResume() {
         super.onResume()
         requestLocalNetworkPermissionIfBlocked()
-        // 🌟 补充：从悬浮态/自由窗口切回时，强制重算一次 Insets 防截断
+        // 从悬浮态/自由窗口切回时，强制重算一次 Insets 防截断
         requestInsetsAndLayout()
     }
 
@@ -438,24 +454,22 @@ open class MainActivity : BaseComposeActivity(), AudioPlay.CallBack {
         )
     }
 
-    // 🌟 治本修复 1：监听多窗口状态变化，强制重新分发 Insets 与触发 Layout
+    // 🌟 监听多窗口状态变化，强制重新分发 Insets 与触发 Layout
     override fun onMultiWindowModeChanged(isInMultiWindowMode: Boolean, newConfig: Configuration) {
         super.onMultiWindowModeChanged(isInMultiWindowMode, newConfig)
         requestInsetsAndLayout()
     }
 
-    // 🌟 治本修复 2：监听全局配置变化（抛掷操作会触发此回调）
+    // 🌟 监听全局配置变化（抛掷操作会触发此回调）
     override fun onConfigurationChanged(newConfig: Configuration) {
         super.onConfigurationChanged(newConfig)
         requestInsetsAndLayout()
     }
 
-    // 🌟 治本修复 3：强制系统重算 Insets 并重新布局
+    // 🌟 强制系统重算 Insets 并重新布局
     private fun requestInsetsAndLayout() {
         window?.decorView?.let { decorView ->
-            // 向底层系统强制索要最新的 Insets（打破缓存）
             ViewCompat.requestApplyInsets(decorView)
-            // 强制根 View 重新计算尺寸
             decorView.requestLayout()
         }
     }
@@ -648,9 +662,9 @@ open class MainActivity : BaseComposeActivity(), AudioPlay.CallBack {
         }
         SharedTransitionLayout {
             PrivateAppStartGate {
-                // 🌟 治本修复 4：替换为 BoxWithConstraints，让 Compose 在测量阶段直接获取最新的窗口尺寸约束
+                // 🌟 替换为 BoxWithConstraints 让 Compose 实时感知窗口物理尺寸
                 BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
-                    // 💡 注意：这里绝对不要使用 key(maxWidth, maxHeight) 来包裹内部内容，否则会导致导航栈和播放器状态丢失
+                    // 注意：这里绝不能用 key(maxWidth, maxHeight) 包裹，否则会重置所有状态
                     Box(
                         Modifier
                             .fillMaxSize()
@@ -1042,7 +1056,12 @@ open class MainActivity : BaseComposeActivity(), AudioPlay.CallBack {
     }
 
     override fun onDestroy() {
-        // 🌟 核心修复：解除 WindowInsets 监听，防止窗口抛掷销毁时系统回调引发崩溃
+        // 🌟 安全注销画中画监听器
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            pipModeChangedListener?.let { removeOnPictureInPictureModeChangedListener(it) }
+        }
+
+        // 🌟 解除 WindowInsets 监听，防止窗口抛掷销毁时系统回调引发崩溃
         window?.decorView?.let { decorView ->
             ViewCompat.setWindowInsetsAnimationCallback(decorView, null)
             ViewCompat.setOnApplyWindowInsetsListener(decorView, null)
