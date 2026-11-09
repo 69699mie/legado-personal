@@ -5,6 +5,8 @@ import android.content.Context
 import androidx.compose.runtime.Immutable
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import io.legado.app.data.dao.VideoScrapedDao
+import io.legado.app.data.entities.VideoScrapedEntity
 import io.legado.app.data.repository.VideoSettingsRepository
 import io.legado.app.utils.ParsedVideoName
 import io.legado.app.utils.VideoFileNameParser
@@ -100,7 +102,8 @@ data class ScrapeCacheItem(
 )
 
 class VideoScraperViewModel(
-    private val videoSettingsRepository: VideoSettingsRepository
+    private val videoSettingsRepository: VideoSettingsRepository,
+    private val videoScrapedDao: VideoScrapedDao // ➕ 注入 Room DAO
 ) : ViewModel() {
 
     private val client = OkHttpClient.Builder()
@@ -125,7 +128,6 @@ class VideoScraperViewModel(
     private var isHandlingPendingRequest = false
 
     init {
-        loadScrapedCache()
         val savedLibs = videoSettingsRepository.libraryFids.split(",").filter { it.isNotBlank() }
         val fids = mutableSetOf<String>()
         savedLibs.forEach { item ->
@@ -150,139 +152,244 @@ class VideoScraperViewModel(
             )
         }
 
-        val cachedSeries = scrapedCache.map { (id, cached) ->
-            MediaSeries(
-                id = id,
-                title = cached.title,
-                originalParsedTitle = cached.title,
-                year = null,
-                category = cached.category,
-                posterUrl = cached.posterUrl,
-                backdropUrl = cached.backdropUrl,
-                overview = cached.overview,
-                rating = cached.rating,
-                seasonDetails = cached.seasonDetails,
-                episodeTitles = cached.episodeTitles,
-                episodeStills = cached.episodeStills,
-                seasonEpisodeTitles = cached.seasonEpisodeTitles,
-                seasonEpisodeStills = cached.seasonEpisodeStills,
-                groupName = cached.groupName,
-                isManuallyEdited = cached.isManuallyEdited,
-                videos = emptyList() 
-            )
-        }.filter { !it.title.matches(Regex("^\\d+$")) }
-         .sortedWith(compareBy(pinyinCollator) { it.title })
-        
-        if (cachedSeries.isNotEmpty()) {
-            _uiState.update { it.copy(seriesList = cachedSeries) }
+        // 🌟 核心改造：异步读取 Room 并在完成后启动网络加载
+        viewModelScope.launch {
+            loadCacheFromRoomOrSp()
+            
+            val cachedSeries = scrapedCache.map { (id, cached) ->
+                MediaSeries(
+                    id = id,
+                    title = cached.title,
+                    originalParsedTitle = cached.title,
+                    year = null,
+                    category = cached.category,
+                    posterUrl = cached.posterUrl,
+                    backdropUrl = cached.backdropUrl,
+                    overview = cached.overview,
+                    rating = cached.rating,
+                    seasonDetails = cached.seasonDetails,
+                    episodeTitles = cached.episodeTitles,
+                    episodeStills = cached.episodeStills,
+                    seasonEpisodeTitles = cached.seasonEpisodeTitles,
+                    seasonEpisodeStills = cached.seasonEpisodeStills,
+                    groupName = cached.groupName,
+                    isManuallyEdited = cached.isManuallyEdited,
+                    videos = emptyList() 
+                )
+            }.filter { !it.title.matches(Regex("^\\d+$")) }
+             .sortedWith(compareBy(pinyinCollator) { it.title })
+            
+            if (cachedSeries.isNotEmpty()) {
+                _uiState.update { it.copy(seriesList = cachedSeries) }
+            }
+            
+            fetchQuarkFiles("0")
+            if (fids.isNotEmpty()) loadLibraryVideos()
         }
-
-        fetchQuarkFiles("0")
-        if (fids.isNotEmpty()) loadLibraryVideos()
     }
 
-    private fun loadScrapedCache() {
+    // ➕ 新增：异步读取缓存，如果 Room 为空则尝试从 SharedPreferences 迁移
+    private suspend fun loadCacheFromRoomOrSp() = withContext(Dispatchers.IO) {
         try {
-            val jsonStr = videoSettingsRepository.scrapedCacheData
-            if (jsonStr.isNotBlank()) {
-                val jsonObj = JSONObject(jsonStr)
-                for (key in jsonObj.keys()) {
-                    try {
-                        val itemObj = jsonObj.getJSONObject(key)
-                        val epTitlesObj = itemObj.optJSONObject("episodeTitles")
-                        val epTitles = mutableMapOf<Int, String>()
-                        epTitlesObj?.keys()?.forEach { k -> k.toIntOrNull()?.let { num -> epTitles[num] = epTitlesObj.getString(k) } }
-                        
-                        val epStillsObj = itemObj.optJSONObject("episodeStills")
-                        val epStills = mutableMapOf<Int, String>()
-                        epStillsObj?.keys()?.forEach { k -> k.toIntOrNull()?.let { num -> epStills[num] = epStillsObj.getString(k) } }
+            val roomEntities = videoScrapedDao.getAll()
+            if (roomEntities.isNotEmpty()) {
+                roomEntities.forEach { entity ->
+                    val item = entity.toScrapeCacheItem()
+                    scrapedCache[entity.id] = item
+                }
+            } else {
+                // 尝试从 SP 迁移旧数据
+                val jsonStr = videoSettingsRepository.scrapedCacheData
+                if (jsonStr.isNotBlank()) {
+                    val jsonObj = JSONObject(jsonStr)
+                    val entitiesToInsert = mutableListOf<VideoScrapedEntity>()
+                    
+                    for (key in jsonObj.keys()) {
+                        try {
+                            val itemObj = jsonObj.getJSONObject(key)
+                            val epTitlesObj = itemObj.optJSONObject("episodeTitles")
+                            val epTitles = mutableMapOf<Int, String>()
+                            epTitlesObj?.keys()?.forEach { k -> k.toIntOrNull()?.let { num -> epTitles[num] = epTitlesObj.getString(k) } }
+                            
+                            val epStillsObj = itemObj.optJSONObject("episodeStills")
+                            val epStills = mutableMapOf<Int, String>()
+                            epStillsObj?.keys()?.forEach { k -> k.toIntOrNull()?.let { num -> epStills[num] = epStillsObj.getString(k) } }
 
-                        val seasonDetailsObj = itemObj.optJSONObject("seasonDetails")
-                        val seasonDetails = mutableMapOf<Int, SeasonDetail>()
-                        seasonDetailsObj?.keys()?.forEach { k ->
-                            k.toIntOrNull()?.let { num ->
-                                val sObj = seasonDetailsObj.getJSONObject(k)
-                                seasonDetails[num] = SeasonDetail(
-                                    posterUrl = sObj.optString("posterUrl").takeIf { it.isNotBlank() && it != "null" },
-                                    overview = sObj.optString("overview").takeIf { it.isNotBlank() && it != "null" }
-                                )
+                            val seasonDetailsObj = itemObj.optJSONObject("seasonDetails")
+                            val seasonDetails = mutableMapOf<Int, SeasonDetail>()
+                            seasonDetailsObj?.keys()?.forEach { k ->
+                                k.toIntOrNull()?.let { num ->
+                                    val sObj = seasonDetailsObj.getJSONObject(k)
+                                    seasonDetails[num] = SeasonDetail(
+                                        posterUrl = sObj.optString("posterUrl").takeIf { it.isNotBlank() && it != "null" },
+                                        overview = sObj.optString("overview").takeIf { it.isNotBlank() && it != "null" }
+                                    )
+                                }
                             }
-                        }
 
-                        val sEpTitlesObj = itemObj.optJSONObject("seasonEpisodeTitles")
-                        val sEpTitles = mutableMapOf<String, String>()
-                        sEpTitlesObj?.keys()?.forEach { k -> sEpTitles[k] = sEpTitlesObj.getString(k) }
+                            val sEpTitlesObj = itemObj.optJSONObject("seasonEpisodeTitles")
+                            val sEpTitles = mutableMapOf<String, String>()
+                            sEpTitlesObj?.keys()?.forEach { k -> sEpTitles[k] = sEpTitlesObj.getString(k) }
 
-                        val sEpStillsObj = itemObj.optJSONObject("seasonEpisodeStills")
-                        val sEpStills = mutableMapOf<String, String>()
-                        sEpStillsObj?.keys()?.forEach { k -> sEpStills[k] = sEpStillsObj.getString(k) }
+                            val sEpStillsObj = itemObj.optJSONObject("seasonEpisodeStills")
+                            val sEpStills = mutableMapOf<String, String>()
+                            sEpStillsObj?.keys()?.forEach { k -> sEpStills[k] = sEpStillsObj.getString(k) }
 
-                        scrapedCache[key] = ScrapeCacheItem(
-                            title = itemObj.optString("title"),
-                            category = itemObj.optString("category"),
-                            posterUrl = itemObj.optString("posterUrl").takeIf { it.isNotBlank() && it != "null" },
-                            backdropUrl = itemObj.optString("backdropUrl").takeIf { it.isNotBlank() && it != "null" },
-                            overview = itemObj.optString("overview").takeIf { it.isNotBlank() && it != "null" },
-                            rating = itemObj.optString("rating").takeIf { it.isNotBlank() && it != "null" },
-                            seasonDetails = seasonDetails,
-                            episodeTitles = epTitles,
-                            episodeStills = epStills,
-                            seasonEpisodeTitles = sEpTitles,
-                            seasonEpisodeStills = sEpStills,
-                            groupName = itemObj.optString("groupName").takeIf { it.isNotBlank() && it != "null" },
-                            isManuallyEdited = itemObj.optBoolean("isManuallyEdited", false),
-                            fileListSignature = itemObj.optString("fileListSignature", "")
-                        )
-                    } catch (e: Exception) { e.printStackTrace() }
+                            val item = ScrapeCacheItem(
+                                title = itemObj.optString("title"),
+                                category = itemObj.optString("category"),
+                                posterUrl = itemObj.optString("posterUrl").takeIf { it.isNotBlank() && it != "null" },
+                                backdropUrl = itemObj.optString("backdropUrl").takeIf { it.isNotBlank() && it != "null" },
+                                overview = itemObj.optString("overview").takeIf { it.isNotBlank() && it != "null" },
+                                rating = itemObj.optString("rating").takeIf { it.isNotBlank() && it != "null" },
+                                seasonDetails = seasonDetails,
+                                episodeTitles = epTitles,
+                                episodeStills = epStills,
+                                seasonEpisodeTitles = sEpTitles,
+                                seasonEpisodeStills = sEpStills,
+                                groupName = itemObj.optString("groupName").takeIf { it.isNotBlank() && it != "null" },
+                                isManuallyEdited = itemObj.optBoolean("isManuallyEdited", false),
+                                fileListSignature = itemObj.optString("fileListSignature", "")
+                            )
+                            scrapedCache[key] = item
+                            entitiesToInsert.add(item.toEntity(key))
+                        } catch (e: Exception) { e.printStackTrace() }
+                    }
+                    
+                    if (entitiesToInsert.isNotEmpty()) {
+                        videoScrapedDao.upsertAll(entitiesToInsert)
+                    }
+                    // 迁移完毕，清空旧的 SP 数据释放空间
+                    videoSettingsRepository.scrapedCacheData = ""
                 }
             }
-        } catch(e: Exception) { e.printStackTrace() }
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
     }
 
+    // ➕ 新增：异步保存，每次全量覆盖，保证一致性
     private fun saveScrapedCache() {
-        try {
-            val jsonObj = JSONObject()
-            scrapedCache.forEach { (key, item) ->
-                val itemObj = JSONObject()
-                itemObj.put("title", item.title)
-                itemObj.put("category", item.category)
-                itemObj.put("posterUrl", item.posterUrl ?: "")
-                itemObj.put("backdropUrl", item.backdropUrl ?: "")
-                itemObj.put("overview", item.overview ?: "")
-                itemObj.put("rating", item.rating ?: "")
-                itemObj.put("groupName", item.groupName ?: "")
-                itemObj.put("isManuallyEdited", item.isManuallyEdited)
-                itemObj.put("fileListSignature", item.fileListSignature)
-                
-                val epTitlesObj = JSONObject()
-                item.episodeTitles.forEach { (k, v) -> epTitlesObj.put(k.toString(), v) }
-                itemObj.put("episodeTitles", epTitlesObj)
-
-                val epStillsObj = JSONObject()
-                item.episodeStills.forEach { (k, v) -> epStillsObj.put(k.toString(), v) }
-                itemObj.put("episodeStills", epStillsObj)
-
-                val seasonDetailsObj = JSONObject()
-                item.seasonDetails.forEach { (k, v) ->
-                    seasonDetailsObj.put(k.toString(), JSONObject().apply {
-                        put("posterUrl", v.posterUrl ?: "")
-                        put("overview", v.overview ?: "")
-                    })
-                }
-                itemObj.put("seasonDetails", seasonDetailsObj)
-
-                val sEpTitlesObj = JSONObject()
-                item.seasonEpisodeTitles.forEach { (k, v) -> sEpTitlesObj.put(k, v) }
-                itemObj.put("seasonEpisodeTitles", sEpTitlesObj)
-
-                val sEpStillsObj = JSONObject()
-                item.seasonEpisodeStills.forEach { (k, v) -> sEpStillsObj.put(k, v) }
-                itemObj.put("seasonEpisodeStills", sEpStillsObj)
-
-                jsonObj.put(key, itemObj)
+        val entities = scrapedCache.map { (id, item) -> item.toEntity(id) }
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                videoScrapedDao.deleteAll()
+                videoScrapedDao.upsertAll(entities)
+            } catch (e: Exception) {
+                e.printStackTrace()
             }
-            videoSettingsRepository.scrapedCacheData = jsonObj.toString()
-        } catch(e: Exception) { e.printStackTrace() }
+        }
+    }
+
+    // ➕ 辅助映射方法：Entity -> ScrapeCacheItem
+    private fun VideoScrapedEntity.toScrapeCacheItem(): ScrapeCacheItem {
+        var epTitles = mapOf<Int, String>()
+        var epStills = mapOf<Int, String>()
+        var seasonDetails = mapOf<Int, SeasonDetail>()
+        var sEpTitles = mapOf<String, String>()
+        var sEpStills = mapOf<String, String>()
+
+        try {
+            if (extraData.isNotBlank()) {
+                val json = JSONObject(extraData)
+                
+                json.optJSONObject("episodeTitles")?.let { obj ->
+                    val map = mutableMapOf<Int, String>()
+                    obj.keys().forEach { k -> k.toIntOrNull()?.let { num -> map[num] = obj.getString(k) } }
+                    epTitles = map
+                }
+                json.optJSONObject("episodeStills")?.let { obj ->
+                    val map = mutableMapOf<Int, String>()
+                    obj.keys().forEach { k -> k.toIntOrNull()?.let { num -> map[num] = obj.getString(k) } }
+                    epStills = map
+                }
+                json.optJSONObject("seasonDetails")?.let { obj ->
+                    val map = mutableMapOf<Int, SeasonDetail>()
+                    obj.keys().forEach { k ->
+                        k.toIntOrNull()?.let { num ->
+                            val sObj = obj.getJSONObject(k)
+                            map[num] = SeasonDetail(
+                                posterUrl = sObj.optString("posterUrl").takeIf { it.isNotBlank() && it != "null" },
+                                overview = sObj.optString("overview").takeIf { it.isNotBlank() && it != "null" }
+                            )
+                        }
+                    }
+                    seasonDetails = map
+                }
+                json.optJSONObject("seasonEpisodeTitles")?.let { obj ->
+                    val map = mutableMapOf<String, String>()
+                    obj.keys().forEach { k -> map[k] = obj.getString(k) }
+                    sEpTitles = map
+                }
+                json.optJSONObject("seasonEpisodeStills")?.let { obj ->
+                    val map = mutableMapOf<String, String>()
+                    obj.keys().forEach { k -> map[k] = obj.getString(k) }
+                    sEpStills = map
+                }
+            }
+        } catch (e: Exception) { e.printStackTrace() }
+
+        return ScrapeCacheItem(
+            title = title,
+            category = category,
+            posterUrl = posterUrl,
+            backdropUrl = backdropUrl,
+            overview = overview,
+            rating = rating,
+            seasonDetails = seasonDetails,
+            episodeTitles = epTitles,
+            episodeStills = epStills,
+            seasonEpisodeTitles = sEpTitles,
+            seasonEpisodeStills = sEpStills,
+            groupName = groupName,
+            isManuallyEdited = isManuallyEdited,
+            fileListSignature = fileListSignature
+        )
+    }
+
+    // ➕ 辅助映射方法：ScrapeCacheItem -> Entity
+    private fun ScrapeCacheItem.toEntity(id: String): VideoScrapedEntity {
+        val extraObj = JSONObject()
+        try {
+            val epTitlesObj = JSONObject()
+            episodeTitles.forEach { (k, v) -> epTitlesObj.put(k.toString(), v) }
+            extraObj.put("episodeTitles", epTitlesObj)
+
+            val epStillsObj = JSONObject()
+            episodeStills.forEach { (k, v) -> epStillsObj.put(k.toString(), v) }
+            extraObj.put("episodeStills", epStillsObj)
+
+            val seasonDetailsObj = JSONObject()
+            seasonDetails.forEach { (k, v) ->
+                seasonDetailsObj.put(k.toString(), JSONObject().apply {
+                    put("posterUrl", v.posterUrl ?: "")
+                    put("overview", v.overview ?: "")
+                })
+            }
+            extraObj.put("seasonDetails", seasonDetailsObj)
+
+            val sEpTitlesObj = JSONObject()
+            seasonEpisodeTitles.forEach { (k, v) -> sEpTitlesObj.put(k, v) }
+            extraObj.put("seasonEpisodeTitles", sEpTitlesObj)
+
+            val sEpStillsObj = JSONObject()
+            seasonEpisodeStills.forEach { (k, v) -> sEpStillsObj.put(k, v) }
+            extraObj.put("seasonEpisodeStills", sEpStillsObj)
+        } catch (e: Exception) { e.printStackTrace() }
+
+        return VideoScrapedEntity(
+            id = id,
+            title = title,
+            category = category,
+            posterUrl = posterUrl,
+            backdropUrl = backdropUrl,
+            overview = overview,
+            rating = rating,
+            groupName = groupName,
+            isManuallyEdited = isManuallyEdited,
+            fileListSignature = fileListSignature,
+            extraData = extraObj.toString()
+        )
     }
 
     fun saveSettings(cookie: String, tmdbKey: String, baseUrl: String) {
@@ -378,8 +485,10 @@ class VideoScraperViewModel(
 
                 val validIds = groupedSeries.map { it.id }.toSet()
                 val invalidIds = scrapedCache.keys.filter { it !in validIds && (it.startsWith("temp_") || it.matches(Regex("^\\d+$"))) }
-                invalidIds.forEach { scrapedCache.remove(it) }
-                if (invalidIds.isNotEmpty()) saveScrapedCache()
+                if (invalidIds.isNotEmpty()) {
+                    invalidIds.forEach { scrapedCache.remove(it) }
+                    saveScrapedCache()
+                }
 
                 val needScrapeList = mutableListOf<MediaSeries>()
                 var emptyPosterRetryCount = 0
@@ -505,11 +614,7 @@ class VideoScraperViewModel(
             if (baseTitle.isBlank() || baseTitle == "未知影视") baseTitle = parsed.title
 
             val key = baseTitle
-
-            // 🌟 核心修复：强制同一文件夹下的视频属于同一季
-            // 如果文件夹有明确季数，用文件夹的；如果没有，统一视为第1季，彻底忽略文件名里的 Sxx 干扰
             val finalParsedInfo = parsed.copy(season = folderSeason ?: 1)
-
             val updatedV = v.copy(parsedInfo = finalParsedInfo)
 
             if (seriesMap.containsKey(key)) {
