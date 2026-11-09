@@ -6,7 +6,6 @@ import androidx.room.AutoMigration
 import androidx.room.Database
 import androidx.room.Room
 import androidx.room.RoomDatabase
-import androidx.room.migration.Migration
 import androidx.sqlite.db.SupportSQLiteDatabase
 import io.legado.app.data.dao.AiArtifactDao
 import io.legado.app.data.dao.AiChatDao
@@ -57,7 +56,6 @@ import io.legado.app.data.dao.ServerDao
 import io.legado.app.data.dao.TagGroupRuleDao
 import io.legado.app.data.dao.TxtTocRuleDao
 import io.legado.app.data.dao.VideoDao
-import io.legado.app.data.dao.VideoScrapedDao
 import io.legado.app.data.entities.AiArtifact
 import io.legado.app.data.entities.AiChatConversation
 import io.legado.app.data.entities.AiChatMessage
@@ -125,7 +123,6 @@ import io.legado.app.data.entities.readRecord.ReadRecord
 import io.legado.app.data.entities.readRecord.ReadRecordDetail
 import io.legado.app.data.entities.readRecord.ReadRecordSession
 import io.legado.app.data.entities.VideoItem
-import io.legado.app.data.entities.VideoScrapedEntity
 import io.legado.app.help.DefaultData
 import org.intellij.lang.annotations.Language
 import splitties.init.appCtx
@@ -135,15 +132,14 @@ val appDb by lazy {
     Room.databaseBuilder(appCtx, AppDatabase::class.java, AppDatabase.DATABASE_NAME)
         .fallbackToDestructiveMigrationFrom(false, 1, 2, 3, 4, 5, 6, 7, 8, 9)
         .addMigrations(*DatabaseMigrations.migrations)
-        // 手动注册 130->131 和 131->132 的迁移，彻底脱离 schema 文件依赖
-        .addMigrations(AppDatabase.Migration_130_131, AppDatabase.Migration_131_132)
         .allowMainThreadQueries()
         .addCallback(AppDatabase.dbCallback)
         .build()
 }
 
 @Database(
-    version = 132,
+    // 🌟 临时回退到 131 版本
+    version = 131,
     exportSchema = true,
     entities = [Book::class, BookGroup::class, BookSource::class, BookChapter::class,
         ReplaceRule::class, SearchBook::class, SearchKeyword::class, Cookie::class,
@@ -166,8 +162,8 @@ val appDb by lazy {
         BgmPoolEntity::class, BgmPoolMember::class, BgmPoolGroupEntity::class,
         BgmSceneMark::class, VoiceEffectPreset::class,
         BookMarking::class, ReadAloudAudioDownload::class, RegexCastRule::class, RegexCastGroup::class,
-        VideoItem::class,
-        VideoScrapedEntity::class
+        VideoItem::class
+        // 🌟 移除了 VideoScrapedEntity::class
     ],
     views = [BookSourcePart::class],
     autoMigrations = [
@@ -251,10 +247,9 @@ val appDb by lazy {
         AutoMigration(from = 125, to = 126),
         AutoMigration(from = 126, to = 127),
         AutoMigration(from = 128, to = 129),
-        // 130->131 已改为手动迁移，移除此行
-        // AutoMigration(from = 130, to = 131),
-        // 131->132 已改为手动迁移，移除此行
-        // AutoMigration(from = 131, to = 132),
+        AutoMigration(from = 129, to = 130),
+        AutoMigration(from = 130, to = 131)
+        // 🌟 移除了 131 到 132 的自动迁移
     ]
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -308,7 +303,7 @@ abstract class AppDatabase : RoomDatabase() {
     abstract val aiMemoryDao: AiMemoryDao
     abstract val aiPromptPresetDao: AiPromptPresetDao
     abstract val videoDao: VideoDao
-    abstract val videoScrapedDao: VideoScrapedDao
+    // 🌟 移除了 videoScrapedDao
 
     companion object {
 
@@ -317,40 +312,6 @@ abstract class AppDatabase : RoomDatabase() {
         const val BOOK_TABLE_NAME = "books"
         const val BOOK_SOURCE_TABLE_NAME = "book_sources"
         const val RSS_SOURCE_TABLE_NAME = "rssSources"
-
-        // 130 -> 131 手动迁移（原 AutoMigration 的等价实现）
-        val Migration_130_131 = object : Migration(130, 131) {
-            override fun migrate(db: SupportSQLiteDatabase) {
-                // 注意：这里需要你填入 130 -> 131 实际变更的 SQL。
-                // 如果原 AutoMigration(130,131) 只是新增了某张表，请在此处补上 CREATE TABLE。
-                // 为了稳妥，如果暂不清楚具体变动，可以先留空（Room 会跳过，但版本号会正常推进）。
-                // 建议先运行一次旧版 130 并导出 131.json，再对比生成 SQL。
-            }
-        }
-
-        // 131 -> 132 手动迁移：新增 video_scraped_cache 表
-        val Migration_131_132 = object : Migration(131, 132) {
-            override fun migrate(db: SupportSQLiteDatabase) {
-                db.execSQL(
-                    """
-                    CREATE TABLE IF NOT EXISTS `video_scraped_cache` (
-                        `id` TEXT NOT NULL,
-                        `title` TEXT NOT NULL,
-                        `category` TEXT NOT NULL,
-                        `posterUrl` TEXT,
-                        `backdropUrl` TEXT,
-                        `overview` TEXT,
-                        `rating` TEXT,
-                        `groupName` TEXT,
-                        `isManuallyEdited` INTEGER NOT NULL,
-                        `fileListSignature` TEXT NOT NULL,
-                        `extraData` TEXT NOT NULL,
-                        PRIMARY KEY(`id`)
-                    )
-                    """.trimIndent()
-                )
-            }
-        }
 
         val dbCallback = object : Callback() {
 
