@@ -2,6 +2,7 @@ package io.legado.app.ui.main.video
 
 import android.annotation.SuppressLint
 import android.app.Activity
+import android.app.AlertDialog
 import android.app.PendingIntent
 import android.app.PictureInPictureParams
 import android.app.RemoteAction
@@ -626,7 +627,11 @@ private fun ManualScrapeDialog(series: MediaSeries, viewModel: VideoScraperViewM
                             Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(bottom = 16.dp)) {
                                 AppText("名称：", modifier = Modifier.width(50.dp))
                                 OutlinedTextField(value = searchKeyword, onValueChange = { searchKeyword = it }, modifier = Modifier.weight(1f), singleLine = true)
-                                Button(onClick = { viewModel.searchTmdbManually(searchKeyword) { searchResults = it } }, modifier = Modifier.padding(start = 8.dp)) { AppText("搜索") }
+                                Button(
+                                    onClick = { viewModel.searchTmdbManually(searchKeyword) { searchResults = it } },
+                                    modifier = Modifier.padding(start = 8.dp),
+                                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF333333))
+                                ) { AppText("搜索", color = Color.White) }
                             }
                             HorizontalDivider(modifier = Modifier.padding(bottom = 12.dp))
 
@@ -672,7 +677,7 @@ private fun ManualScrapeDialog(series: MediaSeries, viewModel: VideoScraperViewM
                             Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
                         } else if (result != null) {
                             Column(modifier = Modifier.fillMaxSize().padding(horizontal = 20.dp)) {
-                                AppText("已选择版本：${result.title} (${result.year})", fontWeight = FontWeight.Medium, color = MaterialTheme.colorScheme.primary)
+                                AppText("已选择版本：${result.title} (${result.year})", fontWeight = FontWeight.Medium, color = Color(0xFF333333))
                                 Spacer(modifier = Modifier.height(16.dp))
                                 
                                 AppText("竖屏海报 (列表封面)", style = MaterialTheme.typography.titleSmall, color = Color.Gray)
@@ -682,10 +687,10 @@ private fun ManualScrapeDialog(series: MediaSeries, viewModel: VideoScraperViewM
                                         Box(
                                             modifier = Modifier
                                                 .size(90.dp, 135.dp)
+                                                .background(Color(0xFFF5F5F5), RoundedCornerShape(8.dp))
                                                 .clip(RoundedCornerShape(8.dp))
-                                                // 🌟 使用纯白边框 + 阴影凸显选中状态
                                                 .border(if (isSelected) 3.dp else 0.dp, Color.White, RoundedCornerShape(8.dp))
-                                                .shadow(if (isSelected) 8.dp else 0.dp, RoundedCornerShape(8.dp))
+                                                .shadow(if (isSelected) 12.dp else 0.dp, RoundedCornerShape(8.dp))
                                                 .clickable { selectedPoster = url }
                                         ) {
                                             AsyncImage(model = url, contentDescription = null, modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
@@ -693,9 +698,8 @@ private fun ManualScrapeDialog(series: MediaSeries, viewModel: VideoScraperViewM
                                                 Icon(
                                                     imageVector = Icons.Default.CheckCircle,
                                                     contentDescription = null,
-                                                    // 🌟 纯白图标 + 黑色半透明背景防止反光看不清
                                                     tint = Color.White,
-                                                    modifier = Modifier.align(Alignment.TopEnd).padding(4.dp).size(20.dp).background(Color.Black.copy(alpha = 0.5f), CircleShape)
+                                                    modifier = Modifier.align(Alignment.TopEnd).padding(4.dp).size(20.dp).background(Color.Black.copy(alpha = 0.7f), CircleShape)
                                                 )
                                             }
                                         }
@@ -712,10 +716,10 @@ private fun ManualScrapeDialog(series: MediaSeries, viewModel: VideoScraperViewM
                                         Box(
                                             modifier = Modifier
                                                 .size(160.dp, 90.dp)
+                                                .background(Color(0xFFF5F5F5), RoundedCornerShape(8.dp))
                                                 .clip(RoundedCornerShape(8.dp))
-                                                // 🌟 使用纯白边框
                                                 .border(if (isSelected) 3.dp else 0.dp, Color.White, RoundedCornerShape(8.dp))
-                                                .shadow(if (isSelected) 8.dp else 0.dp, RoundedCornerShape(8.dp))
+                                                .shadow(if (isSelected) 12.dp else 0.dp, RoundedCornerShape(8.dp))
                                                 .clickable { selectedBackdrop = url }
                                         ) {
                                             AsyncImage(model = url, contentDescription = null, modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
@@ -724,7 +728,7 @@ private fun ManualScrapeDialog(series: MediaSeries, viewModel: VideoScraperViewM
                                                     imageVector = Icons.Default.CheckCircle,
                                                     contentDescription = null,
                                                     tint = Color.White,
-                                                    modifier = Modifier.align(Alignment.TopEnd).padding(4.dp).size(20.dp).background(Color.Black.copy(alpha = 0.5f), CircleShape)
+                                                    modifier = Modifier.align(Alignment.TopEnd).padding(4.dp).size(20.dp).background(Color.Black.copy(alpha = 0.7f), CircleShape)
                                                 )
                                             }
                                         }
@@ -736,7 +740,10 @@ private fun ManualScrapeDialog(series: MediaSeries, viewModel: VideoScraperViewM
                                 
                                 Row(modifier = Modifier.fillMaxWidth().padding(vertical = 16.dp), horizontalArrangement = Arrangement.SpaceBetween) {
                                     OutlinedButton(onClick = { currentStep = 0 }) { AppText("上一步") }
-                                    Button(onClick = { viewModel.applyManualScrape(series.id, result, categoryInput, result.title, customPoster = selectedPoster, customBackdrop = selectedBackdrop); onDismiss() }) { AppText("确认保存并更新剧集") }
+                                    Button(
+                                        onClick = { viewModel.applyManualScrape(series.id, result, categoryInput, result.title, customPoster = selectedPoster, customBackdrop = selectedBackdrop); onDismiss() },
+                                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF333333))
+                                    ) { AppText("确认保存并更新剧集", color = Color.White) }
                                 }
                             }
                         }
