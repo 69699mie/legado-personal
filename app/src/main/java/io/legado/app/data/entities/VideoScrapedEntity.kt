@@ -15,5 +15,5 @@ data class VideoScrapedEntity(
     val groupName: String?,
     val isManuallyEdited: Boolean,
     val fileListSignature: String,
-    val extraData: String // 用于存放复杂的 Map (episodes, stills 等) 的 JSON 字符串
+    val extraData: String // 存放复杂 Map (episodes, stills 等) 的 JSON 字符串
 )
