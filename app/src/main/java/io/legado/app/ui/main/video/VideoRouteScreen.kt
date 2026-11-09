@@ -173,9 +173,23 @@ val pinyinCollator = Collator.getInstance(Locale.CHINA)
 
 fun extractEpisodeNumber(fileName: String, parsedEpisode: Int?): Int {
     if (parsedEpisode != null && parsedEpisode > 0) return parsedEpisode
-    val cleanName = fileName.replace(Regex("\\d{3,4}p", RegexOption.IGNORE_CASE), "").replace(Regex("\\d{4}"), "")
-    val match = Regex("(?:第|EP|E)\\s*(\\d+)", RegexOption.IGNORE_CASE).find(cleanName) ?: Regex("(?<!\\d)(\\d{1,4})(?!\\d)").find(cleanName)
-    return match?.groupValues?.get(1)?.toIntOrNull() ?: 0
+    
+    // 🌟 核心修复：优先匹配 SxxExx 格式（支持 S01E210 这种季数）
+    val seasonEpisodeMatch = Regex("(?i)S\\d+E(\\d+)").find(fileName)
+    if (seasonEpisodeMatch != null) {
+        return seasonEpisodeMatch.groupValues[1].toIntOrNull() ?: 0
+    }
+    
+    // 匹配“第X集”、“EP X”、“E X”
+    val cnMatch = Regex("(?:第|EP|E)\\s*(\\d+)", RegexOption.IGNORE_CASE).find(fileName)
+    if (cnMatch != null) {
+        return cnMatch.groupValues[1].toIntOrNull() ?: 0
+    }
+    
+    // 兜底：提取纯数字，但排除分辨率（1080p, 2160p）和年份
+    val cleanName = fileName.replace(Regex("\\d{3,4}[pP]", RegexOption.IGNORE_CASE), "").replace(Regex("\\d{4}"), "")
+    val numMatch = Regex("(?<!\\d)(\\d{1,4})(?!\\d)").find(cleanName)
+    return numMatch?.groupValues?.get(1)?.toIntOrNull() ?: 0
 }
 
 fun createPipIcon(type: String, context: Context): Bitmap {
@@ -667,8 +681,22 @@ private fun ManualScrapeDialog(series: MediaSeries, viewModel: VideoScraperViewM
                                 LazyRow(modifier = Modifier.padding(vertical = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                                     items(posterList) { url ->
                                         val isSelected = url == selectedPoster
-                                        Box(modifier = Modifier.size(90.dp, 135.dp).clip(RoundedCornerShape(8.dp)).border(if (isSelected) 3.dp else 0.dp, MaterialTheme.colorScheme.primary, RoundedCornerShape(8.dp)).clickable { selectedPoster = url }) {
+                                        Box(
+                                            modifier = Modifier
+                                                .size(90.dp, 135.dp)
+                                                .clip(RoundedCornerShape(8.dp))
+                                                .border(if (isSelected) 3.dp else 0.dp, MaterialTheme.colorScheme.primary, RoundedCornerShape(8.dp))
+                                                .clickable { selectedPoster = url }
+                                        ) {
                                             AsyncImage(model = url, contentDescription = null, modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
+                                            if (isSelected) {
+                                                Icon(
+                                                    imageVector = Icons.Default.CheckCircle,
+                                                    contentDescription = null,
+                                                    tint = MaterialTheme.colorScheme.primary,
+                                                    modifier = Modifier.align(Alignment.TopEnd).padding(4.dp).size(20.dp).background(Color.White, CircleShape)
+                                                )
+                                            }
                                         }
                                     }
                                     if (posterList.isEmpty()) { item { AppText("无海报", color = Color.Gray, fontSize = 12.sp) } }
@@ -680,8 +708,22 @@ private fun ManualScrapeDialog(series: MediaSeries, viewModel: VideoScraperViewM
                                 LazyRow(modifier = Modifier.padding(vertical = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                                     items(backdropList) { url ->
                                         val isSelected = url == selectedBackdrop
-                                        Box(modifier = Modifier.size(160.dp, 90.dp).clip(RoundedCornerShape(8.dp)).border(if (isSelected) 3.dp else 0.dp, MaterialTheme.colorScheme.primary, RoundedCornerShape(8.dp)).clickable { selectedBackdrop = url }) {
+                                        Box(
+                                            modifier = Modifier
+                                                .size(160.dp, 90.dp)
+                                                .clip(RoundedCornerShape(8.dp))
+                                                .border(if (isSelected) 3.dp else 0.dp, MaterialTheme.colorScheme.primary, RoundedCornerShape(8.dp))
+                                                .clickable { selectedBackdrop = url }
+                                        ) {
                                             AsyncImage(model = url, contentDescription = null, modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
+                                            if (isSelected) {
+                                                Icon(
+                                                    imageVector = Icons.Default.CheckCircle,
+                                                    contentDescription = null,
+                                                    tint = MaterialTheme.colorScheme.primary,
+                                                    modifier = Modifier.align(Alignment.TopEnd).padding(4.dp).size(20.dp).background(Color.White, CircleShape)
+                                                )
+                                            }
                                         }
                                     }
                                     if (backdropList.isEmpty()) { item { AppText("无背景图", color = Color.Gray, fontSize = 12.sp) } }
