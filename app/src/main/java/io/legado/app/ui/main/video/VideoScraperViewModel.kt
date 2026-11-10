@@ -81,7 +81,7 @@ data class TmdbSearchResult(
     val rating: String?,
     val mediaType: String = "tv",
     val genreIds: List<Int> = emptyList(),
-    val seasons: List<Int> = emptyList() // 🌟 新增：可用季数列表
+    val seasons: List<Int> = emptyList() // 🌟 可用季数列表
 )
 
 @Immutable
@@ -124,7 +124,7 @@ class VideoScraperViewModel(
 
     private var hasLoadedLibrary = false
     private val libraryNames = mutableMapOf<String, String>()
-    private val excludedFids = mutableSetOf<String>() // 🌟 新增：内存中的排除集合
+    private val excludedFids = mutableSetOf<String>() // 🌟 内存中的排除集合
     
     private var lastQuarkError: String? = null
     private val scrapedCache = ConcurrentHashMap<String, ScrapeCacheItem>()
@@ -162,6 +162,7 @@ class VideoScraperViewModel(
         }
 
         viewModelScope.launch(Dispatchers.IO) {
+            // 🌟 纯 Room 驱动：直接从数据库捞出历史缓存
             if (scrapedCache.isEmpty()) {
                 try {
                     val entities = videoScrapedDao.getAll()
@@ -170,6 +171,7 @@ class VideoScraperViewModel(
                             val item = entity.toScrapeCacheItem()
                             scrapedCache[entity.id] = item
                         }
+                        // 组装 UI 数据并瞬间放行，撤销启动页遮罩
                         val cachedSeries = scrapedCache.map { (id, item) -> item.toMediaSeries(id) }
                             .sortedWith(compareBy(pinyinCollator) { it.title })
                         _uiState.update { it.copy(seriesList = cachedSeries, isLoading = false) }
@@ -998,6 +1000,36 @@ class VideoScraperViewModel(
             }
         } catch (e: Exception) {}
         return null
+    }
+
+    // 🌟 新增：用于拉取季数列表的方法
+    fun fetchSeriesSeasons(tvId: Int, onResult: (List<Int>) -> Unit) {
+        val apiKey = _uiState.value.tmdbApiKey
+        val baseUrl = _uiState.value.tmdbBaseUrl
+        if (apiKey.isBlank()) { onResult(emptyList()); return }
+        viewModelScope.launch(Dispatchers.IO) {
+            val list = mutableListOf<Int>()
+            try {
+                val isProxy = baseUrl.contains("quarkalist") || baseUrl.contains("proxy")
+                val apiPath = if (isProxy) "/api/3/tv/$tvId" else "/3/tv/$tvId"
+                val url = "$baseUrl$apiPath?api_key=$apiKey&language=zh-CN"
+                val request = Request.Builder().url(url).build()
+                client.newCall(request).execute().use { response ->
+                    val body = response.body?.string()
+                    if (!body.isNullOrBlank()) {
+                        val json = JSONObject(body)
+                        val seasonsArray = json.optJSONArray("seasons")
+                        if (seasonsArray != null) {
+                            for (k in 0 until seasonsArray.length()) {
+                                val seasonNum = seasonsArray.getJSONObject(k).optInt("season_number", -1)
+                                if (seasonNum > 0) list.add(seasonNum)
+                            }
+                        }
+                    }
+                }
+            } catch (e: Exception) {}
+            withContext(Dispatchers.Main) { onResult(list) }
+        }
     }
 
     fun searchTmdbManually(query: String, onResult: (List<TmdbSearchResult>) -> Unit) {
