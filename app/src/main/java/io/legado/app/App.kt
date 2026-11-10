@@ -24,7 +24,6 @@ import io.legado.app.constant.AppConst.channelIdDownload
 import io.legado.app.constant.AppConst.channelIdReadAloud
 import io.legado.app.constant.AppConst.channelIdWeb
 import io.legado.app.constant.PreferKey
-import io.legado.app.data.VideoCacheManager
 import io.legado.app.data.appDb
 import io.legado.app.data.entities.Book
 import io.legado.app.data.entities.BookChapter
@@ -193,10 +192,8 @@ class App : Application(), SingletonImageLoader.Factory {
         
         registerActivityLifecycleCallbacks(LifecycleHelp)
         initRhino()
-        
-        // 🌟 同步快照预加载：在 App 启动瞬间，主线程毫秒级读取影视库 JSON 快照，实现真正的秒开
-        VideoCacheManager.setContext(this)
-        VideoCacheManager.preload(this)
+
+        // ❌ 已移除 VideoCacheManager，完全由 Room 接管本地缓存
         
         Coroutine.async {
             get<BackupSettingsGateway>().settings
