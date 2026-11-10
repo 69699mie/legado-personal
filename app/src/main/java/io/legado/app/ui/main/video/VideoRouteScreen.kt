@@ -237,7 +237,6 @@ fun VideoLibraryScreen(modifier: Modifier = Modifier, viewModel: VideoScraperVie
             else {
                 LazyColumn(modifier = Modifier.fillMaxSize(), contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     items(uiState.fileList) { file ->
-                        // 🌟 还原：撑满宽度的卡片
                         Row(modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).background(Color.White).clickable(enabled = file.isFolder) { if (file.isFolder) viewModel.fetchQuarkFiles(file.fid, folderName = file.name) }.padding(horizontal = 12.dp, vertical = 14.dp), verticalAlignment = Alignment.CenterVertically) {
                             Icon(if (file.isFolder) Icons.Default.Folder else Icons.Default.Movie, null, tint = if (file.isFolder) Color(0xFFFFB300) else Color.Gray, modifier = Modifier.size(28.dp))
                             Column(modifier = Modifier.padding(start = 16.dp).weight(1f)) { AppText(text = file.name, maxLines = 1, overflow = TextOverflow.Ellipsis, fontWeight = FontWeight.Medium) }
@@ -247,7 +246,6 @@ fun VideoLibraryScreen(modifier: Modifier = Modifier, viewModel: VideoScraperVie
                                 val isParentSelected = uiState.selectedLibraryFids.contains(uiState.currentFid)
                                 val isExcluded = uiState.excludedLibraryFids.contains(file.fid)
 
-                                // 🌟 打勾 / 斜杠 逻辑
                                 Box(
                                     modifier = Modifier
                                         .size(24.dp)
@@ -644,11 +642,9 @@ private fun ManualScrapeDialog(series: MediaSeries, viewModel: VideoScraperViewM
     var isLoadingImages by remember { mutableStateOf(false) }
     var selectedSeason by remember { mutableStateOf<Int?>(null) }
 
-    // 🌟 选季弹窗状态
     var showSeasonPicker by remember { mutableStateOf(false) }
     var fetchedSeasons by remember { mutableStateOf<List<Int>>(emptyList()) }
 
-    // 🌟 辅助函数：加载图片并进入下一步
     fun loadImagesAndProceed(result: TmdbSearchResult) {
         isLoadingImages = true
         viewModel.fetchTmdbImages(result.id, result.mediaType) { posters, backdrops ->
@@ -697,27 +693,22 @@ private fun ManualScrapeDialog(series: MediaSeries, viewModel: VideoScraperViewM
                                         Card(
                                             modifier = Modifier.fillMaxWidth().clickable {
                                                 selectedResult = result
-                                                selectedSeason = null // 重置
+                                                selectedSeason = null
                                                 
                                                 if (result.mediaType == "tv") {
-                                                    // 🌟 如果是剧集，先去拉取季数
                                                     isLoadingImages = true
                                                     viewModel.fetchSeriesSeasons(result.id) { seasons ->
                                                         isLoadingImages = false
                                                         fetchedSeasons = seasons
                                                         
-                                                        // 🌟 核心优化逻辑：
                                                         if (seasons.size > 1) {
-                                                            // 大于 1 季：弹出选择框
                                                             showSeasonPicker = true
                                                         } else {
-                                                            // 只有 1 季（或拉取失败为空）：不弹窗，默认选第 1 季
                                                             selectedSeason = seasons.firstOrNull() ?: 1
                                                             loadImagesAndProceed(result)
                                                         }
                                                     }
                                                 } else {
-                                                    // 🌟 如果是电影：没有季的概念，直接进下一步
                                                     selectedSeason = null
                                                     loadImagesAndProceed(result)
                                                 }
@@ -839,7 +830,6 @@ private fun ManualScrapeDialog(series: MediaSeries, viewModel: VideoScraperViewM
         }
     }
 
-    // 🌟 选季弹窗（仅多季时触发）
     if (showSeasonPicker && selectedResult != null) {
         AlertDialog(
             onDismissRequest = { showSeasonPicker = false },
@@ -945,12 +935,21 @@ fun InternalVideoPlayer(url: String, title: String, cookie: String, series: Medi
     var currentSystemTime by remember { mutableStateOf("") }
     var hasRequestedLandscape = remember { false }
 
-    // 🌟 统一管理中央提示，防止重叠
-    var playerCenterMessage by remember { mutableStateOf<String?>(null) }
-    LaunchedEffect(playerCenterMessage) {
-        if (playerCenterMessage != null && playerCenterMessage != "2.0x快进中") {
+    // 🌟 修复重叠：分离长按状态和普通 Toast 状态
+    var isLongPressing by remember { mutableStateOf(false) }
+    var playerToastMessage by remember { mutableStateOf<String?>(null) }
+    
+    // 优先级计算中央提示文字
+    val currentCenterMessage = when {
+        isLongPressing -> "2.0x快进中"
+        playerToastMessage != null -> playerToastMessage
+        else -> null
+    }
+
+    LaunchedEffect(playerToastMessage) {
+        if (playerToastMessage != null) {
             delay(2500)
-            playerCenterMessage = null
+            playerToastMessage = null
         }
     }
 
@@ -1005,7 +1004,7 @@ fun InternalVideoPlayer(url: String, title: String, cookie: String, series: Medi
 
     var hasTriggeredAutoPlay by remember { mutableStateOf(false) }
     var hasAutoSkippedIntro by remember { mutableStateOf(false) }
-    var outroWarningTriggered by remember { mutableStateOf(false) } // 提前6秒提示标记
+    var outroWarningTriggered by remember { mutableStateOf(false) }
     val audioManager = remember { context.getSystemService(Context.AUDIO_SERVICE) as AudioManager }
     var hasRestoredProgress by remember { mutableStateOf(false) }
     var entryTime by remember { mutableLongStateOf(0L) }
@@ -1083,7 +1082,7 @@ fun InternalVideoPlayer(url: String, title: String, cookie: String, series: Medi
     LaunchedEffect(url) {
         currentPosition = 0L; duration = 0L; bufferedPosition = 0L
         hasRestoredProgress = false; hasTriggeredAutoPlay = false; hasAutoSkippedIntro = false
-        outroWarningTriggered = false // 重置片尾提示状态
+        outroWarningTriggered = false
         exoPlayer.stop(); exoPlayer.clearMediaItems()
 
         val savedPos = viewModel.getVideoProgress(currentFile.fid)
@@ -1122,7 +1121,7 @@ fun InternalVideoPlayer(url: String, title: String, cookie: String, series: Medi
                         viewModel.playVideo(context, latestSeries, sortedVideos[idx + 1])
                     } else {
                         if (!outroWarningTriggered) { 
-                            playerCenterMessage = "已是最新集"
+                            playerToastMessage = "已是最新集"
                         }
                     }
                 }
@@ -1160,9 +1159,9 @@ fun InternalVideoPlayer(url: String, title: String, cookie: String, series: Medi
                     outroWarningTriggered = true
                     val idx = sortedVideos.indexOfFirst { it.fid == currentFile.fid }
                     if (idx == sortedVideos.size - 1) {
-                        playerCenterMessage = "已是最新集"
+                        playerToastMessage = "已是最新集"
                     } else {
-                        playerCenterMessage = "即将跳过片尾"
+                        playerToastMessage = "即将跳过片尾"
                     }
                 }
 
@@ -1232,10 +1231,10 @@ fun InternalVideoPlayer(url: String, title: String, cookie: String, series: Medi
                 offset.x > size.width * 0.75f -> { exoPlayer.seekTo((exoPlayer.currentPosition + 10000).coerceAtMost(if (duration > 0) duration else Long.MAX_VALUE)); seekMessage = "已快进 10 秒" }; 
                 else -> { if (isPlaying) exoPlayer.pause() else exoPlayer.play() } 
             } },
-            onLongPress = { playerCenterMessage = "2.0x快进中"; exoPlayer.setPlaybackSpeed(2.0f) },
+            onLongPress = { isLongPressing = true; exoPlayer.setPlaybackSpeed(2.0f) },
             onPress = { 
                 tryAwaitRelease(); 
-                if (playerCenterMessage == "2.0x快进中") playerCenterMessage = null
+                isLongPressing = false
                 exoPlayer.setPlaybackSpeed(playbackSpeed) 
             }
         )
@@ -1244,9 +1243,9 @@ fun InternalVideoPlayer(url: String, title: String, cookie: String, series: Medi
 
         if (activity?.isInPictureInPictureMode == true || isInPip.value) { Box(modifier = Modifier.fillMaxSize()) {}; return@Box }
 
-        // 🌟 统一提示层
+        // 🌟 统一互斥提示层
         AnimatedVisibility(
-            visible = playerCenterMessage != null,
+            visible = currentCenterMessage != null,
             enter = fadeIn(animationSpec = tween(200)),
             exit = fadeOut(animationSpec = tween(300)),
             modifier = Modifier.align(Alignment.TopCenter).padding(top = if (isLandscape) 40.dp else 60.dp)
@@ -1258,7 +1257,7 @@ fun InternalVideoPlayer(url: String, title: String, cookie: String, series: Medi
                     .padding(horizontal = 20.dp, vertical = 12.dp)
             ) {
                 AppText(
-                    text = playerCenterMessage ?: "",
+                    text = currentCenterMessage ?: "",
                     color = Color.White,
                     fontSize = 14.sp,
                     fontWeight = FontWeight.Medium
@@ -1309,17 +1308,17 @@ fun InternalVideoPlayer(url: String, title: String, cookie: String, series: Medi
                             if (isInMultiWindowMode) return@IconButton
 
                             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                                if (!context.packageManager.hasSystemFeature(PackageManager.FEATURE_PICTURE_IN_PICTURE)) { playerCenterMessage = "当前设备不支持画中画功能"; return@IconButton }
+                                if (!context.packageManager.hasSystemFeature(PackageManager.FEATURE_PICTURE_IN_PICTURE)) { playerToastMessage = "当前设备不支持画中画功能"; return@IconButton }
                                 val safeActivity = activity as? ComponentActivity
-                                if (safeActivity == null || safeActivity.lifecycle.currentState != Lifecycle.State.RESUMED) { playerCenterMessage = "请等待视频播放界面完全加载后再试"; return@IconButton }
+                                if (safeActivity == null || safeActivity.lifecycle.currentState != Lifecycle.State.RESUMED) { playerToastMessage = "请等待视频播放界面完全加载后再试"; return@IconButton }
                                 try {
                                     val prevAction = RemoteAction(Icon.createWithBitmap(createPipIcon("prev", context)), "上一集", "上一集", PendingIntent.getBroadcast(context, 100, Intent(PIP_ACTION).setPackage(context.packageName).putExtra(EXTRA_CONTROL, CONTROL_PREV), PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE))
                                     val playPauseAction = RemoteAction(Icon.createWithBitmap(createPipIcon(if (isPlaying) "pause" else "play", context)), if (isPlaying) "暂停" else "播放", if (isPlaying) "暂停" else "播放", PendingIntent.getBroadcast(context, 101, Intent(PIP_ACTION).setPackage(context.packageName).putExtra(EXTRA_CONTROL, CONTROL_PLAY_PAUSE), PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE))
                                     val nextAction = RemoteAction(Icon.createWithBitmap(createPipIcon("next", context)), "下一集", "下一集", PendingIntent.getBroadcast(context, 102, Intent(PIP_ACTION).setPackage(context.packageName).putExtra(EXTRA_CONTROL, CONTROL_NEXT), PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE))
                                     val paramsBuilder = PictureInPictureParams.Builder().setAspectRatio(Rational(16, 9)).setActions(listOf(prevAction, playPauseAction, nextAction)).setSeamlessResizeEnabled(false)
-                                    safeActivity.window.decorView.post { val success = safeActivity.enterPictureInPictureMode(paramsBuilder.build()); if (success) isInPip.value = true else playerCenterMessage = "画中画启动失败，请检查系统权限是否已开启" }
-                                } catch (e: Exception) { playerCenterMessage = "画中画启动异常：${e.message ?: "权限被系统拦截"}" }
-                            } else playerCenterMessage = "Android 8.0 及以上才支持画中画"
+                                    safeActivity.window.decorView.post { val success = safeActivity.enterPictureInPictureMode(paramsBuilder.build()); if (success) isInPip.value = true else playerToastMessage = "画中画启动失败，请检查系统权限是否已开启" }
+                                } catch (e: Exception) { playerToastMessage = "画中画启动异常：${e.message ?: "权限被系统拦截"}" }
+                            } else playerToastMessage = "Android 8.0 及以上才支持画中画"
                         }) { Icon(Icons.Default.PictureInPicture, null, tint = Color.White) }
                     }
                     Surface(color = Color.White.copy(alpha = 0.1f), shape = CircleShape, border = BorderStroke(1.dp, Color.White.copy(alpha = 0.2f))) { IconButton(onClick = { isLocked = true; showControls = false; showUnlockIcon = true }) { Icon(Icons.Default.Lock, null, tint = Color.White) } }
@@ -1420,9 +1419,9 @@ fun InternalVideoPlayer(url: String, title: String, cookie: String, series: Medi
                         Spacer(modifier = Modifier.height(16.dp))
                         Row(modifier = Modifier.fillMaxWidth().background(Color(0xFF333333), RoundedCornerShape(8.dp)).clickable { showIntroOutroDialog = true; showSettingsPanel = false }.padding(16.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) { Column { AppText("设置片头片尾", color = Color.White, fontSize = 16.sp, fontWeight = FontWeight.Bold); Spacer(modifier = Modifier.height(4.dp)); AppText("片头: ${formatIntroOutro(introSeconds)}  片尾: ${formatIntroOutro(outroSeconds)}", color = Color.Gray, fontSize = 12.sp) }; Icon(Icons.Default.KeyboardArrowRight, null, tint = Color.Gray) }
                         Spacer(modifier = Modifier.height(16.dp)); AppText("音频轨道", color = Color.Gray, fontSize = 14.sp)
-                        audioTracks.forEachIndexed { index, trackGroup -> val format = trackGroup.getTrackFormat(0); val label = format.label ?: format.language ?: "音轨 ${index + 1}"; val isSelected = remember(trackSelectionVersion, audioTracks) { trackGroup.isTrackSelected(0) }; Row(modifier = Modifier.fillMaxWidth().clickable { exoPlayer.trackSelectionParameters = exoPlayer.trackSelectionParameters.buildUpon().setOverrideForType(TrackSelectionOverride(trackGroup.mediaTrackGroup, 0)).build(); trackSelectionVersion++; playerCenterMessage = "已切换至 $label" }.padding(vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) { AppText(label, color = if (isSelected) Color.White else Color.Gray, fontSize = 15.sp, modifier = Modifier.weight(1f)) } }
+                        audioTracks.forEachIndexed { index, trackGroup -> val format = trackGroup.getTrackFormat(0); val label = format.label ?: format.language ?: "音轨 ${index + 1}"; val isSelected = remember(trackSelectionVersion, audioTracks) { trackGroup.isTrackSelected(0) }; Row(modifier = Modifier.fillMaxWidth().clickable { exoPlayer.trackSelectionParameters = exoPlayer.trackSelectionParameters.buildUpon().setOverrideForType(TrackSelectionOverride(trackGroup.mediaTrackGroup, 0)).build(); trackSelectionVersion++; playerToastMessage = "已切换至 $label" }.padding(vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) { AppText(label, color = if (isSelected) Color.White else Color.Gray, fontSize = 15.sp, modifier = Modifier.weight(1f)) } }
                         Spacer(modifier = Modifier.height(16.dp)); AppText("字幕轨道", color = Color.Gray, fontSize = 14.sp)
-                        textTracks.forEachIndexed { index, trackGroup -> val format = trackGroup.getTrackFormat(0); val label = format.label ?: format.language ?: "字幕 ${index + 1}"; val isSelected = remember(trackSelectionVersion, textTracks) { trackGroup.isTrackSelected(0) }; Row(modifier = Modifier.fillMaxWidth().clickable { exoPlayer.trackSelectionParameters = exoPlayer.trackSelectionParameters.buildUpon().setOverrideForType(TrackSelectionOverride(trackGroup.mediaTrackGroup, 0)).build(); trackSelectionVersion++; playerCenterMessage = "已切换至 $label" }.padding(vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) { AppText(label, color = if (isSelected) Color.White else Color.Gray, fontSize = 15.sp, modifier = Modifier.weight(1f)) } }
+                        textTracks.forEachIndexed { index, trackGroup -> val format = trackGroup.getTrackFormat(0); val label = format.label ?: format.language ?: "字幕 ${index + 1}"; val isSelected = remember(trackSelectionVersion, textTracks) { trackGroup.isTrackSelected(0) }; Row(modifier = Modifier.fillMaxWidth().clickable { exoPlayer.trackSelectionParameters = exoPlayer.trackSelectionParameters.buildUpon().setOverrideForType(TrackSelectionOverride(trackGroup.mediaTrackGroup, 0)).build(); trackSelectionVersion++; playerToastMessage = "已切换至 $label" }.padding(vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) { AppText(label, color = if (isSelected) Color.White else Color.Gray, fontSize = 15.sp, modifier = Modifier.weight(1f)) } }
                     }
                 }
             }
