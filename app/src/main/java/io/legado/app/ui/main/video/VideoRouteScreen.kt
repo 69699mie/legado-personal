@@ -1204,6 +1204,9 @@ fun InternalVideoPlayer(url: String, title: String, cookie: String, series: Medi
                 Column(modifier = Modifier.align(Alignment.CenterEnd).padding(end = 16.dp), verticalArrangement = Arrangement.spacedBy(30.dp)) {
                     Surface(color = Color.White.copy(alpha = 0.1f), shape = CircleShape, border = BorderStroke(1.dp, Color.White.copy(alpha = 0.2f))) {
                         IconButton(onClick = {
+                            // 🌟 新增拦截：在自由窗口下，静默拦截画中画请求
+                            if (isInMultiWindowMode) return@IconButton
+
                             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                                 if (!context.packageManager.hasSystemFeature(PackageManager.FEATURE_PICTURE_IN_PICTURE)) { playerToastMessage = "当前设备不支持画中画功能"; return@IconButton }
                                 val safeActivity = activity as? ComponentActivity
@@ -1212,8 +1215,8 @@ fun InternalVideoPlayer(url: String, title: String, cookie: String, series: Medi
                                     val prevAction = RemoteAction(Icon.createWithBitmap(createPipIcon("prev", context)), "上一集", "上一集", PendingIntent.getBroadcast(context, 100, Intent(PIP_ACTION).setPackage(context.packageName).putExtra(EXTRA_CONTROL, CONTROL_PREV), PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE))
                                     val playPauseAction = RemoteAction(Icon.createWithBitmap(createPipIcon(if (isPlaying) "pause" else "play", context)), if (isPlaying) "暂停" else "播放", if (isPlaying) "暂停" else "播放", PendingIntent.getBroadcast(context, 101, Intent(PIP_ACTION).setPackage(context.packageName).putExtra(EXTRA_CONTROL, CONTROL_PLAY_PAUSE), PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE))
                                     val nextAction = RemoteAction(Icon.createWithBitmap(createPipIcon("next", context)), "下一集", "下一集", PendingIntent.getBroadcast(context, 102, Intent(PIP_ACTION).setPackage(context.packageName).putExtra(EXTRA_CONTROL, CONTROL_NEXT), PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE))
+                                    // 彻底移除 setAutoEnterEnabled，禁止系统抛掷自动变画中画
                                     val paramsBuilder = PictureInPictureParams.Builder().setAspectRatio(Rational(16, 9)).setActions(listOf(prevAction, playPauseAction, nextAction)).setSeamlessResizeEnabled(false)
-                                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) paramsBuilder.setAutoEnterEnabled(true)
                                     safeActivity.window.decorView.post { val success = safeActivity.enterPictureInPictureMode(paramsBuilder.build()); if (success) isInPip.value = true else playerToastMessage = "画中画启动失败，请检查系统权限是否已开启" }
                                 } catch (e: Exception) { playerToastMessage = "画中画启动异常：${e.message ?: "权限被系统拦截"}" }
                             } else playerToastMessage = "Android 8.0 及以上才支持画中画"
