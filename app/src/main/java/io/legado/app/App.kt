@@ -133,38 +133,7 @@ class App : Application(), SingletonImageLoader.Factory {
             get<AppLocaleGateway>().migrateLegacyLanguage(legacyLanguage)
         }
         applyDayNightInit(this)
-        if (getPrefString("app_theme", "0") == "12") {
-            if (themeGateway.currentSettings.customMode == "accent")
-                setTheme(R.style.ThemeOverlay_WhiteBackground)
-
-            val colorImagePath = getPrefString(PreferKey.colorImage)
-            if (!colorImagePath.isNullOrBlank()) {
-                val file = File(colorImagePath)
-                if (file.exists()) {
-                    val bitmap = BitmapFactory.decodeFile(file.absolutePath)
-                    if (bitmap != null) {
-                        val colorAccuracy = true
-                        val targetWidth = if (colorAccuracy) (bitmap.width / 4).coerceAtMost(256) else 16
-                        val targetHeight = if (colorAccuracy) (bitmap.height / 4).coerceAtMost(256) else 16
-                        val scaledBitmap = bitmap.scale(targetWidth, targetHeight, false)
-
-                        val options = DynamicColorsOptions.Builder()
-                            .setContentBasedSource(scaledBitmap)
-                            .build()
-
-                        DynamicColors.applyToActivitiesIfAvailable(this, options)
-                        bitmap.recycle()
-                    }
-                }
-            } else {
-                DynamicColors.applyToActivitiesIfAvailable(
-                    this,
-                    DynamicColorsOptions.Builder()
-                        .setContentBasedSource(this.primaryColor)
-                        .build()
-                )
-            }
-        }
+        
         super.onCreate()
         FirebaseManager.init(this)
         CrashHandler(this)
