@@ -26,7 +26,7 @@
 # 包含有类名->混淆后类名的映射关系
 -verbose
 
-# 保留Annotation不混淆
+# 保留Annotation不混淆（关键：保留运行时注解）
 -keepattributes *Annotation*,InnerClasses
 
 # 避免混淆泛型
@@ -172,19 +172,15 @@
 -keep class io.legado.app.ui.main.MainActivity { *; }
 
 # ==========================================
-# 🌟 最终加固：防止 R8 导致 Koin 依赖注入类型错乱、动画失效、Room 崩溃
+# 🌟 最终加固（精简与增强）
 
-# 1. 保留 VideoScraperViewModel 的构造函数签名，防止 Koin 解析依赖失败
--keepclassmembers class io.legado.app.ui.main.video.VideoScraperViewModel {
-    <init>(...);
-}
-
-# 2. 保留 VideoScrapedDao 接口，防止 Room 运行时找不到代理实现
--keep interface io.legado.app.data.dao.VideoScrapedDao { *; }
-
-# 3. 保留所有 Room 实体类（防止表名/字段被混淆导致 SQLiteException）
+# 1. Room 数据库保护（防止反射失败，保留实体、DAO及注解）
 -keep @androidx.room.Entity class * { *; }
 -keep @androidx.room.Dao interface * { *; }
 
-# 4. 保留 Compose 动画类（防止 R8 类合并导致动画直接跳变、失效）
+# 2. Compose 动画与函数防合并（防止动画静默失效）
 -keep,allowshrinking,allowobfuscation class androidx.compose.animation.** { *; }
+-keep @androidx.compose.runtime.Composable class * { *; }
+
+# 3. 移除冗余的Koin规则（Koin官方已通过consumer-rules自动处理）
+# 原针对VideoScraperViewModel和VideoScrapedDao的规则已移除，由Room通用规则覆盖。
