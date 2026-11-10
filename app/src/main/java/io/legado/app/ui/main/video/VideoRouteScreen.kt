@@ -644,9 +644,8 @@ private fun ManualScrapeDialog(series: MediaSeries, viewModel: VideoScraperViewM
     
     var isLoadingImages by remember { mutableStateOf(false) }
 
-    // 🌟 新增：季数选择器状态
+    // 🌟 全局选中的季数，用于传递给 ViewModel 保存
     var selectedSeason by remember { mutableStateOf<Int?>(null) }
-    var expandedSeasonDropdown by remember { mutableStateOf(false) }
 
     Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
         Surface(shape = RoundedCornerShape(24.dp), color = MaterialTheme.colorScheme.surface, modifier = Modifier.fillMaxWidth(0.92f).heightIn(max = 750.dp)) {
@@ -681,40 +680,50 @@ private fun ManualScrapeDialog(series: MediaSeries, viewModel: VideoScraperViewM
                             } else {
                                 LazyColumn(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                                     items(searchResults!!) { result ->
+                                        // 🌟 修复：将展开状态放到 item 内部，防止所有卡片联动
+                                        var expandedSeasonDropdown by remember { mutableStateOf(false) }
+                                        var localSelectedSeason by remember { mutableStateOf(result.seasons.firstOrNull() ?: 1) }
+
                                         Card(
-                                            modifier = Modifier.fillMaxWidth().clickable {
-                                                selectedResult = result
-                                                // 🌟 默认选中第一季
-                                                selectedSeason = result.seasons.firstOrNull() ?: 1
-                                                
-                                                isLoadingImages = true
-                                                viewModel.fetchTmdbImages(result.id, result.mediaType) { posters, backdrops ->
-                                                    posterList = posters
-                                                    backdropList = backdrops
-                                                    selectedPoster = result.posterUrl ?: posters.firstOrNull()
-                                                    selectedBackdrop = result.backdropUrl ?: backdrops.firstOrNull()
-                                                    isLoadingImages = false
-                                                    currentStep = 1 
-                                                }
-                                            },
+                                            modifier = Modifier.fillMaxWidth(),
                                             colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f))
                                         ) {
-                                            Row(modifier = Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
-                                                AsyncImage(model = result.posterUrl, contentDescription = null, modifier = Modifier.size(60.dp, 90.dp).clip(RoundedCornerShape(8.dp)).background(Color.LightGray), contentScale = ContentScale.Crop)
-                                                Column(modifier = Modifier.padding(start = 16.dp).weight(1f)) {
-                                                    AppText(text = result.title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-                                                    AppText(text = "${result.year} | ${if (result.mediaType == "movie") "电影" else "剧集"}", style = MaterialTheme.typography.bodyMedium, color = Color.Gray)
-                                                    
-                                                    // 🌟 新增：在搜索结果列表直接选择季数
+                                            Row(modifier = Modifier.fillMaxWidth().padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
+                                                // 左侧海报和文字，点击直接跳转下一步
+                                                Row(
+                                                    modifier = Modifier.weight(1f).clickable {
+                                                        selectedResult = result
+                                                        selectedSeason = localSelectedSeason // 保存选中的季数
+                                                        
+                                                        isLoadingImages = true
+                                                        viewModel.fetchTmdbImages(result.id, result.mediaType) { posters, backdrops ->
+                                                            posterList = posters
+                                                            backdropList = backdrops
+                                                            selectedPoster = result.posterUrl ?: posters.firstOrNull()
+                                                            selectedBackdrop = result.backdropUrl ?: backdrops.firstOrNull()
+                                                            isLoadingImages = false
+                                                            currentStep = 1 
+                                                        }
+                                                    },
+                                                    verticalAlignment = Alignment.CenterVertically
+                                                ) {
+                                                    AsyncImage(model = result.posterUrl, contentDescription = null, modifier = Modifier.size(60.dp, 90.dp).clip(RoundedCornerShape(8.dp)).background(Color.LightGray), contentScale = ContentScale.Crop)
+                                                    Column(modifier = Modifier.padding(start = 16.dp).weight(1f)) {
+                                                        AppText(text = result.title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                                                        AppText(text = "${result.year} | ${if (result.mediaType == "movie") "电影" else "剧集"}", style = MaterialTheme.typography.bodyMedium, color = Color.Gray)
+                                                    }
+                                                }
+
+                                                // 右侧季数选择按钮和箭头
+                                                Row(verticalAlignment = Alignment.CenterVertically) {
                                                     if (result.seasons.isNotEmpty()) {
-                                                        Spacer(modifier = Modifier.height(8.dp))
                                                         Box {
                                                             OutlinedButton(
                                                                 onClick = { expandedSeasonDropdown = true },
-                                                                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp),
+                                                                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp),
                                                                 modifier = Modifier.height(30.dp)
                                                             ) {
-                                                                AppText("选择第 ${selectedSeason ?: result.seasons.first()} 季", fontSize = 12.sp, color = Color(0xFF333333))
+                                                                AppText("第 $localSelectedSeason 季", fontSize = 12.sp, color = Color(0xFF333333))
                                                             }
                                                             DropdownMenu(
                                                                 expanded = expandedSeasonDropdown,
@@ -724,7 +733,7 @@ private fun ManualScrapeDialog(series: MediaSeries, viewModel: VideoScraperViewM
                                                                     DropdownMenuItem(
                                                                         text = { AppText("第 $season 季") },
                                                                         onClick = { 
-                                                                            selectedSeason = season
+                                                                            localSelectedSeason = season
                                                                             expandedSeasonDropdown = false 
                                                                         }
                                                                     )
@@ -732,8 +741,8 @@ private fun ManualScrapeDialog(series: MediaSeries, viewModel: VideoScraperViewM
                                                             }
                                                         }
                                                     }
+                                                    Icon(Icons.Default.KeyboardArrowRight, null, tint = Color.Gray, modifier = Modifier.padding(start = 4.dp))
                                                 }
-                                                Icon(Icons.Default.KeyboardArrowRight, null, tint = Color.Gray)
                                             }
                                         }
                                     }
@@ -827,7 +836,7 @@ private fun ManualScrapeDialog(series: MediaSeries, viewModel: VideoScraperViewM
                                                 result.title, 
                                                 customPoster = selectedPoster, 
                                                 customBackdrop = selectedBackdrop,
-                                                targetSeason = selectedSeason // 🌟 传入刚才选择的季数
+                                                targetSeason = selectedSeason 
                                             )
                                             onDismiss() 
                                         },
