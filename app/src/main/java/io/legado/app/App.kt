@@ -88,6 +88,7 @@ import java.io.File
 import java.net.URL
 import java.util.concurrent.TimeUnit
 import java.util.logging.Level
+import io.legado.app.data.VideoCacheManager
 
 class App : Application(), SingletonImageLoader.Factory {
 
@@ -192,6 +193,12 @@ class App : Application(), SingletonImageLoader.Factory {
         
         registerActivityLifecycleCallbacks(LifecycleHelp)
         initRhino()
+        
+        // 🌟 新增：App启动瞬间立刻在后台预加载影视库数据
+        Coroutine.async {
+            VideoCacheManager.preload(this@App)
+        }
+        
         Coroutine.async {
             get<BackupSettingsGateway>().settings
                 .map {
