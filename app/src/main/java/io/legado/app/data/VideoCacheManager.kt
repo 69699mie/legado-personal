@@ -1,6 +1,8 @@
 package io.legado.app.data
 
 import android.content.Context
+import androidx.room.Room
+import com.tencent.mmkv.MMKV
 import io.legado.app.data.entities.VideoScrapedEntity
 import io.legado.app.ui.main.video.MediaSeries
 import io.legado.app.ui.main.video.QuarkFile
@@ -8,145 +10,230 @@ import io.legado.app.ui.main.video.SeasonDetail
 import io.legado.app.utils.ParsedVideoName
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
-import kotlinx.coroutines.withTimeoutOrNull
+import org.json.JSONArray
 import org.json.JSONObject
 
 object VideoCacheManager {
+
+    @Volatile
+    var isReady = false
+        private set
+
     @Volatile
     var cachedSeries: List<MediaSeries>? = null
         private set
 
-    @Volatile
-    var isReady: Boolean = false
-        private set
+    private const val MMKV_KEY = "video_library_snapshot"
 
-    suspend fun preload(context: Context) {
+    /**
+     * 在 Application.onCreate 中调用。
+     * 同步读取 MMKV 内存映射快照，耗时在毫秒级，不阻塞首帧。
+     */
+    fun preload(context: Context) {
         if (isReady) return
+        try {
+            // MMKV 基于 mmap，初次读取极快，适合在 Application 启动阶段获取首屏快照
+            MMKV.initialize(context)
+            val kv = MMKV.defaultMMKV()
+            val jsonStr = kv.decodeString(MMKV_KEY)
+            if (!jsonStr.isNullOrBlank()) {
+                cachedSeries = parseSnapshot(jsonStr)
+            }
+        } catch (e: Exception) {
+            e.printStackTrace()
+        } finally {
+            isReady = true
+        }
+    }
+
+    /**
+     * 后台异步更新内存及 MMKV 快照，供下次冷启动使用
+     */
+    suspend fun updateCache(series: List<MediaSeries>) {
         withContext(Dispatchers.IO) {
+            cachedSeries = series
             try {
-                // 🌟 加入 3 秒超时兜底机制，防卡死
-                val result = withTimeoutOrNull(3000L) {
-                    val dao = appDb.videoScrapedDao
-                    val entities = dao.getAll()
-                    val list = mutableListOf<MediaSeries>()
-                    for (entity in entities) {
-                        val series = entity.toMediaSeries()
-                        list.add(series)
-                    }
-                    list.sortedBy { it.title }
-                }
-                cachedSeries = result ?: emptyList()
+                val kv = MMKV.defaultMMKV()
+                kv.encode(MMKV_KEY, buildSnapshot(series))
             } catch (e: Exception) {
                 e.printStackTrace()
-                cachedSeries = emptyList()
-            } finally {
-                isReady = true
             }
         }
     }
 
-    // 🌟 数据发生变化时（如刮削完成、手动修改），更新内存缓存
-    fun updateCache(newList: List<MediaSeries>) {
-        cachedSeries = newList
+    private fun buildSnapshot(seriesList: List<MediaSeries>): String {
+        val root = JSONArray()
+        seriesList.forEach { series ->
+            val obj = JSONObject().apply {
+                put("id", series.id)
+                put("title", series.title)
+                put("originalParsedTitle", series.originalParsedTitle)
+                put("year", series.year ?: JSONObject.NULL)
+                put("category", series.category)
+                put("posterUrl", series.posterUrl ?: JSONObject.NULL)
+                put("backdropUrl", series.backdropUrl ?: JSONObject.NULL)
+                put("overview", series.overview ?: JSONObject.NULL)
+                put("rating", series.rating ?: JSONObject.NULL)
+                put("groupName", series.groupName ?: JSONObject.NULL)
+                put("isManuallyEdited", series.isManuallyEdited)
+
+                val videosArr = JSONArray()
+                series.videos.forEach { file ->
+                    val vObj = JSONObject().apply {
+                        put("fid", file.fid)
+                        put("name", file.name)
+                        put("isFolder", file.isFolder)
+                        put("category", file.category)
+                        put("size", file.size)
+                        put("folderPath", JSONArray(file.folderPath))
+                        file.parsedInfo?.let { info ->
+                            put("parsedInfo", JSONObject().apply {
+                                put("title", info.title)
+                                put("season", info.season)
+                                put("episode", info.episode)
+                                put("year", info.year ?: 0)
+                                put("isVideo", info.isVideo)
+                            })
+                        }
+                    }
+                    videosArr.put(vObj)
+                }
+                put("videos", videosArr)
+
+                val sdObj = JSONObject()
+                series.seasonDetails.forEach { (k, v) ->
+                    sdObj.put(k.toString(), JSONObject().apply {
+                        put("posterUrl", v.posterUrl ?: JSONObject.NULL)
+                        put("overview", v.overview ?: JSONObject.NULL)
+                    })
+                }
+                put("seasonDetails", sdObj)
+
+                val epTitlesObj = JSONObject()
+                series.episodeTitles.forEach { (k, v) -> epTitlesObj.put(k.toString(), v) }
+                put("episodeTitles", epTitlesObj)
+
+                val epStillsObj = JSONObject()
+                series.episodeStills.forEach { (k, v) -> epStillsObj.put(k.toString(), v) }
+                put("episodeStills", epStillsObj)
+
+                val sEpTitlesObj = JSONObject()
+                series.seasonEpisodeTitles.forEach { (k, v) -> sEpTitlesObj.put(k, v) }
+                put("seasonEpisodeTitles", sEpTitlesObj)
+
+                val sEpStillsObj = JSONObject()
+                series.seasonEpisodeStills.forEach { (k, v) -> sEpStillsObj.put(k, v) }
+                put("seasonEpisodeStills", sEpStillsObj)
+            }
+            root.put(obj)
+        }
+        return root.toString()
     }
 
-    // 辅助解析方法（从 Entity 解析为 MediaSeries）
-    private fun VideoScrapedEntity.toMediaSeries(): MediaSeries {
-        var epTitles = mapOf<Int, String>()
-        var epStills = mapOf<Int, String>()
-        var seasonDetails = mapOf<Int, SeasonDetail>()
-        var sEpTitles = mapOf<String, String>()
-        var sEpStills = mapOf<String, String>()
-        var videos = listOf<QuarkFile>()
-
+    private fun parseSnapshot(jsonStr: String): List<MediaSeries> {
+        val list = mutableListOf<MediaSeries>()
         try {
-            if (extraData.isNotBlank()) {
-                val json = JSONObject(extraData)
-                json.optJSONObject("episodeTitles")?.let { obj ->
-                    val map = mutableMapOf<Int, String>()
-                    obj.keys().forEach { k -> k.toIntOrNull()?.let { num -> map[num] = obj.getString(k) } }
-                    epTitles = map
-                }
-                json.optJSONObject("episodeStills")?.let { obj ->
-                    val map = mutableMapOf<Int, String>()
-                    obj.keys().forEach { k -> k.toIntOrNull()?.let { num -> map[num] = obj.getString(k) } }
-                    epStills = map
-                }
-                json.optJSONObject("seasonDetails")?.let { obj ->
-                    val map = mutableMapOf<Int, SeasonDetail>()
-                    obj.keys().forEach { k ->
-                        k.toIntOrNull()?.let { num ->
-                            val sObj = obj.getJSONObject(k)
-                            map[num] = SeasonDetail(
-                                posterUrl = sObj.optString("posterUrl").takeIf { it.isNotBlank() && it != "null" },
-                                overview = sObj.optString("overview").takeIf { it.isNotBlank() && it != "null" }
+            val root = JSONArray(jsonStr)
+            for (i in 0 until root.length()) {
+                val obj = root.getJSONObject(i)
+                val videosArr = obj.optJSONArray("videos")
+                val videos = mutableListOf<QuarkFile>()
+                if (videosArr != null) {
+                    for (j in 0 until videosArr.length()) {
+                        val vObj = videosArr.getJSONObject(j)
+                        val folderPathArr = vObj.optJSONArray("folderPath")
+                        val folderPath = mutableListOf<String>()
+                        if (folderPathArr != null) {
+                            for (k in 0 until folderPathArr.length()) {
+                                folderPath.add(folderPathArr.getString(k))
+                            }
+                        }
+                        var parsedInfo: ParsedVideoName? = null
+                        val pObj = vObj.optJSONObject("parsedInfo")
+                        if (pObj != null) {
+                            parsedInfo = ParsedVideoName(
+                                title = pObj.optString("title"),
+                                season = pObj.optInt("season", 1),
+                                episode = pObj.optInt("episode", 0),
+                                year = pObj.optInt("year", 0).takeIf { it > 0 },
+                                isVideo = pObj.optBoolean("isVideo", true)
                             )
                         }
-                    }
-                    seasonDetails = map
-                }
-                json.optJSONObject("seasonEpisodeTitles")?.let { obj ->
-                    val map = mutableMapOf<String, String>()
-                    obj.keys().forEach { k -> map[k] = obj.getString(k) }
-                    sEpTitles = map
-                }
-                json.optJSONObject("seasonEpisodeStills")?.let { obj ->
-                    val map = mutableMapOf<String, String>()
-                    obj.keys().forEach { k -> map[k] = obj.getString(k) }
-                    sEpStills = map
-                }
-                json.optJSONArray("cachedVideos")?.let { arr ->
-                    val list = mutableListOf<QuarkFile>()
-                    for (i in 0 until arr.length()) {
-                        val obj = arr.getJSONObject(i)
-                        val parsedInfoObj = obj.optJSONObject("parsedInfo")
-                        val parsedInfo = if (parsedInfoObj != null) {
-                            ParsedVideoName(
-                                title = parsedInfoObj.optString("title"),
-                                season = parsedInfoObj.optInt("season", 1),
-                                episode = parsedInfoObj.optInt("episode", 0),
-                                year = parsedInfoObj.optInt("year", 0).takeIf { it > 0 },
-                                isVideo = true
+                        videos.add(
+                            QuarkFile(
+                                fid = vObj.optString("fid"),
+                                name = vObj.optString("name"),
+                                isFolder = vObj.optBoolean("isFolder", false),
+                                category = vObj.optString("category"),
+                                size = vObj.optLong("size", 0L),
+                                folderPath = folderPath,
+                                parsedInfo = parsedInfo
                             )
-                        } else null
-                        val pathsArray = obj.optJSONArray("folderPath")
-                        val paths = mutableListOf<String>()
-                        if (pathsArray != null) {
-                            for (j in 0 until pathsArray.length()) paths.add(pathsArray.getString(j))
-                        }
-                        list.add(QuarkFile(
-                            fid = obj.optString("fid"),
-                            name = obj.optString("name"),
-                            isFolder = false,
-                            category = obj.optString("category"),
-                            folderPath = paths,
-                            parsedInfo = parsedInfo,
-                            size = obj.optLong("size", 0L)
-                        ))
+                        )
                     }
-                    videos = list
                 }
-            }
-        } catch (e: Exception) { e.printStackTrace() }
 
-        return MediaSeries(
-            id = id,
-            title = title,
-            originalParsedTitle = title,
-            year = null,
-            category = category,
-            posterUrl = posterUrl,
-            backdropUrl = backdropUrl,
-            overview = overview,
-            rating = rating,
-            seasonDetails = seasonDetails,
-            episodeTitles = epTitles,
-            episodeStills = epStills,
-            seasonEpisodeTitles = sEpTitles,
-            seasonEpisodeStills = sEpStills,
-            groupName = groupName,
-            isManuallyEdited = isManuallyEdited,
-            videos = videos
-        )
+                val sdObj = obj.optJSONObject("seasonDetails")
+                val seasonDetails = mutableMapOf<Int, SeasonDetail>()
+                sdObj?.keys()?.forEach { k ->
+                    k.toIntOrNull()?.let { keyInt ->
+                        val item = sdObj.getJSONObject(k)
+                        seasonDetails[keyInt] = SeasonDetail(
+                            posterUrl = item.optString("posterUrl").takeIf { it.isNotBlank() && it != "null" },
+                            overview = item.optString("overview").takeIf { it.isNotBlank() && it != "null" }
+                        )
+                    }
+                }
+
+                val epTitlesMap = mutableMapOf<Int, String>()
+                obj.optJSONObject("episodeTitles")?.let { mapObj ->
+                    mapObj.keys().forEach { k ->
+                        k.toIntOrNull()?.let { epTitlesMap[it] = mapObj.optString(k) }
+                    }
+                }
+
+                val epStillsMap = mutableMapOf<Int, String>()
+                obj.optJSONObject("episodeStills")?.let { mapObj ->
+                    mapObj.keys().forEach { k ->
+                        k.toIntOrNull()?.let { epStillsMap[it] = mapObj.optString(k) }
+                    }
+                }
+
+                val sEpTitlesMap = mutableMapOf<String, String>()
+                obj.optJSONObject("seasonEpisodeTitles")?.let { mapObj ->
+                    mapObj.keys().forEach { k -> sEpTitlesMap[k] = mapObj.optString(k) }
+                }
+
+                val sEpStillsMap = mutableMapOf<String, String>()
+                obj.optJSONObject("seasonEpisodeStills")?.let { mapObj ->
+                    mapObj.keys().forEach { k -> sEpStillsMap[k] = mapObj.optString(k) }
+                }
+
+                list.add(
+                    MediaSeries(
+                        id = obj.optString("id"),
+                        title = obj.optString("title"),
+                        originalParsedTitle = obj.optString("originalParsedTitle"),
+                        year = obj.optInt("year", 0).takeIf { it > 0 },
+                        category = obj.optString("category"),
+                        posterUrl = obj.optString("posterUrl").takeIf { it.isNotBlank() && it != "null" },
+                        backdropUrl = obj.optString("backdropUrl").takeIf { it.isNotBlank() && it != "null" },
+                        overview = obj.optString("overview").takeIf { it.isNotBlank() && it != "null" },
+                        rating = obj.optString("rating").takeIf { it.isNotBlank() && it != "null" },
+                        groupName = obj.optString("groupName").takeIf { it.isNotBlank() && it != "null" },
+                        isManuallyEdited = obj.optBoolean("isManuallyEdited", false),
+                        videos = videos,
+                        seasonDetails = seasonDetails,
+                        episodeTitles = epTitlesMap,
+                        episodeStills = epStillsMap,
+                        seasonEpisodeTitles = sEpTitlesMap,
+                        seasonEpisodeStills = sEpStillsMap
+                    )
+                )
+            }
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+        return list
     }
 }
