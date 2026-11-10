@@ -24,6 +24,7 @@ import io.legado.app.constant.AppConst.channelIdDownload
 import io.legado.app.constant.AppConst.channelIdReadAloud
 import io.legado.app.constant.AppConst.channelIdWeb
 import io.legado.app.constant.PreferKey
+import io.legado.app.data.VideoCacheManager
 import io.legado.app.data.appDb
 import io.legado.app.data.entities.Book
 import io.legado.app.data.entities.BookChapter
@@ -88,7 +89,6 @@ import java.io.File
 import java.net.URL
 import java.util.concurrent.TimeUnit
 import java.util.logging.Level
-import io.legado.app.data.VideoCacheManager
 
 class App : Application(), SingletonImageLoader.Factory {
 
@@ -194,7 +194,8 @@ class App : Application(), SingletonImageLoader.Factory {
         registerActivityLifecycleCallbacks(LifecycleHelp)
         initRhino()
         
-        // 🌟 核心：预加载本地快照，确保 ViewModel 初始化时立刻有数据
+        // 🌟 同步快照预加载：在 App 启动瞬间，主线程毫秒级读取影视库 JSON 快照，实现真正的秒开
+        VideoCacheManager.setContext(this)
         VideoCacheManager.preload(this)
         
         Coroutine.async {
