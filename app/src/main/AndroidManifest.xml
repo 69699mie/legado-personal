@@ -96,6 +96,7 @@
         
         <activity
             android:name=".ui.main.MainActivity"
+            android:theme="@style/Theme.App.Starting"
             android:alwaysRetainTaskState="true"
             android:configChanges="locale|layoutDirection|uiMode|screenLayout|orientation|screenSize|keyboardHidden|smallestScreenSize"
             android:enableOnBackInvokedCallback="true"
