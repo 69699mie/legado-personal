@@ -159,6 +159,7 @@
 # 核心新增：Ktor Server 防混淆（保障本地代理正常运行）
 -keep class io.ktor.** { *; }
 -dontwarn io.ktor.**
+
 # 保留所有 Launcher 图标组件类（防止 R8 重命名导致切换图标崩溃）
 -keep class io.legado.app.ui.main.LauncherW { *; }
 -keep class io.legado.app.ui.main.Launcher0 { *; }
@@ -169,3 +170,21 @@
 -keep class io.legado.app.ui.main.Launcher5 { *; }
 -keep class io.legado.app.ui.main.Launcher6 { *; }
 -keep class io.legado.app.ui.main.MainActivity { *; }
+
+# ==========================================
+# 🌟 最终加固：防止 R8 导致 Koin 依赖注入类型错乱、动画失效、Room 崩溃
+
+# 1. 保留 VideoScraperViewModel 的构造函数签名，防止 Koin 解析依赖失败
+-keepclassmembers class io.legado.app.ui.main.video.VideoScraperViewModel {
+    <init>(...);
+}
+
+# 2. 保留 VideoScrapedDao 接口，防止 Room 运行时找不到代理实现
+-keep interface io.legado.app.data.dao.VideoScrapedDao { *; }
+
+# 3. 保留所有 Room 实体类（防止表名/字段被混淆导致 SQLiteException）
+-keep @androidx.room.Entity class * { *; }
+-keep @androidx.room.Dao interface * { *; }
+
+# 4. 保留 Compose 动画类（防止 R8 类合并导致动画直接跳变、失效）
+-keep,allowshrinking,allowobfuscation class androidx.compose.animation.** { *; }
