@@ -176,6 +176,22 @@ class VideoScraperViewModel(
         }
 
         viewModelScope.launch(Dispatchers.IO) {
+            // 🌟 核心修复：如果内存缓存为空，直接从稳固的 Room 数据库里捞一遍全量缓存
+            // 这样绝对能保证增量刮削生效！
+            if (scrapedCache.isEmpty()) {
+                try {
+                    val entities = videoScrapedDao.getAll()
+                    if (entities.isNotEmpty()) {
+                        entities.forEach { entity ->
+                            val item = entity.toScrapeCacheItem()
+                            scrapedCache[entity.id] = item
+                        }
+                    }
+                } catch (e: Exception) {
+                    e.printStackTrace()
+                }
+            }
+
             fetchQuarkFiles("0")
             if (fids.isNotEmpty()) loadLibraryVideos()
         }
