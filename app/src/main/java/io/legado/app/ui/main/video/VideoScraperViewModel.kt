@@ -5,6 +5,7 @@ import android.content.Context
 import androidx.compose.runtime.Immutable
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import io.legado.app.data.VideoCacheManager
 import io.legado.app.data.dao.VideoScrapedDao
 import io.legado.app.data.entities.VideoScrapedEntity
 import io.legado.app.data.repository.VideoSettingsRepository
@@ -99,7 +100,7 @@ data class ScrapeCacheItem(
     val groupName: String? = null,
     val isManuallyEdited: Boolean = false,
     val fileListSignature: String = "",
-    val cachedVideos: List<QuarkFile> = emptyList() // 🌟 新增：全量缓存视频列表
+    val cachedVideos: List<QuarkFile> = emptyList()
 )
 
 class VideoScraperViewModel(
@@ -153,132 +154,51 @@ class VideoScraperViewModel(
             )
         }
 
-        // 🌟 核心改造：从 Room 极速读取全量数据（含视频列表），瞬间渲染，绝不阻塞
+        // 🌟 核心改造：直接从内存极速获取预加载的数据
         viewModelScope.launch {
-            loadCacheFromRoomOrSp()
+            // 如果 App 里的预加载还没完成，就稍微等一下
+            if (!VideoCacheManager.isReady) {
+                while (!VideoCacheManager.isReady) {
+                    delay(50)
+                }
+            }
+
+            val cachedSeries = VideoCacheManager.cachedSeries ?: emptyList()
             
-            val cachedSeries = scrapedCache.map { (id, cached) ->
-                MediaSeries(
-                    id = id,
-                    title = cached.title,
-                    originalParsedTitle = cached.title,
-                    year = null,
-                    category = cached.category,
-                    posterUrl = cached.posterUrl,
-                    backdropUrl = cached.backdropUrl,
-                    overview = cached.overview,
-                    rating = cached.rating,
-                    seasonDetails = cached.seasonDetails,
-                    episodeTitles = cached.episodeTitles,
-                    episodeStills = cached.episodeStills,
-                    seasonEpisodeTitles = cached.seasonEpisodeTitles,
-                    seasonEpisodeStills = cached.seasonEpisodeStills,
-                    groupName = cached.groupName,
-                    isManuallyEdited = cached.isManuallyEdited,
-                    videos = cached.cachedVideos // 🌟 直接使用缓存的列表
-                )
-            }.filter { !it.title.matches(Regex("^\\d+$")) }
-             .sortedWith(compareBy(pinyinCollator) { it.title })
-            
+            // 同步到内存的 scrapedCache
             if (cachedSeries.isNotEmpty()) {
-                _uiState.update { it.copy(seriesList = cachedSeries) }
-            }
-            
-            fetchQuarkFiles("0")
-            if (fids.isNotEmpty()) loadLibraryVideos() // 后台静默拉取
-        }
-    }
-
-    private suspend fun loadCacheFromRoomOrSp() = withContext(Dispatchers.IO) {
-        try {
-            val roomEntities = videoScrapedDao.getAll()
-            if (roomEntities.isNotEmpty()) {
-                roomEntities.forEach { entity ->
-                    val item = entity.toScrapeCacheItem()
-                    scrapedCache[entity.id] = item
+                cachedSeries.forEach { series ->
+                    val item = ScrapeCacheItem(
+                        title = series.title, category = series.category, posterUrl = series.posterUrl,
+                        backdropUrl = series.backdropUrl, overview = series.overview, rating = series.rating,
+                        seasonDetails = series.seasonDetails, episodeTitles = series.episodeTitles,
+                        episodeStills = series.episodeStills, seasonEpisodeTitles = series.seasonEpisodeTitles,
+                        seasonEpisodeStills = series.seasonEpisodeStills, groupName = series.groupName,
+                        isManuallyEdited = series.isManuallyEdited,
+                        fileListSignature = series.videos.map { it.fid }.sorted().joinToString("|"),
+                        cachedVideos = series.videos
+                    )
+                    scrapedCache[series.id] = item
                 }
+                _uiState.update { it.copy(seriesList = cachedSeries, isLoading = false) }
             } else {
-                // 旧版数据迁移（旧版没有 cachedVideos，会以空列表启动，后台拉取后补全）
-                val jsonStr = videoSettingsRepository.scrapedCacheData
-                if (jsonStr.isNotBlank()) {
-                    val jsonObj = JSONObject(jsonStr)
-                    val entitiesToInsert = mutableListOf<VideoScrapedEntity>()
-                    
-                    for (key in jsonObj.keys()) {
-                        try {
-                            val itemObj = jsonObj.getJSONObject(key)
-                            val epTitlesObj = itemObj.optJSONObject("episodeTitles")
-                            val epTitles = mutableMapOf<Int, String>()
-                            epTitlesObj?.keys()?.forEach { k -> k.toIntOrNull()?.let { num -> epTitles[num] = epTitlesObj.getString(k) } }
-                            
-                            val epStillsObj = itemObj.optJSONObject("episodeStills")
-                            val epStills = mutableMapOf<Int, String>()
-                            epStillsObj?.keys()?.forEach { k -> k.toIntOrNull()?.let { num -> epStills[num] = epStillsObj.getString(k) } }
-
-                            val seasonDetailsObj = itemObj.optJSONObject("seasonDetails")
-                            val seasonDetails = mutableMapOf<Int, SeasonDetail>()
-                            seasonDetailsObj?.keys()?.forEach { k ->
-                                k.toIntOrNull()?.let { num ->
-                                    val sObj = seasonDetailsObj.getJSONObject(k)
-                                    seasonDetails[num] = SeasonDetail(
-                                        posterUrl = sObj.optString("posterUrl").takeIf { it.isNotBlank() && it != "null" },
-                                        overview = sObj.optString("overview").takeIf { it.isNotBlank() && it != "null" }
-                                    )
-                                }
-                            }
-
-                            val sEpTitlesObj = itemObj.optJSONObject("seasonEpisodeTitles")
-                            val sEpTitles = mutableMapOf<String, String>()
-                            sEpTitlesObj?.keys()?.forEach { k -> sEpTitles[k] = sEpTitlesObj.getString(k) }
-
-                            val sEpStillsObj = itemObj.optJSONObject("seasonEpisodeStills")
-                            val sEpStills = mutableMapOf<String, String>()
-                            sEpStillsObj?.keys()?.forEach { k -> sEpStills[k] = sEpStillsObj.getString(k) }
-
-                            val item = ScrapeCacheItem(
-                                title = itemObj.optString("title"),
-                                category = itemObj.optString("category"),
-                                posterUrl = itemObj.optString("posterUrl").takeIf { it.isNotBlank() && it != "null" },
-                                backdropUrl = itemObj.optString("backdropUrl").takeIf { it.isNotBlank() && it != "null" },
-                                overview = itemObj.optString("overview").takeIf { it.isNotBlank() && it != "null" },
-                                rating = itemObj.optString("rating").takeIf { it.isNotBlank() && it != "null" },
-                                seasonDetails = seasonDetails,
-                                episodeTitles = epTitles,
-                                episodeStills = epStills,
-                                seasonEpisodeTitles = sEpTitles,
-                                seasonEpisodeStills = sEpStills,
-                                groupName = itemObj.optString("groupName").takeIf { it.isNotBlank() && it != "null" },
-                                isManuallyEdited = itemObj.optBoolean("isManuallyEdited", false),
-                                fileListSignature = itemObj.optString("fileListSignature", ""),
-                                cachedVideos = emptyList()
-                            )
-                            scrapedCache[key] = item
-                            entitiesToInsert.add(item.toEntity(key))
-                        } catch (e: Exception) { e.printStackTrace() }
-                    }
-                    
-                    if (entitiesToInsert.isNotEmpty()) {
-                        videoScrapedDao.replaceAll(entitiesToInsert)
-                    }
-                    videoSettingsRepository.scrapedCacheData = ""
-                }
+                _uiState.update { it.copy(isLoading = false) }
             }
-        } catch (e: Exception) {
-            e.printStackTrace()
+
+            fetchQuarkFiles("0")
+            if (fids.isNotEmpty()) loadLibraryVideos()
         }
     }
 
     private fun saveScrapedCache() {
-        // 确保把最新的 videos 同步到 scrapedCache 中，再保存
+        val entities = scrapedCache.map { (id, item) -> item.toEntity(id) }
+        
+        // 🌟 同步更新 VideoCacheManager，保证下次秒开数据最新
         val currentList = _uiState.value.seriesList
-        scrapedCache.forEach { (id, item) ->
-            val series = currentList.find { it.id == id }
-            if (series != null && series.videos.isNotEmpty()) {
-                scrapedCache[id] = item.copy(cachedVideos = series.videos)
-            }
+        if (currentList.isNotEmpty()) {
+            VideoCacheManager.updateCache(currentList)
         }
 
-        val entities = scrapedCache.map { (id, item) -> item.toEntity(id) }
         viewModelScope.launch(Dispatchers.IO) {
             try {
                 videoScrapedDao.replaceAll(entities)
@@ -334,7 +254,6 @@ class VideoScraperViewModel(
                     sEpStills = map
                 }
                 
-                // 反序列化 videos
                 json.optJSONArray("cachedVideos")?.let { arr ->
                     val list = mutableListOf<QuarkFile>()
                     for (i in 0 until arr.length()) {
@@ -416,7 +335,6 @@ class VideoScraperViewModel(
             seasonEpisodeStills.forEach { (k, v) -> sEpStillsObj.put(k, v) }
             extraObj.put("seasonEpisodeStills", sEpStillsObj)
 
-            // 序列化 videos
             val videosArr = JSONArray()
             cachedVideos.forEach { file ->
                 val fileObj = JSONObject().apply {
@@ -607,7 +525,6 @@ class VideoScraperViewModel(
                         } else series
                     }
                     
-                    // 立即更新内存中的 videos 列表，确保下次保存时完整
                     scrapedCache[series.id] = (cached ?: ScrapeCacheItem(
                         title = resultSeries.title, category = resultSeries.category, posterUrl = null, backdropUrl = null,
                         overview = null, rating = null, groupName = resultSeries.groupName,
@@ -619,7 +536,6 @@ class VideoScraperViewModel(
 
                 _uiState.update { it.copy(seriesList = finalSeriesList) }
                 
-                // 如果有需要刮削的，且配置了 APIKey，此时才显示 isScraping = true
                 if (apiKey.isNotBlank() && needScrapeList.isNotEmpty()) {
                     _uiState.update { it.copy(isScraping = true) }
                     scrapeSeriesPosters(needScrapeList, apiKey, _uiState.value.tmdbBaseUrl)
@@ -627,7 +543,7 @@ class VideoScraperViewModel(
                     hasLoadedLibrary = true
                     _uiState.update { it.copy(isLoading = false, isScraping = false) }
                     handlePendingPlayRequest()
-                    saveScrapedCache() // 确保最新的 videos 写入
+                    saveScrapedCache() 
                 }
 
             } catch (e: Exception) {
@@ -863,7 +779,7 @@ class VideoScraperViewModel(
                             episodeStills = newSeries.episodeStills, seasonEpisodeTitles = newSeries.seasonEpisodeTitles,
                             seasonEpisodeStills = newSeries.seasonEpisodeStills, groupName = newSeries.groupName,
                             isManuallyEdited = isEdited, fileListSignature = newSignature,
-                            cachedVideos = newSeries.videos // 🌟 保存最新列表
+                            cachedVideos = newSeries.videos
                         )
                         newSeries
                     } else {
@@ -1609,7 +1525,7 @@ data class VideoUiState(
     val tmdbApiKey: String = "",
     val tmdbBaseUrl: String = "https://tmdbimg.quarkalist.xyz",
     val currentFid: String = "0",
-    val isLoading: Boolean = false,
+    val isLoading: Boolean = true,
     val isScraping: Boolean = false, 
     val errorMsg: String? = null,
     val fileList: List<QuarkFile> = emptyList(),
