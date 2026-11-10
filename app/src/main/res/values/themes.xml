@@ -16,8 +16,10 @@
     </style>
 
     <style name="Theme.App.Starting" parent="Theme.SplashScreen">
-        <item name="windowSplashScreenBackground">?attr/colorSurface</item>
-        <item name="windowSplashScreenAnimatedIcon">@mipmap/ic_launcher_round</item>
+        <!-- 核心修复：背景设为影视库底色，图标透明，并增加 windowBackground 兜底 -->
+        <item name="windowSplashScreenBackground">#F7F8FA</item>
+        <item name="windowSplashScreenAnimatedIcon">@android:color/transparent</item>
+        <item name="android:windowBackground">#F7F8FA</item>
         <item name="postSplashScreenTheme">@style/Base.AppTheme</item>
     </style>
 
