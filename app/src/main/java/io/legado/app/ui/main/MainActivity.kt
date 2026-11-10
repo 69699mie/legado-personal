@@ -4,6 +4,7 @@ import android.Manifest
 import android.content.Context
 import android.content.Intent
 import android.content.res.Configuration
+import android.graphics.BitmapFactory
 import android.os.Build
 import android.os.Bundle
 import android.text.format.DateUtils
@@ -41,6 +42,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Modifier
 import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
+import androidx.core.graphics.scale
 import androidx.core.view.ViewCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -53,17 +55,21 @@ import androidx.navigation3.runtime.rememberNavBackStack
 import androidx.navigation3.runtime.rememberSaveableStateHolderNavEntryDecorator
 import androidx.navigation3.scene.SinglePaneSceneStrategy
 import androidx.navigation3.ui.NavDisplay
+import com.google.android.material.color.DynamicColors
+import com.google.android.material.color.DynamicColorsOptions
 import io.legado.app.BuildConfig
 import io.legado.app.R
 import io.legado.app.base.BaseComposeActivity
 import io.legado.app.constant.AppConst.appInfo
 import io.legado.app.constant.EventBus
+import io.legado.app.constant.PreferKey
 import io.legado.app.core.ui.player.playerUnderlaySemantics
 import io.legado.app.data.repository.ReadAloudSettingsRepository
 import io.legado.app.domain.gateway.BackupSettingsGateway
 import io.legado.app.domain.gateway.MangaSettingsGateway
 import io.legado.app.domain.gateway.OtherSettingsGateway
 import io.legado.app.domain.gateway.PlaybackCapsuleGateway
+import io.legado.app.domain.gateway.ThemeSettingsGateway
 import io.legado.app.domain.model.PlaybackCapsuleSource
 import io.legado.app.domain.model.PlaybackCapsuleState
 import io.legado.app.help.LocalNetworkAccess
@@ -74,6 +80,7 @@ import io.legado.app.help.http.LocalNetworkBlockedNotifier
 import io.legado.app.help.storage.Backup
 import io.legado.app.help.update.AppUpdateGitHub
 import io.legado.app.lib.dialogs.alert
+import io.legado.app.lib.theme.primaryColor
 import io.legado.app.model.AudioPlay
 import io.legado.app.service.WebService
 import io.legado.app.ui.about.MarkdownSheet
@@ -96,6 +103,7 @@ import io.legado.app.ui.welcome.WelcomeActivity
 import io.legado.app.ui.widget.components.privacy.PrivateAppStartGate
 import io.legado.app.utils.LogUtils
 import io.legado.app.utils.eventBus.FlowEventBus
+import io.legado.app.utils.getPrefString
 import io.legado.app.utils.showDialogFragment
 import io.legado.app.utils.startActivity
 import io.legado.app.utils.toastOnUi
@@ -112,6 +120,7 @@ import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import org.koin.android.ext.android.inject
 import org.koin.androidx.viewmodel.ext.android.viewModel
+import java.io.File
 import kotlin.coroutines.resume
 import kotlin.coroutines.suspendCoroutine
 
@@ -329,6 +338,7 @@ open class MainActivity : BaseComposeActivity(), AudioPlay.CallBack {
     private val mangaSettingsGateway by inject<MangaSettingsGateway>()
     private val backupSettingsGateway by inject<BackupSettingsGateway>()
     private val readAloudSettingsRepository by inject<ReadAloudSettingsRepository>()
+    private val themeGateway by inject<ThemeSettingsGateway>()
     internal val navRouteTracker by inject<MainNavRouteTracker>()
     private val routeEvents = MutableSharedFlow<RouteEvent>(extraBufferCapacity = 1)
     
@@ -361,6 +371,40 @@ open class MainActivity : BaseComposeActivity(), AudioPlay.CallBack {
         restoredReadBookRoute = savedInstanceState?.restoreReadBookRoute()
             ?: navRouteTracker.lastReadBookRoute()
         super.onCreate(savedInstanceState)
+
+        // 🌟 新增：恢复动态取色（必须在 installSplashScreen 和 super.onCreate 之后）
+        if (getPrefString("app_theme", "0") == "12") {
+            if (themeGateway.currentSettings.customMode == "accent")
+                setTheme(R.style.ThemeOverlay_WhiteBackground)
+
+            val colorImagePath = getPrefString(PreferKey.colorImage)
+            if (!colorImagePath.isNullOrBlank()) {
+                val file = File(colorImagePath)
+                if (file.exists()) {
+                    val bitmap = BitmapFactory.decodeFile(file.absolutePath)
+                    if (bitmap != null) {
+                        val colorAccuracy = true
+                        val targetWidth = if (colorAccuracy) (bitmap.width / 4).coerceAtMost(256) else 16
+                        val targetHeight = if (colorAccuracy) (bitmap.height / 4).coerceAtMost(256) else 16
+                        val scaledBitmap = bitmap.scale(targetWidth, targetHeight, false)
+
+                        val options = DynamicColorsOptions.Builder()
+                            .setContentBasedSource(scaledBitmap)
+                            .build()
+
+                        DynamicColors.applyToActivitiesIfAvailable(application, options)
+                        bitmap.recycle()
+                    }
+                }
+            } else {
+                DynamicColors.applyToActivitiesIfAvailable(
+                    application,
+                    DynamicColorsOptions.Builder()
+                        .setContentBasedSource(this.primaryColor)
+                        .build()
+                )
+            }
+        }
 
         if (checkStartupRoute()) return
         val shouldAutoCheckUpdate = startupUpdateCheckGate.consume(
