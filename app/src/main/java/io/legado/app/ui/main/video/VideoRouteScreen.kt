@@ -1011,7 +1011,7 @@ fun InternalVideoPlayer(url: String, title: String, cookie: String, series: Medi
                     duration = exoPlayer.duration.coerceAtLeast(0L)
                     if (introSeconds > 0 && !hasAutoSkippedIntro && exoPlayer.currentPosition < introSeconds * 1000L) {
                         exoPlayer.seekTo(introSeconds * 1000L); currentPosition = introSeconds * 1000L; hasAutoSkippedIntro = true
-                        playerToastMessage = "已跳过片头"
+                        // ❌ 移除：已跳过片头提示
                     }
                 } else if (state == Player.STATE_ENDED) {
                     val idx = sortedVideos.indexOfFirst { it.fid == currentFile.fid }
@@ -1129,7 +1129,14 @@ fun InternalVideoPlayer(url: String, title: String, cookie: String, series: Medi
         if (isLocked || showSettingsPanel || showEpisodeDrawer || isInPip.value) return@pointerInput
         detectTapGestures(
             onTap = { showControls = !showControls },
-            onDoubleTap = { offset -> when { offset.x < size.width / 3 -> { exoPlayer.seekTo((exoPlayer.currentPosition - 10000).coerceAtLeast(0)); seekMessage = "已快退 10 秒" }; offset.x > size.width * 2 / 3 -> { exoPlayer.seekTo((exoPlayer.currentPosition + 10000).coerceAtMost(if (duration > 0) duration else Long.MAX_VALUE)); seekMessage = "已快进 10 秒" }; else -> { if (isPlaying) exoPlayer.pause() else exoPlayer.play() } } },
+            onDoubleTap = { offset -> when { 
+                // 🌟 修改：左 1/4 快退
+                offset.x < size.width * 0.25f -> { exoPlayer.seekTo((exoPlayer.currentPosition - 10000).coerceAtLeast(0)); seekMessage = "已快退 10 秒" }; 
+                // 🌟 修改：右 1/4 快进
+                offset.x > size.width * 0.75f -> { exoPlayer.seekTo((exoPlayer.currentPosition + 10000).coerceAtMost(if (duration > 0) duration else Long.MAX_VALUE)); seekMessage = "已快进 10 秒" }; 
+                // 🌟 修改：中间 1/2 暂停/播放
+                else -> { if (isPlaying) exoPlayer.pause() else exoPlayer.play() } 
+            } },
             onLongPress = { isLongPressing = true; exoPlayer.setPlaybackSpeed(2.0f) },
             onPress = { tryAwaitRelease(); isLongPressing = false; exoPlayer.setPlaybackSpeed(playbackSpeed) }
         )
@@ -1138,12 +1145,12 @@ fun InternalVideoPlayer(url: String, title: String, cookie: String, series: Medi
 
         if (activity?.isInPictureInPictureMode == true || isInPip.value) { Box(modifier = Modifier.fillMaxSize()) {}; return@Box }
 
-        // 🌟 自定义提示层：完全取代系统 Toast
+        // 🌟 自定义提示层：完全取代系统 Toast (位置下移到 Center + 100dp)
         AnimatedVisibility(
             visible = playerToastMessage != null,
             enter = fadeIn(animationSpec = tween(200)),
             exit = fadeOut(animationSpec = tween(300)),
-            modifier = Modifier.align(Alignment.Center)
+            modifier = Modifier.align(Alignment.Center).offset(y = 100.dp)
         ) {
             Box(
                 modifier = Modifier
@@ -1262,11 +1269,38 @@ fun InternalVideoPlayer(url: String, title: String, cookie: String, series: Medi
                         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                             Text(text = "${playbackSpeed}x", color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.Bold, modifier = Modifier.clickable { val nextSpeed = when(playbackSpeed) { 0.5f -> 0.75f; 0.75f -> 1.0f; 1.0f -> 1.25f; 1.25f -> 1.5f; 1.5f -> 2.0f; 2.0f -> 3.0f; else -> 0.5f }; playbackSpeed = nextSpeed; exoPlayer.setPlaybackSpeed(nextSpeed) }.padding(8.dp))
                             Row(modifier = Modifier.weight(1f), horizontalArrangement = Arrangement.Center, verticalAlignment = Alignment.CenterVertically) {
-                                if (isLandscape) AppText(text = if (introSeconds > 0) formatIntroOutro(introSeconds) else "片头", color = Color.White, fontSize = 12.sp, modifier = Modifier.combinedClickable(onClick = { introSeconds = (currentPosition / 1000).toInt(); viewModel.saveIntroOutro(latestSeries.title, season, introSeconds, outroSeconds); playerToastMessage = "片头已设为 ${formatIntroOutro(introSeconds)}" }, onLongClick = { introSeconds = 0; viewModel.saveIntroOutro(latestSeries.title, season, introSeconds, outroSeconds); playerToastMessage = "已清空片头" }).padding(horizontal = 8.dp, vertical = 4.dp))
+                                if (isLandscape) AppText(text = if (introSeconds > 0) formatIntroOutro(introSeconds) else "片头", color = Color.White, fontSize = 12.sp, modifier = Modifier.combinedClickable(
+                                    onClick = { 
+                                        introSeconds = (currentPosition / 1000).toInt()
+                                        viewModel.saveIntroOutro(latestSeries.title, season, introSeconds, outroSeconds)
+                                        // ❌ 移除：片头已设为提示
+                                    }, 
+                                    onLongClick = { 
+                                        introSeconds = 0
+                                        viewModel.saveIntroOutro(latestSeries.title, season, introSeconds, outroSeconds)
+                                        // ❌ 移除：已清空片头提示
+                                    }
+                                ).padding(horizontal = 8.dp, vertical = 4.dp))
                                 IconButton(onClick = { val videos = sortedVideos; val idx = videos.indexOfFirst { it.fid == currentFile.fid }; if (idx > 0) viewModel.playVideo(context, latestSeries, videos[idx - 1]) }, modifier = Modifier.size(36.dp)) { Icon(Icons.Default.SkipPrevious, null, tint = Color.White, modifier = Modifier.size(24.dp)) }
                                 IconButton(onClick = { if (isPlaying) exoPlayer.pause() else exoPlayer.play() }, modifier = Modifier.size(40.dp)) { Icon(if (isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow, null, tint = Color.White, modifier = Modifier.size(28.dp)) }
                                 IconButton(onClick = { val videos = sortedVideos; val idx = videos.indexOfFirst { it.fid == currentFile.fid }; if (idx != -1 && idx < videos.size - 1) viewModel.playVideo(context, latestSeries, videos[idx + 1]) }, modifier = Modifier.size(36.dp)) { Icon(Icons.Default.SkipNext, null, tint = Color.White, modifier = Modifier.size(24.dp)) }
-                                if (isLandscape) AppText(text = if (outroSeconds > 0) formatIntroOutro(outroSeconds) else "片尾", color = Color.White, fontSize = 12.sp, modifier = Modifier.combinedClickable(onClick = { val remain = duration - currentPosition; if (remain > 0) { outroSeconds = (remain / 1000).toInt(); viewModel.saveIntroOutro(latestSeries.title, season, introSeconds, outroSeconds); playerToastMessage = "片尾已设为剩余 ${formatIntroOutro(outroSeconds)}"; outroWarningTriggered = false } }, onLongClick = { outroSeconds = 0; viewModel.saveIntroOutro(latestSeries.title, season, introSeconds, outroSeconds); playerToastMessage = "已清空片尾"; outroWarningTriggered = false }).padding(horizontal = 8.dp, vertical = 4.dp))
+                                if (isLandscape) AppText(text = if (outroSeconds > 0) formatIntroOutro(outroSeconds) else "片尾", color = Color.White, fontSize = 12.sp, modifier = Modifier.combinedClickable(
+                                    onClick = { 
+                                        val remain = duration - currentPosition
+                                        if (remain > 0) { 
+                                            outroSeconds = (remain / 1000).toInt()
+                                            viewModel.saveIntroOutro(latestSeries.title, season, introSeconds, outroSeconds)
+                                            outroWarningTriggered = false 
+                                            // ❌ 移除：片尾已设为提示
+                                        } 
+                                    }, 
+                                    onLongClick = { 
+                                        outroSeconds = 0
+                                        viewModel.saveIntroOutro(latestSeries.title, season, introSeconds, outroSeconds)
+                                        outroWarningTriggered = false
+                                        // ❌ 移除：已清空片尾提示
+                                    }
+                                ).padding(horizontal = 8.dp, vertical = 4.dp))
                             }
                             if (isLandscape) AppText(text = "选集", color = Color.White, modifier = Modifier.clickable { showEpisodeDrawer = true }.padding(8.dp)) else Spacer(modifier = Modifier.width(32.dp))
                         }
