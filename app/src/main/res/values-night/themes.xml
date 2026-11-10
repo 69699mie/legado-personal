@@ -16,6 +16,13 @@
         <item name="bottomNavigationStyle">@style/Widget.Material3Expressive.BottomNavigationView</item>
     </style>
 
+    <style name="Theme.App.Starting" parent="Theme.SplashScreen">
+        <item name="windowSplashScreenBackground">#121212</item>
+        <item name="windowSplashScreenAnimatedIcon">@android:color/transparent</item>
+        <item name="android:windowBackground">#121212</item>
+        <item name="postSplashScreenTheme">@style/Base.AppTheme</item>
+    </style>
+
     <style name="ThemeOverlay.WhiteBackground" parent="">
         <item name="colorOnPrimary">@color/wh_theme_onPrimary</item>
         <item name="colorOnSecondary">@color/wh_theme_onSecondary</item>
