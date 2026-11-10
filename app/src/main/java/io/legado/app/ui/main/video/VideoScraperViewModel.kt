@@ -5,7 +5,6 @@ import android.content.Context
 import androidx.compose.runtime.Immutable
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
-import io.legado.app.data.VideoCacheManager
 import io.legado.app.data.dao.VideoScrapedDao
 import io.legado.app.data.entities.VideoScrapedEntity
 import io.legado.app.data.repository.VideoSettingsRepository
@@ -154,30 +153,8 @@ class VideoScraperViewModel(
             )
         }
 
-        // 首帧直接同步获取内存缓存，不延迟等待
-        val initialCached = VideoCacheManager.cachedSeries ?: emptyList()
-        if (initialCached.isNotEmpty()) {
-            initialCached.forEach { series ->
-                val item = ScrapeCacheItem(
-                    title = series.title, category = series.category, posterUrl = series.posterUrl,
-                    backdropUrl = series.backdropUrl, overview = series.overview, rating = series.rating,
-                    seasonDetails = series.seasonDetails, episodeTitles = series.episodeTitles,
-                    episodeStills = series.episodeStills, seasonEpisodeTitles = series.seasonEpisodeTitles,
-                    seasonEpisodeStills = series.seasonEpisodeStills, groupName = series.groupName,
-                    isManuallyEdited = series.isManuallyEdited,
-                    fileListSignature = series.videos.map { it.fid }.sorted().joinToString("|"),
-                    cachedVideos = series.videos
-                )
-                scrapedCache[series.id] = item
-            }
-            _uiState.update { it.copy(seriesList = initialCached, isLoading = false) }
-        } else {
-            _uiState.update { it.copy(isLoading = true) }
-        }
-
         viewModelScope.launch(Dispatchers.IO) {
-            // 🌟 核心修复：如果内存缓存为空，直接从稳固的 Room 数据库里捞一遍全量缓存
-            // 这样绝对能保证增量刮削生效！
+            // 🌟 纯 Room 驱动：直接从数据库捞出历史缓存
             if (scrapedCache.isEmpty()) {
                 try {
                     val entities = videoScrapedDao.getAll()
@@ -186,6 +163,10 @@ class VideoScraperViewModel(
                             val item = entity.toScrapeCacheItem()
                             scrapedCache[entity.id] = item
                         }
+                        // 组装 UI 数据并瞬间放行，撤销启动页遮罩
+                        val cachedSeries = scrapedCache.map { (id, item) -> item.toMediaSeries(id) }
+                            .sortedWith(compareBy(pinyinCollator) { it.title })
+                        _uiState.update { it.copy(seriesList = cachedSeries, isLoading = false) }
                     }
                 } catch (e: Exception) {
                     e.printStackTrace()
@@ -199,15 +180,6 @@ class VideoScraperViewModel(
 
     private fun saveScrapedCache() {
         val entities = scrapedCache.map { (id, item) -> item.toEntity(id) }
-        
-        // 同步更新 VideoCacheManager，保证下次秒开数据最新
-        val currentList = _uiState.value.seriesList
-        if (currentList.isNotEmpty()) {
-            viewModelScope.launch(Dispatchers.IO) {
-                VideoCacheManager.updateCache(currentList)
-            }
-        }
-
         viewModelScope.launch(Dispatchers.IO) {
             try {
                 videoScrapedDao.replaceAll(entities)
@@ -215,6 +187,29 @@ class VideoScraperViewModel(
                 e.printStackTrace()
             }
         }
+    }
+
+    private fun ScrapeCacheItem.toMediaSeries(id: String): MediaSeries {
+        val year = cachedVideos.firstOrNull()?.parsedInfo?.year
+        return MediaSeries(
+            id = id,
+            title = title,
+            originalParsedTitle = title,
+            year = year,
+            category = category,
+            posterUrl = posterUrl,
+            backdropUrl = backdropUrl,
+            overview = overview,
+            rating = rating,
+            videos = cachedVideos,
+            seasonDetails = seasonDetails,
+            episodeTitles = episodeTitles,
+            episodeStills = episodeStills,
+            seasonEpisodeTitles = seasonEpisodeTitles,
+            seasonEpisodeStills = seasonEpisodeStills,
+            groupName = groupName,
+            isManuallyEdited = isManuallyEdited
+        )
     }
 
     private fun VideoScrapedEntity.toScrapeCacheItem(): ScrapeCacheItem {
