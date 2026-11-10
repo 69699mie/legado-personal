@@ -22,6 +22,11 @@ class VideoSettingsRepository(context: Context) {
         get() = prefs.getString("library_fids", "") ?: ""
         set(value) { prefs.edit().putString("library_fids", value).apply() }
 
+    // 🌟 新增：被单独排除的子目录列表
+    var excludedLibraryFids: String
+        get() = prefs.getString("excluded_library_fids", "") ?: ""
+        set(value) { prefs.edit().putString("excluded_library_fids", value).apply() }
+
     var introOutroData: String
         get() = prefs.getString("intro_outro_data", "{}") ?: "{}"
         set(value) { prefs.edit().putString("intro_outro_data", value).apply() }
@@ -54,7 +59,6 @@ class VideoSettingsRepository(context: Context) {
         get() = prefs.getString("banner_logic", "智能推荐") ?: "智能推荐"
         set(value) { prefs.edit().putString("banner_logic", value).apply() }
 
-    // 【新增】影视库分类顺序，逗号分隔
     var categoryOrder: String
         get() = prefs.getString("category_order", "最近观看,剧集,电影,动漫") ?: "最近观看,剧集,电影,动漫"
         set(value) { prefs.edit().putString("category_order", value).apply() }
