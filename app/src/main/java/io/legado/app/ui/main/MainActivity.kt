@@ -36,6 +36,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
@@ -614,6 +615,7 @@ fun SplashOverlay() {
                 contentDescription = null,
                 modifier = Modifier
                     .size(88.dp)
+                    .clip(RoundedCornerShape(22.dp)) // 🌟 核心修复：强制切出与系统一致的圆角
                     .graphicsLayer(scaleX = scale.value, scaleY = scale.value)
             )
         }
