@@ -1130,11 +1130,8 @@ fun InternalVideoPlayer(url: String, title: String, cookie: String, series: Medi
         detectTapGestures(
             onTap = { showControls = !showControls },
             onDoubleTap = { offset -> when { 
-                // 🌟 修改：左 1/4 快退
                 offset.x < size.width * 0.25f -> { exoPlayer.seekTo((exoPlayer.currentPosition - 10000).coerceAtLeast(0)); seekMessage = "已快退 10 秒" }; 
-                // 🌟 修改：右 1/4 快进
                 offset.x > size.width * 0.75f -> { exoPlayer.seekTo((exoPlayer.currentPosition + 10000).coerceAtMost(if (duration > 0) duration else Long.MAX_VALUE)); seekMessage = "已快进 10 秒" }; 
-                // 🌟 修改：中间 1/2 暂停/播放
                 else -> { if (isPlaying) exoPlayer.pause() else exoPlayer.play() } 
             } },
             onLongPress = { isLongPressing = true; exoPlayer.setPlaybackSpeed(2.0f) },
@@ -1145,12 +1142,12 @@ fun InternalVideoPlayer(url: String, title: String, cookie: String, series: Medi
 
         if (activity?.isInPictureInPictureMode == true || isInPip.value) { Box(modifier = Modifier.fillMaxSize()) {}; return@Box }
 
-        // 🌟 自定义提示层：位置改为 TopCenter 下移 100dp
+        // 🌟 自定义提示层：位置与 2.0x快进中 对齐
         AnimatedVisibility(
             visible = playerToastMessage != null,
             enter = fadeIn(animationSpec = tween(200)),
             exit = fadeOut(animationSpec = tween(300)),
-            modifier = Modifier.align(Alignment.TopCenter).padding(top = 100.dp)
+            modifier = Modifier.align(Alignment.TopCenter).padding(top = if (isLandscape) 40.dp else 60.dp)
         ) {
             Box(
                 modifier = Modifier
