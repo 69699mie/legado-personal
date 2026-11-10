@@ -866,7 +866,7 @@ fun InternalVideoPlayer(url: String, title: String, cookie: String, series: Medi
     val originalBrightness = remember { activity?.window?.attributes?.screenBrightness ?: WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE }
     DisposableEffect(Unit) {
         onDispose {
-            if (!isInMultiWindowMode) activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
+            if (!isInMultiWindowMode) activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
             activity?.window?.let { window -> WindowCompat.setDecorFitsSystemWindows(window, true); val controller = WindowCompat.getInsetsController(window, window.decorView); controller.show(WindowInsetsCompat.Type.systemBars()); window.decorView.systemUiVisibility = View.SYSTEM_UI_FLAG_VISIBLE; window.decorView.requestApplyInsets() }
             activity?.window?.let { val params = it.attributes; params.screenBrightness = originalBrightness; it.attributes = params }
         }
@@ -1145,12 +1145,12 @@ fun InternalVideoPlayer(url: String, title: String, cookie: String, series: Medi
 
         if (activity?.isInPictureInPictureMode == true || isInPip.value) { Box(modifier = Modifier.fillMaxSize()) {}; return@Box }
 
-        // 🌟 自定义提示层：完全取代系统 Toast (位置下移到 Center + 100dp)
+        // 🌟 自定义提示层：位置改为 TopCenter 下移 100dp
         AnimatedVisibility(
             visible = playerToastMessage != null,
             enter = fadeIn(animationSpec = tween(200)),
             exit = fadeOut(animationSpec = tween(300)),
-            modifier = Modifier.align(Alignment.Center).offset(y = 100.dp)
+            modifier = Modifier.align(Alignment.TopCenter).padding(top = 100.dp)
         ) {
             Box(
                 modifier = Modifier
