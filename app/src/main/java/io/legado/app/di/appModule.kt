@@ -624,7 +624,8 @@ val appModule = module {
     viewModelOf(::AllBookmarkViewModel)
     viewModelOf(::TxtTocRuleViewModel)
     
-    viewModelOf(::VideoScraperViewModel)
+    // 🌟 核心修复 2：将 viewModelOf 改为显式实例化，避免 R8 混淆后泛型推断丢失
+    viewModel { VideoScraperViewModel(get(), get()) }
 
     viewModel {
         TxtTocRulePreviewViewModel(
