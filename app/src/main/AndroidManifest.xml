@@ -102,7 +102,7 @@
             android:windowSoftInputMode="adjustResize"
             android:supportsPictureInPicture="true"
             android:resizeableActivity="true"
-            android:screenOrientation="sensor"
+            android:screenOrientation="portrait"
             android:exported="true">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
