@@ -7,6 +7,7 @@ import coil3.gif.GifDecoder
 import coil3.request.crossfade
 import coil3.svg.SvgDecoder
 import io.legado.app.data.AppDatabase
+import io.legado.app.data.dao.VideoScrapedDao
 import io.legado.app.data.repository.AiArtifactRepository
 import io.legado.app.data.repository.AiChatRepository
 import io.legado.app.data.repository.AiMemoryRepository
@@ -356,8 +357,9 @@ val appModule = module {
     single { get<AppDatabase>().rssStarDao }
     single { get<AppDatabase>().ruleSubDao }
     single { get<AppDatabase>().videoDao }
-    // ➕ 新增 Room 刮削缓存 DAO 注入
-    single { get<AppDatabase>().videoScrapedDao }
+    
+    // 🌟 核心修复：显式指定返回类型为 VideoScrapedDao，防止 R8 混淆后 Koin 反射注入崩溃
+    single<VideoScrapedDao> { get<AppDatabase>().videoScrapedDao }
 
     singleOf(::ReadRecordRepository)
     single<HomeDashboardGateway> { HomeDashboardRepository(get(), get()) }
@@ -569,9 +571,7 @@ val appModule = module {
                 add(CoverInterceptor())
                 add(CoverFetcher.Factory(okHttpClient, okHttpClientManga))
             }
-            // 🌟 核心优化：关闭 crossfade，彻底消除列表快速滑动时的掉帧
             .crossfade(false)
-            // 💡 修复存储暴涨：给 Coil 设置 200MB 磁盘缓存硬上限
             .diskCache {
                 coil3.disk.DiskCache.Builder()
                     .directory(get<android.content.Context>().cacheDir.resolve("image_cache").toOkioPath())
