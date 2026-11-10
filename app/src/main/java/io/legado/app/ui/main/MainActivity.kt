@@ -230,7 +230,6 @@ open class MainActivity : BaseComposeActivity(), AudioPlay.CallBack {
         restoredReadBookRoute = savedInstanceState?.restoreReadBookRoute() ?: navRouteTracker.lastReadBookRoute()
         super.onCreate(savedInstanceState)
 
-        // 恢复动态取色
         if (getPrefString("app_theme", "0") == "12") {
             if (themeGateway.currentSettings.customMode == "accent") setTheme(R.style.ThemeOverlay_WhiteBackground)
             val colorImagePath = getPrefString(PreferKey.colorImage)
@@ -316,21 +315,18 @@ open class MainActivity : BaseComposeActivity(), AudioPlay.CallBack {
     @OptIn(ExperimentalSharedTransitionApi::class)
     @Composable
     override fun Content() {
-        // 🌟 核心修复：必须使用 koinViewModel() 获取同一个 ViewModel 实例，否则会卡死
         val videoViewModel: VideoScraperViewModel = koinViewModel()
         val videoUiState by videoViewModel.uiState.collectAsStateWithLifecycle()
         
         var showSplashOverlay by remember { mutableStateOf(true) }
 
-        // 🌟 核心加固：监听加载状态，数据好了立刻消失；同时挂载 5 秒强杀兜底，防止卡死
         LaunchedEffect(videoUiState.isLoading) {
             if (!videoUiState.isLoading) {
-                kotlinx.coroutines.delay(50) // 留一点点给系统渲染
+                kotlinx.coroutines.delay(50)
                 showSplashOverlay = false
             }
         }
         LaunchedEffect(Unit) {
-            // 如果 5 秒后还卡在加载中（比如网络极慢），强制取消遮罩，避免用户以为死机
             kotlinx.coroutines.delay(5000)
             if (showSplashOverlay) {
                 showSplashOverlay = false
@@ -419,9 +415,7 @@ open class MainActivity : BaseComposeActivity(), AudioPlay.CallBack {
             snapshotFlow { backStack.toList() }.collect { navRouteTracker.onBackStackChanged(it); MainNavigator.onBackStackChanged() }
         }
 
-        // 🌟 最外层容器
         Box(modifier = Modifier.fillMaxSize()) {
-            // 底层：原有的 App 界面
             SharedTransitionLayout {
                 PrivateAppStartGate {
                     BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
@@ -439,17 +433,44 @@ open class MainActivity : BaseComposeActivity(), AudioPlay.CallBack {
                                 predictivePopTransitionSpec = { (slideIntoContainer(AnimatedContentTransitionScope.SlideDirection.Start, tween(easing = FastOutSlowInEasing), initialOffset = { -it / 4 }) + fadeIn(tween(easing = LinearOutSlowInEasing))) togetherWith (scaleOut(0.8f, tween(easing = FastOutSlowInEasing)) + fadeOut(tween())) },
                                 onBack = { MainNavigator.navigateBack(this@MainActivity, backStack) },
                                 entryProvider = mainEntryProvider(
-                                    backStack, configuration, mangaSettings.showMangaUi, useRail, this@SharedTransitionLayout,
+                                    backStack = backStack,
+                                    configuration = configuration,
+                                    showMangaUi = mangaSettings.showMangaUi,
+                                    useRail = useRail,
+                                    sharedTransitionScope = this@SharedTransitionLayout,
                                     onNavigateToRoute = { route -> if (route is MainRouteAudioPlay) pageShellCapsuleScope.launch { openPlayer(PlaybackCapsuleState(source = PlaybackCapsuleSource.AudioBook, bookUrl = route.bookUrl.orEmpty(), inBookshelf = route.inBookshelf)) } else MainNavigator.navigateToRoute(backStack, route, navRouteTracker) },
                                     onNavigateBack = { MainNavigator.navigateBack(this@MainActivity, backStack, navRouteTracker) },
-                                    readAloudMorph = readAloudMorph.takeIf { useHomeCapsule }, homePlaybackCapsuleEnabled = useHomeCapsule, capsuleAnchorPreview = capsuleAnchorPreview
+                                    readAloudMorph = readAloudMorph.takeIf { useHomeCapsule },
+                                    homePlaybackCapsuleEnabled = useHomeCapsule,
+                                    capsuleAnchorPreview = capsuleAnchorPreview
                                 )
                             )
                         }
                         CompositionLocalProvider(LocalReadAloudMorph provides readAloudMorph.takeIf { !useHomeCapsule && (playerVisible || readAloudMorph.progress.isRunning) }) {
-                            ReadAloudShellHost(pageShellShowCapsule, useHomeCapsule, capsuleAnchorPreview, { x, y -> pageShellCapsuleScope.launch { readAloudSettingsRepository.putCapsulePosition(x, y) } }, { ReadAloudPlayerOverlayBus.request(it) })
+                            ReadAloudShellHost(
+                                showCapsule = pageShellShowCapsule,
+                                hidden = useHomeCapsule,
+                                anchorPreview = capsuleAnchorPreview,
+                                onCapsulePositionChanged = { x, y -> pageShellCapsuleScope.launch { readAloudSettingsRepository.putCapsulePosition(x, y) } },
+                                onOpenPlayer = { ReadAloudPlayerOverlayBus.request(it) }
+                            )
                         }
-                        if (playerSource == PlaybackCapsuleSource.ReadAloud) ReadAloudPlayerMorphHost(pageShellPlayerViewModel, pageShellPlayerState, readAloudMorph, readAloudPlayerVisible, pageShellShowCapsule, configuration.appShell.predictiveBackEnabled, { readAloudPlayerVisible = false }, { bookUrl -> if (isReaderOnTop(backStack)) ReadAloudControlsRequestBus.request() else MainNavigator.navigateToRoute(backStack, MainRouteReadBook(bookUrl = bookUrl.ifBlank { null }), navRouteTracker) }, { bookUrl -> MainNavigator.navigateToRoute(backStack, MainRouteCloudTtsEngines(bookUrl.takeIf(String::isNotBlank)), navRouteTracker) }, { MainNavigator.navigateToRoute(backStack, MainRouteTtsCache, navRouteTracker) }, { bookUrl -> if (bookUrl.isNotBlank()) MainNavigator.navigateToRoute(backStack, MainRouteBookVoiceCasting(bookUrl), navRouteTracker) }, { page -> MainNavigator.navigateToRoute(backStack, page.toMainRoute(), navRouteTracker) })
+                        if (playerSource == PlaybackCapsuleSource.ReadAloud) {
+                            ReadAloudPlayerMorphHost(
+                                playerViewModel = pageShellPlayerViewModel,
+                                playerState = pageShellPlayerState,
+                                morph = readAloudMorph,
+                                visible = readAloudPlayerVisible,
+                                awaitCapsuleAnchor = pageShellShowCapsule,
+                                predictiveBackEnabled = configuration.appShell.predictiveBackEnabled,
+                                onDismiss = { readAloudPlayerVisible = false },
+                                onSwitchToClassic = { bookUrl -> if (isReaderOnTop(backStack)) ReadAloudControlsRequestBus.request() else MainNavigator.navigateToRoute(backStack, MainRouteReadBook(bookUrl = bookUrl.ifBlank { null }), navRouteTracker) },
+                                onOpenTtsEnginesAndVoices = { bookUrl -> MainNavigator.navigateToRoute(backStack, MainRouteCloudTtsEngines(bookUrl.takeIf(String::isNotBlank)), navRouteTracker) },
+                                onOpenTtsCache = { MainNavigator.navigateToRoute(backStack, MainRouteTtsCache, navRouteTracker) },
+                                onOpenBookVoiceCasting = { bookUrl -> if (bookUrl.isNotBlank()) MainNavigator.navigateToRoute(backStack, MainRouteBookVoiceCasting(bookUrl), navRouteTracker) },
+                                onOpenReadAloudSubPage = { page -> MainNavigator.navigateToRoute(backStack, page.toMainRoute(), navRouteTracker) }
+                            )
+                        }
                         if (playerSource == PlaybackCapsuleSource.AudioBook && (audioPlayerVisible || morphPresent)) {
                             key(audioPlayerBookUrl, audioPlayerInBookshelf) { AudioPlayerMorphOverlay(audioPlayerBookUrl, audioPlayerInBookshelf, readAloudMorph, audioPlayerVisible, pageShellShowCapsule, configuration.appShell.predictiveBackEnabled, { audioPlayerVisible = false }) }
                         }
@@ -459,7 +480,6 @@ open class MainActivity : BaseComposeActivity(), AudioPlay.CallBack {
             }
             TextSheetHost()
             
-            // 🌟 顶层：启动页遮罩
             AnimatedVisibility(
                 visible = showSplashOverlay,
                 enter = fadeIn(animationSpec = tween(0)),
@@ -506,7 +526,11 @@ open class MainActivity : BaseComposeActivity(), AudioPlay.CallBack {
         if (otherSettingsGateway.currentSettings.autoRefresh) outState.putBoolean("isAutoRefreshedBook", true)
         val readRoute = navRouteTracker.backStack.value.lastOrNull() as? MainRouteReadBook ?: activeReadBookRoute
         if (readRoute != null) {
-            outState.putBoolean(KEY_RESTORE_READ_ROUTE, true); outState.putString(KEY_RESTORE_READ_BOOK_URL, readRoute.bookUrl); outState.putBoolean(KEY_RESTORE_READ_ALOUD, readRoute.readAloud); outState.putBoolean(KEY_RESTORE_READ_IN_BOOKSHELF, readRoute.inBookshelf); outState.putBoolean(KEY_RESTORE_READ_CHAPTER_CHANGED, readRoute.chapterChanged)
+            outState.putBoolean(KEY_RESTORE_READ_ROUTE, true)
+            outState.putString(KEY_RESTORE_READ_BOOK_URL, readRoute.bookUrl)
+            outState.putBoolean(KEY_RESTORE_READ_ALOUD, readRoute.readAloud)
+            outState.putBoolean(KEY_RESTORE_READ_IN_BOOKSHELF, readRoute.inBookshelf)
+            outState.putBoolean(KEY_RESTORE_READ_CHAPTER_CHANGED, readRoute.chapterChanged)
         }
     }
     private fun Bundle.restoreReadBookRoute(): MainRouteReadBook? {
@@ -543,34 +567,45 @@ open class MainActivity : BaseComposeActivity(), AudioPlay.CallBack {
     override fun upLyricP(position: Int) {}
 }
 
-// 🌟 方案A 的 Compose 组件：纯图标 + 呼吸动效 + 三点跳动
 @Composable
 fun SplashOverlay() {
     val infiniteTransition = rememberInfiniteTransition(label = "splash_anim")
     
     val scale by infiniteTransition.animateFloat(
         initialValue = 1f, targetValue = 1.06f,
-        animationSpec = infiniteRepeatable(tween(1500, easing = FastOutSlowInEasing), RepeatMode.Reverse),
+        animationSpec = infiniteRepeatable(
+            animation = tween(durationMillis = 1500, easing = FastOutSlowInEasing),
+            repeatMode = RepeatMode.Reverse
+        ),
         label = "icon_scale"
     )
+    
     val dotAlpha1 by infiniteTransition.animateFloat(
         initialValue = 0.2f, targetValue = 1f,
-        animationSpec = infiniteRepeatable(tween(600), RepeatMode.Reverse), label = "dot1"
+        animationSpec = infiniteRepeatable(
+            animation = tween(durationMillis = 600),
+            repeatMode = RepeatMode.Reverse
+        ), 
+        label = "dot1"
     )
+    
     val dotAlpha2 by infiniteTransition.animateFloat(
         initialValue = 1f, targetValue = 0.2f,
-        animationSpec = infiniteRepeatable(tween(600), RepeatMode.Reverse), label = "dot2"
+        animationSpec = infiniteRepeatable(
+            animation = tween(durationMillis = 600),
+            repeatMode = RepeatMode.Reverse
+        ), 
+        label = "dot2"
     )
 
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(Color(0xFFF7F8FA)) // 与 App 背景完美融合
-            .pointerInput(Unit) { detectTapGestures { } }, // 防误触
+            .background(Color(0xFFF7F8FA))
+            .pointerInput(Unit) { detectTapGestures { } },
         contentAlignment = Alignment.Center
     ) {
         Column(horizontalAlignment = Alignment.CenterHorizontally) {
-            // 🌟 直接加载图标，系统会自动处理自适应图标（不会出现直角和黑边）
             Image(
                 painter = painterResource(id = R.mipmap.launcher4),
                 contentDescription = null,
