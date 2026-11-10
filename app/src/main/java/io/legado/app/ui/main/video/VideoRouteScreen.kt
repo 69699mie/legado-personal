@@ -80,6 +80,7 @@ import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
@@ -104,6 +105,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.style.TextOverflow
@@ -240,7 +242,36 @@ fun VideoLibraryScreen(modifier: Modifier = Modifier, viewModel: VideoScraperVie
                         Row(modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).background(Color.White).clickable(enabled = file.isFolder) { if (file.isFolder) viewModel.fetchQuarkFiles(file.fid, folderName = file.name) }.padding(horizontal = 12.dp, vertical = 14.dp), verticalAlignment = Alignment.CenterVertically) {
                             Icon(if (file.isFolder) Icons.Default.Folder else Icons.Default.Movie, null, tint = if (file.isFolder) Color(0xFFFFB300) else Color.Gray, modifier = Modifier.size(28.dp))
                             Column(modifier = Modifier.padding(start = 16.dp).weight(1f)) { AppText(text = file.name, maxLines = 1, overflow = TextOverflow.Ellipsis, fontWeight = FontWeight.Medium) }
-                            if (file.isFolder) { IconButton(onClick = { val fullPath = (viewModel.browsePath + file.name).joinToString("/"); viewModel.toggleLibrary(file.fid, fullPath) }) { Icon(if (uiState.selectedLibraryFids.contains(file.fid)) Icons.Default.Star else Icons.Outlined.StarBorder, "加入影视库", tint = if (uiState.selectedLibraryFids.contains(file.fid)) Color(0xFFFFB300) else Color.LightGray) } }
+                            
+                            if (file.isFolder) { 
+                                // 🌟 方框打勾 / 斜杠 UI 逻辑
+                                val isExplicitlySelected = uiState.selectedLibraryFids.contains(file.fid)
+                                val isParentSelected = uiState.selectedLibraryFids.contains(uiState.currentFid)
+                                val isExcluded = uiState.excludedLibraryFids.contains(file.fid)
+
+                                Box(
+                                    modifier = Modifier
+                                        .size(24.dp)
+                                        .clip(RoundedCornerShape(4.dp))
+                                        .background(if (isExplicitlySelected || (isParentSelected && !isExcluded)) Color(0xFF333333) else Color.Transparent)
+                                        .border(
+                                            width = 1.dp, 
+                                            color = if (isExcluded || isExplicitlySelected || isParentSelected) Color(0xFF666666) else Color.LightGray, 
+                                            shape = RoundedCornerShape(4.dp)
+                                        )
+                                        .clickable { 
+                                            val fullPath = (viewModel.browsePath + file.name).joinToString("/")
+                                            viewModel.toggleLibrary(file.fid, fullPath) 
+                                        },
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    if (isExcluded) {
+                                        Icon(Icons.Default.Block, contentDescription = "已单独排除", tint = Color(0xFF666666), modifier = Modifier.size(16.dp))
+                                    } else if (isExplicitlySelected || isParentSelected) {
+                                        Icon(Icons.Default.Check, contentDescription = "已包含", tint = Color.White, modifier = Modifier.size(16.dp))
+                                    }
+                                }
+                            }
                         }
                     }
                 }
@@ -328,7 +359,6 @@ fun VideoScraperScreen(isActive: Boolean = true, modifier: Modifier = Modifier, 
             }
 
             if (latestSeries != null) {
-                // 🌟 修复：只要数据不完整（没有视频列表 或 没有海报图），且未手动编辑过，就显示骨架屏
                 val showLoading = !latestSeries.isManuallyEdited && (latestSeries.videos.isEmpty() || latestSeries.posterUrl == null)
                 
                 AnimatedContent(targetState = showLoading, transitionSpec = { fadeIn(animationSpec = tween(400)) togetherWith fadeOut(animationSpec = tween(400)) }, label = "detail_transition") { isLoading ->
@@ -413,16 +443,15 @@ fun VideoScraperScreen(isActive: Boolean = true, modifier: Modifier = Modifier, 
                     IconButton(onClick = { showSettingsDialog = true }) { Icon(Icons.Default.Settings, contentDescription = "设置") }
                     IconButton(onClick = { viewModel.loadLibraryVideos() }, enabled = !uiState.isLoading) { Icon(Icons.Default.Refresh, contentDescription = "刷新", tint = if (uiState.isLoading) Color.Gray else Color.Black) }
                 }
-if (uiState.errorMsg != null && !uiState.isLoading) { Box(modifier = Modifier.fillMaxWidth().background(Color(0xFFFFCDD2)).padding(8.dp), contentAlignment = Alignment.Center) { AppText(uiState.errorMsg!!, color = Color.Red, style = MaterialTheme.typography.bodySmall) } }
+                if (uiState.errorMsg != null && !uiState.isLoading) { Box(modifier = Modifier.fillMaxWidth().background(Color(0xFFFFCDD2)).padding(8.dp), contentAlignment = Alignment.Center) { AppText(uiState.errorMsg!!, color = Color.Red, style = MaterialTheme.typography.bodySmall) } }
 
-// 🌟 核心替换点：如果正在初始化读取内存缓存，保持底色，不显示转圈，也不显示“没找到”
-if (uiState.isLoading && uiState.seriesList.isEmpty()) { 
-    Box(modifier = Modifier.fillMaxSize().background(AppBackgroundColor)) 
-} 
-else {
-    if (uiState.selectedLibraryFids.isEmpty()) { Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { AppText("请先在资源库中勾选媒体文件夹") } } 
-    else if (uiState.seriesList.isEmpty() && !uiState.isLoading) { Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { AppText("没找到任何视频，点击右上角刷新") } } 
-    else {
+                if (uiState.isLoading && uiState.seriesList.isEmpty()) { 
+                    Box(modifier = Modifier.fillMaxSize().background(AppBackgroundColor)) 
+                } 
+                else {
+                    if (uiState.selectedLibraryFids.isEmpty()) { Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { AppText("请先在资源库中勾选媒体文件夹") } } 
+                    else if (uiState.seriesList.isEmpty() && !uiState.isLoading) { Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { AppText("没找到任何视频，点击右上角刷新") } } 
+                    else {
                         val grouped = uiState.seriesList.groupBy { it.category }
                         val savedOrder = uiState.categoryOrder.split(",").filter { it.isNotBlank() }
                         val allCategories = grouped.keys.toMutableList()
@@ -615,6 +644,10 @@ private fun ManualScrapeDialog(series: MediaSeries, viewModel: VideoScraperViewM
     
     var isLoadingImages by remember { mutableStateOf(false) }
 
+    // 🌟 新增：季数选择器状态
+    var selectedSeason by remember { mutableStateOf<Int?>(null) }
+    var expandedSeasonDropdown by remember { mutableStateOf(false) }
+
     Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
         Surface(shape = RoundedCornerShape(24.dp), color = MaterialTheme.colorScheme.surface, modifier = Modifier.fillMaxWidth(0.92f).heightIn(max = 750.dp)) {
             Column(modifier = Modifier.fillMaxSize()) {
@@ -651,6 +684,9 @@ private fun ManualScrapeDialog(series: MediaSeries, viewModel: VideoScraperViewM
                                         Card(
                                             modifier = Modifier.fillMaxWidth().clickable {
                                                 selectedResult = result
+                                                // 🌟 默认选中第一季
+                                                selectedSeason = result.seasons.firstOrNull() ?: 1
+                                                
                                                 isLoadingImages = true
                                                 viewModel.fetchTmdbImages(result.id, result.mediaType) { posters, backdrops ->
                                                     posterList = posters
@@ -668,6 +704,34 @@ private fun ManualScrapeDialog(series: MediaSeries, viewModel: VideoScraperViewM
                                                 Column(modifier = Modifier.padding(start = 16.dp).weight(1f)) {
                                                     AppText(text = result.title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
                                                     AppText(text = "${result.year} | ${if (result.mediaType == "movie") "电影" else "剧集"}", style = MaterialTheme.typography.bodyMedium, color = Color.Gray)
+                                                    
+                                                    // 🌟 新增：在搜索结果列表直接选择季数
+                                                    if (result.seasons.isNotEmpty()) {
+                                                        Spacer(modifier = Modifier.height(8.dp))
+                                                        Box {
+                                                            OutlinedButton(
+                                                                onClick = { expandedSeasonDropdown = true },
+                                                                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp),
+                                                                modifier = Modifier.height(30.dp)
+                                                            ) {
+                                                                AppText("选择第 ${selectedSeason ?: result.seasons.first()} 季", fontSize = 12.sp, color = Color(0xFF333333))
+                                                            }
+                                                            DropdownMenu(
+                                                                expanded = expandedSeasonDropdown,
+                                                                onDismissRequest = { expandedSeasonDropdown = false }
+                                                            ) {
+                                                                result.seasons.forEach { season ->
+                                                                    DropdownMenuItem(
+                                                                        text = { AppText("第 $season 季") },
+                                                                        onClick = { 
+                                                                            selectedSeason = season
+                                                                            expandedSeasonDropdown = false 
+                                                                        }
+                                                                    )
+                                                                }
+                                                            }
+                                                        }
+                                                    }
                                                 }
                                                 Icon(Icons.Default.KeyboardArrowRight, null, tint = Color.Gray)
                                             }
@@ -755,7 +819,18 @@ private fun ManualScrapeDialog(series: MediaSeries, viewModel: VideoScraperViewM
                                 Row(modifier = Modifier.fillMaxWidth().padding(vertical = 16.dp), horizontalArrangement = Arrangement.SpaceBetween) {
                                     OutlinedButton(onClick = { currentStep = 0 }) { AppText("上一步") }
                                     Button(
-                                        onClick = { viewModel.applyManualScrape(series.id, result, categoryInput, result.title, customPoster = selectedPoster, customBackdrop = selectedBackdrop); onDismiss() },
+                                        onClick = { 
+                                            viewModel.applyManualScrape(
+                                                series.id, 
+                                                result, 
+                                                categoryInput, 
+                                                result.title, 
+                                                customPoster = selectedPoster, 
+                                                customBackdrop = selectedBackdrop,
+                                                targetSeason = selectedSeason // 🌟 传入刚才选择的季数
+                                            )
+                                            onDismiss() 
+                                        },
                                         colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF333333))
                                     ) { AppText("确认保存并更新剧集", color = Color.White) }
                                 }
