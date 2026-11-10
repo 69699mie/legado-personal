@@ -239,33 +239,38 @@ fun VideoLibraryScreen(modifier: Modifier = Modifier, viewModel: VideoScraperVie
                     items(uiState.fileList) { file ->
                         Row(modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).background(Color.White).clickable(enabled = file.isFolder) { if (file.isFolder) viewModel.fetchQuarkFiles(file.fid, folderName = file.name) }.padding(horizontal = 12.dp, vertical = 14.dp), verticalAlignment = Alignment.CenterVertically) {
                             Icon(if (file.isFolder) Icons.Default.Folder else Icons.Default.Movie, null, tint = if (file.isFolder) Color(0xFFFFB300) else Color.Gray, modifier = Modifier.size(28.dp))
-                            Column(modifier = Modifier.padding(start = 16.dp).weight(1f)) { AppText(text = file.name, maxLines = 1, overflow = TextOverflow.Ellipsis, fontWeight = FontWeight.Medium) }
+                            Column(modifier = Modifier.padding(start = 16.dp).weight(1f)) { 
+                                AppText(text = file.name, maxLines = 1, overflow = TextOverflow.Ellipsis, fontWeight = FontWeight.Medium) 
+                            }
                             
                             if (file.isFolder) { 
                                 val isExplicitlySelected = uiState.selectedLibraryFids.contains(file.fid)
                                 val isParentSelected = uiState.selectedLibraryFids.contains(uiState.currentFid)
                                 val isExcluded = uiState.excludedLibraryFids.contains(file.fid)
 
-                                Box(
-                                    modifier = Modifier
-                                        .size(24.dp)
-                                        .clip(RoundedCornerShape(4.dp))
-                                        .background(if (isExplicitlySelected || (isParentSelected && !isExcluded)) Color(0xFF333333) else Color.Transparent)
-                                        .border(
-                                            width = 1.dp, 
-                                            color = if (isExcluded || isExplicitlySelected || isParentSelected) Color(0xFF666666) else Color.LightGray, 
-                                            shape = RoundedCornerShape(4.dp)
-                                        )
-                                        .clickable { 
-                                            val fullPath = (viewModel.browsePath + file.name).joinToString("/")
-                                            viewModel.toggleLibrary(file.fid, fullPath) 
-                                        },
-                                    contentAlignment = Alignment.Center
+                                IconButton(
+                                    onClick = { 
+                                        val fullPath = (viewModel.browsePath + file.name).joinToString("/")
+                                        viewModel.toggleLibrary(file.fid, fullPath) 
+                                    }
                                 ) {
-                                    if (isExcluded) {
-                                        Icon(Icons.Default.Block, contentDescription = "已单独排除", tint = Color(0xFF666666), modifier = Modifier.size(16.dp))
-                                    } else if (isExplicitlySelected || isParentSelected) {
-                                        Icon(Icons.Default.Check, contentDescription = "已包含", tint = Color.White, modifier = Modifier.size(16.dp))
+                                    Box(
+                                        modifier = Modifier
+                                            .size(24.dp)
+                                            .clip(RoundedCornerShape(4.dp))
+                                            .background(if (isExplicitlySelected || (isParentSelected && !isExcluded)) Color(0xFF333333) else Color.Transparent)
+                                            .border(
+                                                width = 1.dp, 
+                                                color = if (isExcluded || isExplicitlySelected || isParentSelected) Color(0xFF666666) else Color.LightGray, 
+                                                shape = RoundedCornerShape(4.dp)
+                                            ),
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        if (isExcluded) {
+                                            Icon(Icons.Default.Block, contentDescription = "已单独排除", tint = Color(0xFF666666), modifier = Modifier.size(16.dp))
+                                        } else if (isExplicitlySelected || isParentSelected) {
+                                            Icon(Icons.Default.Check, contentDescription = "已包含", tint = Color.White, modifier = Modifier.size(16.dp))
+                                        }
                                     }
                                 }
                             }
@@ -935,11 +940,9 @@ fun InternalVideoPlayer(url: String, title: String, cookie: String, series: Medi
     var currentSystemTime by remember { mutableStateOf("") }
     var hasRequestedLandscape = remember { false }
 
-    // 🌟 修复重叠：分离长按状态和普通 Toast 状态
     var isLongPressing by remember { mutableStateOf(false) }
     var playerToastMessage by remember { mutableStateOf<String?>(null) }
     
-    // 优先级计算中央提示文字
     val currentCenterMessage = when {
         isLongPressing -> "2.0x快进中"
         playerToastMessage != null -> playerToastMessage
@@ -1243,7 +1246,6 @@ fun InternalVideoPlayer(url: String, title: String, cookie: String, series: Medi
 
         if (activity?.isInPictureInPictureMode == true || isInPip.value) { Box(modifier = Modifier.fillMaxSize()) {}; return@Box }
 
-        // 🌟 统一互斥提示层
         AnimatedVisibility(
             visible = currentCenterMessage != null,
             enter = fadeIn(animationSpec = tween(200)),
