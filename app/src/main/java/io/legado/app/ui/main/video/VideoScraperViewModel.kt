@@ -80,7 +80,8 @@ data class TmdbSearchResult(
     val overview: String,
     val rating: String?,
     val mediaType: String = "tv",
-    val genreIds: List<Int> = emptyList()
+    val genreIds: List<Int> = emptyList(),
+    val seasons: List<Int> = emptyList() // 🌟 新增：可用季数列表
 )
 
 @Immutable
@@ -123,6 +124,7 @@ class VideoScraperViewModel(
 
     private var hasLoadedLibrary = false
     private val libraryNames = mutableMapOf<String, String>()
+    private val excludedFids = mutableSetOf<String>() // 🌟 新增：内存中的排除集合
     
     private var lastQuarkError: String? = null
     private val scrapedCache = ConcurrentHashMap<String, ScrapeCacheItem>()
@@ -140,12 +142,18 @@ class VideoScraperViewModel(
             }
         }
         
+        // 🌟 读取排除名单
+        videoSettingsRepository.excludedLibraryFids.split(",").filter { it.isNotBlank() }.forEach {
+            excludedFids.add(it)
+        }
+        
         _uiState.update {
             it.copy(
                 cookie = videoSettingsRepository.quarkCookie,
                 tmdbApiKey = videoSettingsRepository.tmdbApiKey,
                 tmdbBaseUrl = videoSettingsRepository.tmdbBaseUrl.ifBlank { "https://tmdbimg.quarkalist.xyz" },
                 selectedLibraryFids = fids,
+                excludedLibraryFids = excludedFids.toSet(), // 🌟 赋值给 State
                 isLibraryMode = true,
                 downloadThreads = videoSettingsRepository.proxyThreads,
                 bannerLogic = videoSettingsRepository.bannerLogic,
@@ -154,7 +162,6 @@ class VideoScraperViewModel(
         }
 
         viewModelScope.launch(Dispatchers.IO) {
-            // 🌟 纯 Room 驱动：直接从数据库捞出历史缓存
             if (scrapedCache.isEmpty()) {
                 try {
                     val entities = videoScrapedDao.getAll()
@@ -163,7 +170,6 @@ class VideoScraperViewModel(
                             val item = entity.toScrapeCacheItem()
                             scrapedCache[entity.id] = item
                         }
-                        // 组装 UI 数据并瞬间放行，撤销启动页遮罩
                         val cachedSeries = scrapedCache.map { (id, item) -> item.toMediaSeries(id) }
                             .sortedWith(compareBy(pinyinCollator) { it.title })
                         _uiState.update { it.copy(seriesList = cachedSeries, isLoading = false) }
@@ -418,18 +424,31 @@ class VideoScraperViewModel(
         loadLibraryVideos()
     }
 
+    // 🌟 进阶优化：修改 toggleLibrary 处理父级与子级的逻辑
     fun toggleLibrary(fid: String, name: String) {
         val current = _uiState.value.selectedLibraryFids.toMutableSet()
+        val currentParentFid = _uiState.value.currentFid
+
         if (current.contains(fid)) {
             current.remove(fid)
             libraryNames.remove(fid)
+            excludedFids.remove(fid)
+        } else if (excludedFids.contains(fid)) {
+            excludedFids.remove(fid)
         } else {
-            current.add(fid)
-            libraryNames[fid] = name
+            if (current.contains(currentParentFid)) {
+                excludedFids.add(fid)
+            } else {
+                current.add(fid)
+                libraryNames[fid] = name
+            }
         }
+
         val saveString = current.joinToString(",") { f -> "$f:${libraryNames[f] ?: ""}" }
         videoSettingsRepository.libraryFids = saveString
-        _uiState.update { it.copy(selectedLibraryFids = current) }
+        videoSettingsRepository.excludedLibraryFids = excludedFids.joinToString(",")
+
+        _uiState.update { it.copy(selectedLibraryFids = current, excludedLibraryFids = excludedFids.toSet()) }
         hasLoadedLibrary = false
         if (_uiState.value.isLibraryMode) loadLibraryVideos()
     }
@@ -443,6 +462,7 @@ class VideoScraperViewModel(
         _uiState.update { it.copy(currentSeries = series) }
     }
 
+    // 🌟 进阶优化：允许已编辑剧集因新集数触发增量，保护元数据
     fun loadLibraryVideos() {
         val cookie = _uiState.value.cookie
         val apiKey = _uiState.value.tmdbApiKey
@@ -500,8 +520,8 @@ class VideoScraperViewModel(
                     val isEmptyPoster = cached?.posterUrl.isNullOrBlank()
                     val shouldRetryEmptyPoster = isEmptyPoster && emptyPosterRetryCount < maxEmptyPosterRetry
                     
-                    val isManuallyEdited = cached?.isManuallyEdited == true
-                    val needScrape = !isManuallyEdited && (isSignatureChanged || shouldRetryEmptyPoster)
+                    // 🌟 进阶优化：移除对 isManuallyEdited 的阻断，只要有新集数/缺图就触发刮削
+                    val needScrape = isSignatureChanged || shouldRetryEmptyPoster
 
                     val resultSeries = if (needScrape) {
                         needScrapeList.add(series)
@@ -671,7 +691,10 @@ class VideoScraperViewModel(
                                         val isFolder = item.optBoolean("dir", false)
                                         val size = item.optLong("size", 0L)
                                         if (isFolder) {
-                                            fetchVideosRecursively(cookie, fileFid, currentPath + fileName, resultList)
+                                            // 🌟 进阶优化：跳过被排除的文件夹
+                                            if (!excludedFids.contains(fileFid)) {
+                                                fetchVideosRecursively(cookie, fileFid, currentPath + fileName, resultList)
+                                            }
                                         } else {
                                             val parsed = VideoFileNameParser.parse(fileName, currentPath.lastOrNull())
                                             if (parsed.isVideo) {
@@ -702,6 +725,7 @@ class VideoScraperViewModel(
         }
     }
 
+    // 🌟 进阶优化：刮削结果合并时，保护手动修改的元数据
     private fun scrapeSeriesPosters(needScrapeList: List<MediaSeries>, apiKey: String, baseUrl: String) {
         viewModelScope.launch(Dispatchers.IO) {
             val scrapedList = needScrapeList.map { series ->
@@ -752,7 +776,7 @@ class VideoScraperViewModel(
                                     seasonDetails[season] = detail.first
                                     sEpTitles.putAll(detail.second)
                                     sEpStills.putAll(detail.third)
-                                    if (season == 1) {
+                                    if (season == targetSeasons.first()) {
                                         detail.second.forEach { (k, v) ->
                                             val epNum = k.substringAfter("_").toIntOrNull()
                                             if (epNum != null) epTitles[epNum] = v
@@ -766,15 +790,21 @@ class VideoScraperViewModel(
                             }
                         }
 
+                        val isEdited = oldCached?.isManuallyEdited ?: false
+
+                        // 🌟 进阶优化：手动编辑过则丢弃新元数据，保护用户修改
                         val newSeries = series.copy(
-                            title = finalTitle, category = finalCategory, posterUrl = match.posterUrl, backdropUrl = match.backdropUrl,
-                            overview = match.overview, rating = match.rating, 
+                            title = if (isEdited) oldCached!!.title else finalTitle, 
+                            category = if (isEdited) oldCached!!.category else finalCategory, 
+                            posterUrl = if (isEdited) oldCached!!.posterUrl else match.posterUrl, 
+                            backdropUrl = if (isEdited) oldCached!!.backdropUrl else match.backdropUrl,
+                            overview = if (isEdited) oldCached!!.overview else match.overview, 
+                            rating = if (isEdited) oldCached!!.rating else match.rating, 
                             seasonDetails = seasonDetails, episodeTitles = epTitles, episodeStills = epStills,
                             seasonEpisodeTitles = sEpTitles, seasonEpisodeStills = sEpStills
                         )
 
                         val newSignature = newSeries.videos.map { it.fid }.sorted().joinToString("|")
-                        val isEdited = oldCached?.isManuallyEdited ?: false
 
                         scrapedCache[newSeries.id] = ScrapeCacheItem(
                             title = newSeries.title, category = newSeries.category, posterUrl = newSeries.posterUrl,
@@ -888,6 +918,16 @@ class VideoScraperViewModel(
                             for (j in 0 until genreIdsArray.length()) genreIdsList.add(genreIdsArray.getInt(j))
                         }
                         
+                        // 🌟 新增：解析季数
+                        val seasonsList = mutableListOf<Int>()
+                        val seasonsArray = bestItem.optJSONArray("seasons")
+                        if (seasonsArray != null) {
+                            for (k in 0 until seasonsArray.length()) {
+                                val seasonNum = seasonsArray.getJSONObject(k).optInt("season_number", -1)
+                                if (seasonNum > 0) seasonsList.add(seasonNum)
+                            }
+                        }
+                        
                         val posterUrl = if (posterPath.isNotBlank() && posterPath != "null") {
                             if (isProxy) "$baseUrl/img/t/p/w500$posterPath" else "https://image.tmdb.org/t/p/w500$posterPath"
                         } else null
@@ -903,7 +943,8 @@ class VideoScraperViewModel(
                             posterUrl = posterUrl, 
                             backdropUrl = backdropUrl, 
                             overview = bestItem.optString("overview"), rating = ratingStr,
-                            mediaType = mediaType, genreIds = genreIdsList
+                            mediaType = mediaType, genreIds = genreIdsList,
+                            seasons = seasonsList
                         )
                     }
                     return null
@@ -983,6 +1024,17 @@ class VideoScraperViewModel(
                                 val posterPath = item.optString("poster_path")
                                 val backdropPath = item.optString("backdrop_path")
                                 val voteAverage = item.optDouble("vote_average", 0.0)
+                                val mediaType = item.optString("media_type", "tv")
+                                
+                                // 🌟 新增：解析季数
+                                val seasonsList = mutableListOf<Int>()
+                                val seasonsArray = item.optJSONArray("seasons")
+                                if (seasonsArray != null) {
+                                    for (k in 0 until seasonsArray.length()) {
+                                        val seasonNum = seasonsArray.getJSONObject(k).optInt("season_number", -1)
+                                        if (seasonNum > 0) seasonsList.add(seasonNum)
+                                    }
+                                }
                                 
                                 val posterUrl = if (posterPath.isNotBlank() && posterPath != "null") {
                                     if (isProxy) "$baseUrl/img/t/p/w300$posterPath" else "https://image.tmdb.org/t/p/w300$posterPath"
@@ -999,7 +1051,9 @@ class VideoScraperViewModel(
                                         posterUrl = posterUrl, 
                                         backdropUrl = backdropUrl,
                                         overview = item.optString("overview"),
-                                        rating = if (voteAverage > 0) String.format("%.1f", voteAverage) else null
+                                        rating = if (voteAverage > 0) String.format("%.1f", voteAverage) else null,
+                                        mediaType = mediaType,
+                                        seasons = seasonsList // 🌟 赋值
                                     )
                                 )
                             }
@@ -1058,12 +1112,27 @@ class VideoScraperViewModel(
         }
     }
 
-    fun applyManualScrape(seriesId: String, result: TmdbSearchResult?, newCategory: String, newTitle: String, customPoster: String? = null, customBackdrop: String? = null) {
+    fun applyManualScrape(
+        seriesId: String, 
+        result: TmdbSearchResult?, 
+        newCategory: String, 
+        newTitle: String, 
+        customPoster: String? = null, 
+        customBackdrop: String? = null,
+        targetSeason: Int? = null // 🌟 新增：手动指定的季数
+    ) {
         val apiKey = _uiState.value.tmdbApiKey
         val baseUrl = _uiState.value.tmdbBaseUrl
 
         val currentList = _uiState.value.seriesList.map {
             if (it.id == seriesId) {
+                // 🌟 核心逻辑：如果指定了季数，强制覆盖剧集内的季数标识
+                val updatedVideos = if (targetSeason != null) {
+                    it.videos.map { video ->
+                        video.copy(parsedInfo = (video.parsedInfo ?: ParsedVideoName(video.name)).copy(season = targetSeason))
+                    }
+                } else it.videos
+
                 it.copy(
                     title = result?.title ?: newTitle, 
                     posterUrl = customPoster ?: result?.posterUrl ?: it.posterUrl,
@@ -1071,7 +1140,8 @@ class VideoScraperViewModel(
                     overview = result?.overview ?: it.overview, 
                     rating = result?.rating ?: it.rating, 
                     category = newCategory,
-                    isManuallyEdited = true
+                    isManuallyEdited = true,
+                    videos = updatedVideos
                 )
             } else it
         }.sortedWith(compareBy(pinyinCollator) { it.title })
@@ -1093,11 +1163,9 @@ class VideoScraperViewModel(
                 val seasonEpisodeStills = mutableMapOf<String, String>()
                 val episodeStills = mutableMapOf<Int, String>()
 
-                val allSeasons = updatedSeries.videos
-                    .mapNotNull { it.parsedInfo?.season }
-                    .distinct()
-                    .sorted()
-                val targetSeasons = if (allSeasons.isEmpty()) listOf(1) else allSeasons
+                // 🌟 核心逻辑：如果有指定季数，就只拉这一季；否则按默认逻辑拉所有解析季
+                val allSeasons = updatedSeries.videos.mapNotNull { it.parsedInfo?.season }.distinct().sorted()
+                val targetSeasons = if (targetSeason != null) listOf(targetSeason) else if (allSeasons.isEmpty()) listOf(1) else allSeasons
 
                 for (season in targetSeasons) {
                     val detail = tmdbSemaphore.withPermit {
@@ -1535,6 +1603,7 @@ data class VideoUiState(
     val fileList: List<QuarkFile> = emptyList(),
     val isLibraryMode: Boolean = true,
     val selectedLibraryFids: Set<String> = emptySet(),
+    val excludedLibraryFids: Set<String> = emptySet(), // 🌟 新增：UI层使用的排除集合
     val seriesList: List<MediaSeries> = emptyList(),
     val currentSeries: MediaSeries? = null,
     val playUrl: String? = null,
