@@ -29,7 +29,7 @@
 # 保留Annotation不混淆
 -keepattributes *Annotation*,InnerClasses
 
-# 避免混淆泛型（这对 Room 和 Koin 极其重要）
+# 避免混淆泛型
 -keepattributes Signature
 
 # 指定混淆是采用的算法，后面的参数是一个过滤器
@@ -172,25 +172,14 @@
 -keep class io.legado.app.ui.main.MainActivity { *; }
 
 # ==========================================
-# 🌟 终极暴力修复：针对 Koin、Room、Compose 的绝对保护
-# 不做任何精简，彻底杜绝 R8 导致的 ClassCastException
-
-# 1. 暴力保留 VideoScraperViewModel 整个类及其所有成员
-# （防止构造函数被重命名，防止依赖注入失败）
--keep class io.legado.app.ui.main.video.VideoScraperViewModel { *; }
-
-# 2. 暴力保留 VideoScrapedDao 接口及其实现类
--keep interface io.legado.app.data.dao.VideoScrapedDao { *; }
+# 🌟 终极杀招：全量保护 Room 数据库及其实体，防止 R8 混淆引发的 Koin 崩溃！
+-keep class io.legado.app.data.entities.** { *; }
+-keep class io.legado.app.data.dao.** { *; }
+-keep class io.legado.app.data.AppDatabase { *; }
+-keep class * extends androidx.room.RoomDatabase { *; }
+# 强制保留 Room 为 DAO 自动生成的实现类
 -keep class * implements io.legado.app.data.dao.VideoScrapedDao { *; }
 
-# 3. 保留 VideoSettingsRepository
--keep class io.legado.app.data.repository.VideoSettingsRepository { *; }
-
-# 4. 暴力保留 Room 数据库及相关实体（防止表名、字段、DAO实现被破坏）
--keep class * extends androidx.room.RoomDatabase { *; }
--keep @androidx.room.Entity class * { *; }
--keep @androidx.room.Dao interface * { *; }
-
-# 5. 保留 Compose 动画类（防止 R8 类合并导致动画失效）
+# 保留 Compose 动画类，防止类合并导致动画直接跳变
 -keep,allowshrinking,allowobfuscation class androidx.compose.animation.** { *; }
 -keep @androidx.compose.runtime.Composable class * { *; }
