@@ -26,7 +26,7 @@ object VideoCacheManager {
             try {
                 // 🌟 加入 3 秒超时兜底机制，防卡死
                 val result = withTimeoutOrNull(3000L) {
-                    val dao = AppDatabase::class.java.let { appDb.videoScrapedDao }
+                    val dao = appDb.videoScrapedDao
                     val entities = dao.getAll()
                     val list = mutableListOf<MediaSeries>()
                     for (entity in entities) {
