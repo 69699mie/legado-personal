@@ -316,14 +316,16 @@ open class MainActivity : BaseComposeActivity(), AudioPlay.CallBack {
         
         var showSplashOverlay by remember { mutableStateOf(true) }
 
-        LaunchedEffect(videoUiState.isLoading) {
-            if (!videoUiState.isLoading) {
-                kotlinx.coroutines.delay(50)
+        // 🌟 只要有了列表数据，或者加载完毕，立刻撤掉遮罩，绝不傻等刮削完成
+        LaunchedEffect(videoUiState.isLoading, videoUiState.seriesList) {
+            if (!videoUiState.isLoading || videoUiState.seriesList.isNotEmpty()) {
+                kotlinx.coroutines.delay(50) // 留一点点给系统渲染
                 showSplashOverlay = false
             }
         }
         LaunchedEffect(Unit) {
-            kotlinx.coroutines.delay(5000)
+            // 极端情况兜底：最多等 1.5 秒，强制放行，防止网络卡死
+            kotlinx.coroutines.delay(1500)
             if (showSplashOverlay) {
                 showSplashOverlay = false
             }
