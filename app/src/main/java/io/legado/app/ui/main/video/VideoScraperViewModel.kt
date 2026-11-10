@@ -98,12 +98,13 @@ data class ScrapeCacheItem(
     val seasonEpisodeStills: Map<String, String> = emptyMap(),
     val groupName: String? = null,
     val isManuallyEdited: Boolean = false,
-    val fileListSignature: String = ""
+    val fileListSignature: String = "",
+    val cachedVideos: List<QuarkFile> = emptyList() // 🌟 新增：全量缓存视频列表
 )
 
 class VideoScraperViewModel(
     private val videoSettingsRepository: VideoSettingsRepository,
-    private val videoScrapedDao: VideoScrapedDao // ➕ 注入 Room DAO
+    private val videoScrapedDao: VideoScrapedDao
 ) : ViewModel() {
 
     private val client = OkHttpClient.Builder()
@@ -152,7 +153,7 @@ class VideoScraperViewModel(
             )
         }
 
-        // 🌟 核心改造：异步读取 Room 并在完成后启动网络加载
+        // 🌟 核心改造：从 Room 极速读取全量数据（含视频列表），瞬间渲染，绝不阻塞
         viewModelScope.launch {
             loadCacheFromRoomOrSp()
             
@@ -174,7 +175,7 @@ class VideoScraperViewModel(
                     seasonEpisodeStills = cached.seasonEpisodeStills,
                     groupName = cached.groupName,
                     isManuallyEdited = cached.isManuallyEdited,
-                    videos = emptyList() 
+                    videos = cached.cachedVideos // 🌟 直接使用缓存的列表
                 )
             }.filter { !it.title.matches(Regex("^\\d+$")) }
              .sortedWith(compareBy(pinyinCollator) { it.title })
@@ -184,11 +185,10 @@ class VideoScraperViewModel(
             }
             
             fetchQuarkFiles("0")
-            if (fids.isNotEmpty()) loadLibraryVideos()
+            if (fids.isNotEmpty()) loadLibraryVideos() // 后台静默拉取
         }
     }
 
-    // ➕ 新增：异步读取缓存，如果 Room 为空则尝试从 SharedPreferences 迁移
     private suspend fun loadCacheFromRoomOrSp() = withContext(Dispatchers.IO) {
         try {
             val roomEntities = videoScrapedDao.getAll()
@@ -198,7 +198,7 @@ class VideoScraperViewModel(
                     scrapedCache[entity.id] = item
                 }
             } else {
-                // 尝试从 SP 迁移旧数据
+                // 旧版数据迁移（旧版没有 cachedVideos，会以空列表启动，后台拉取后补全）
                 val jsonStr = videoSettingsRepository.scrapedCacheData
                 if (jsonStr.isNotBlank()) {
                     val jsonObj = JSONObject(jsonStr)
@@ -249,7 +249,8 @@ class VideoScraperViewModel(
                                 seasonEpisodeStills = sEpStills,
                                 groupName = itemObj.optString("groupName").takeIf { it.isNotBlank() && it != "null" },
                                 isManuallyEdited = itemObj.optBoolean("isManuallyEdited", false),
-                                fileListSignature = itemObj.optString("fileListSignature", "")
+                                fileListSignature = itemObj.optString("fileListSignature", ""),
+                                cachedVideos = emptyList()
                             )
                             scrapedCache[key] = item
                             entitiesToInsert.add(item.toEntity(key))
@@ -259,7 +260,6 @@ class VideoScraperViewModel(
                     if (entitiesToInsert.isNotEmpty()) {
                         videoScrapedDao.replaceAll(entitiesToInsert)
                     }
-                    // 迁移完毕，清空旧的 SP 数据释放空间
                     videoSettingsRepository.scrapedCacheData = ""
                 }
             }
@@ -268,12 +268,19 @@ class VideoScraperViewModel(
         }
     }
 
-    // ➕ 新增：异步保存，每次全量覆盖，保证一致性
     private fun saveScrapedCache() {
+        // 确保把最新的 videos 同步到 scrapedCache 中，再保存
+        val currentList = _uiState.value.seriesList
+        scrapedCache.forEach { (id, item) ->
+            val series = currentList.find { it.id == id }
+            if (series != null && series.videos.isNotEmpty()) {
+                scrapedCache[id] = item.copy(cachedVideos = series.videos)
+            }
+        }
+
         val entities = scrapedCache.map { (id, item) -> item.toEntity(id) }
         viewModelScope.launch(Dispatchers.IO) {
             try {
-                // 使用 DAO 里的 replaceAll 事务方法
                 videoScrapedDao.replaceAll(entities)
             } catch (e: Exception) {
                 e.printStackTrace()
@@ -281,13 +288,13 @@ class VideoScraperViewModel(
         }
     }
 
-    // ➕ 辅助映射方法：Entity -> ScrapeCacheItem
     private fun VideoScrapedEntity.toScrapeCacheItem(): ScrapeCacheItem {
         var epTitles = mapOf<Int, String>()
         var epStills = mapOf<Int, String>()
         var seasonDetails = mapOf<Int, SeasonDetail>()
         var sEpTitles = mapOf<String, String>()
         var sEpStills = mapOf<String, String>()
+        var videos = listOf<QuarkFile>()
 
         try {
             if (extraData.isNotBlank()) {
@@ -326,6 +333,39 @@ class VideoScraperViewModel(
                     obj.keys().forEach { k -> map[k] = obj.getString(k) }
                     sEpStills = map
                 }
+                
+                // 反序列化 videos
+                json.optJSONArray("cachedVideos")?.let { arr ->
+                    val list = mutableListOf<QuarkFile>()
+                    for (i in 0 until arr.length()) {
+                        val obj = arr.getJSONObject(i)
+                        val parsedInfoObj = obj.optJSONObject("parsedInfo")
+                        val parsedInfo = if (parsedInfoObj != null) {
+                            ParsedVideoName(
+                                title = parsedInfoObj.optString("title"),
+                                season = parsedInfoObj.optInt("season", 1),
+                                episode = parsedInfoObj.optInt("episode", 0),
+                                year = parsedInfoObj.optInt("year", 0).takeIf { it > 0 },
+                                isVideo = true
+                            )
+                        } else null
+                        val pathsArray = obj.optJSONArray("folderPath")
+                        val paths = mutableListOf<String>()
+                        if (pathsArray != null) {
+                            for (j in 0 until pathsArray.length()) paths.add(pathsArray.getString(j))
+                        }
+                        list.add(QuarkFile(
+                            fid = obj.optString("fid"),
+                            name = obj.optString("name"),
+                            isFolder = false,
+                            category = obj.optString("category"),
+                            folderPath = paths,
+                            parsedInfo = parsedInfo,
+                            size = obj.optLong("size", 0L)
+                        ))
+                    }
+                    videos = list
+                }
             }
         } catch (e: Exception) { e.printStackTrace() }
 
@@ -343,11 +383,11 @@ class VideoScraperViewModel(
             seasonEpisodeStills = sEpStills,
             groupName = groupName,
             isManuallyEdited = isManuallyEdited,
-            fileListSignature = fileListSignature
+            fileListSignature = fileListSignature,
+            cachedVideos = videos
         )
     }
 
-    // ➕ 辅助映射方法：ScrapeCacheItem -> Entity
     private fun ScrapeCacheItem.toEntity(id: String): VideoScrapedEntity {
         val extraObj = JSONObject()
         try {
@@ -375,6 +415,29 @@ class VideoScraperViewModel(
             val sEpStillsObj = JSONObject()
             seasonEpisodeStills.forEach { (k, v) -> sEpStillsObj.put(k, v) }
             extraObj.put("seasonEpisodeStills", sEpStillsObj)
+
+            // 序列化 videos
+            val videosArr = JSONArray()
+            cachedVideos.forEach { file ->
+                val fileObj = JSONObject().apply {
+                    put("fid", file.fid)
+                    put("name", file.name)
+                    put("size", file.size)
+                    put("category", file.category)
+                    val pathsArr = JSONArray().apply { file.folderPath.forEach { put(it) } }
+                    put("folderPath", pathsArr)
+                    file.parsedInfo?.let { info ->
+                        put("parsedInfo", JSONObject().apply {
+                            put("title", info.title)
+                            put("season", info.season)
+                            put("episode", info.episode)
+                            put("year", info.year ?: 0)
+                        })
+                    }
+                }
+                videosArr.put(fileObj)
+            }
+            extraObj.put("cachedVideos", videosArr)
         } catch (e: Exception) { e.printStackTrace() }
 
         return VideoScrapedEntity(
@@ -468,7 +531,7 @@ class VideoScraperViewModel(
             return
         }
 
-        _uiState.update { it.copy(isLoading = true, errorMsg = null, isScraping = true) }
+        _uiState.update { it.copy(errorMsg = null) }
 
         viewModelScope.launch {
             try {
@@ -518,7 +581,7 @@ class VideoScraperViewModel(
                     val isManuallyEdited = cached?.isManuallyEdited == true
                     val needScrape = !isManuallyEdited && (isSignatureChanged || shouldRetryEmptyPoster)
 
-                    if (needScrape) {
+                    val resultSeries = if (needScrape) {
                         needScrapeList.add(series)
                         if (isEmptyPoster) emptyPosterRetryCount++
                         if (cached != null) {
@@ -543,16 +606,28 @@ class VideoScraperViewModel(
                             )
                         } else series
                     }
+                    
+                    // 立即更新内存中的 videos 列表，确保下次保存时完整
+                    scrapedCache[series.id] = (cached ?: ScrapeCacheItem(
+                        title = resultSeries.title, category = resultSeries.category, posterUrl = null, backdropUrl = null,
+                        overview = null, rating = null, groupName = resultSeries.groupName,
+                        isManuallyEdited = false, fileListSignature = newSignature
+                    )).copy(cachedVideos = resultSeries.videos)
+                    
+                    resultSeries
                 }.sortedWith(compareBy(pinyinCollator) { it.title })
 
                 _uiState.update { it.copy(seriesList = finalSeriesList) }
                 
+                // 如果有需要刮削的，且配置了 APIKey，此时才显示 isScraping = true
                 if (apiKey.isNotBlank() && needScrapeList.isNotEmpty()) {
+                    _uiState.update { it.copy(isScraping = true) }
                     scrapeSeriesPosters(needScrapeList, apiKey, _uiState.value.tmdbBaseUrl)
                 } else {
                     hasLoadedLibrary = true
                     _uiState.update { it.copy(isLoading = false, isScraping = false) }
                     handlePendingPlayRequest()
+                    saveScrapedCache() // 确保最新的 videos 写入
                 }
 
             } catch (e: Exception) {
@@ -787,7 +862,8 @@ class VideoScraperViewModel(
                             seasonDetails = newSeries.seasonDetails, episodeTitles = newSeries.episodeTitles,
                             episodeStills = newSeries.episodeStills, seasonEpisodeTitles = newSeries.seasonEpisodeTitles,
                             seasonEpisodeStills = newSeries.seasonEpisodeStills, groupName = newSeries.groupName,
-                            isManuallyEdited = isEdited, fileListSignature = newSignature 
+                            isManuallyEdited = isEdited, fileListSignature = newSignature,
+                            cachedVideos = newSeries.videos // 🌟 保存最新列表
                         )
                         newSeries
                     } else {
@@ -797,7 +873,8 @@ class VideoScraperViewModel(
                             scrapedCache[series.id] = ScrapeCacheItem(
                                 title = series.title, category = series.category, posterUrl = null, backdropUrl = null,
                                 overview = null, rating = null, groupName = series.groupName,
-                                isManuallyEdited = false, fileListSignature = newSignature
+                                isManuallyEdited = false, fileListSignature = newSignature,
+                                cachedVideos = series.videos
                             )
                         }
                         series
@@ -1160,7 +1237,8 @@ class VideoScraperViewModel(
             seasonEpisodeStills = series.seasonEpisodeStills,
             groupName = series.groupName,
             isManuallyEdited = true,
-            fileListSignature = newSignature
+            fileListSignature = newSignature,
+            cachedVideos = series.videos
         )
         saveScrapedCache()
     }
@@ -1181,7 +1259,8 @@ class VideoScraperViewModel(
             seasonEpisodeStills = series.seasonEpisodeStills,
             groupName = series.groupName,
             isManuallyEdited = true,
-            fileListSignature = newSignature
+            fileListSignature = newSignature,
+            cachedVideos = series.videos
         )
         saveScrapedCache()
     }
