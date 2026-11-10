@@ -413,16 +413,16 @@ fun VideoScraperScreen(isActive: Boolean = true, modifier: Modifier = Modifier, 
                     IconButton(onClick = { showSettingsDialog = true }) { Icon(Icons.Default.Settings, contentDescription = "设置") }
                     IconButton(onClick = { viewModel.loadLibraryVideos() }, enabled = !uiState.isLoading) { Icon(Icons.Default.Refresh, contentDescription = "刷新", tint = if (uiState.isLoading) Color.Gray else Color.Black) }
                 }
-                if (uiState.errorMsg != null && !uiState.isLoading) { Box(modifier = Modifier.fillMaxWidth().background(Color(0xFFFFCDD2)).padding(8.dp), contentAlignment = Alignment.Center) { AppText(uiState.errorMsg!!, color = Color.Red, style = MaterialTheme.typography.bodySmall) } }
+if (uiState.errorMsg != null && !uiState.isLoading) { Box(modifier = Modifier.fillMaxWidth().background(Color(0xFFFFCDD2)).padding(8.dp), contentAlignment = Alignment.Center) { AppText(uiState.errorMsg!!, color = Color.Red, style = MaterialTheme.typography.bodySmall) } }
 
-                // 🌟 核心替换点：只有真正处于无快照的首次加载时才显示纯背景，确保有缓存时直接画出图1
-                if (uiState.isLoading && uiState.seriesList.isEmpty()) { 
-                    Box(modifier = Modifier.fillMaxSize().background(AppBackgroundColor)) 
-                } 
-                else {
-                    if (uiState.selectedLibraryFids.isEmpty()) { Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { AppText("请先在资源库中勾选媒体文件夹") } } 
-                    else if (uiState.seriesList.isEmpty() && !uiState.isLoading) { Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { AppText("没找到任何视频，点击右上角刷新") } } 
-                    else {
+// 🌟 核心替换点：如果正在初始化读取内存缓存，保持底色，不显示转圈，也不显示“没找到”
+if (uiState.isLoading && uiState.seriesList.isEmpty()) { 
+    Box(modifier = Modifier.fillMaxSize().background(AppBackgroundColor)) 
+} 
+else {
+    if (uiState.selectedLibraryFids.isEmpty()) { Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { AppText("请先在资源库中勾选媒体文件夹") } } 
+    else if (uiState.seriesList.isEmpty() && !uiState.isLoading) { Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { AppText("没找到任何视频，点击右上角刷新") } } 
+    else {
                         val grouped = uiState.seriesList.groupBy { it.category }
                         val savedOrder = uiState.categoryOrder.split(",").filter { it.isNotBlank() }
                         val allCategories = grouped.keys.toMutableList()
