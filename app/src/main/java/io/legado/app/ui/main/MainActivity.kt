@@ -17,12 +17,9 @@ import androidx.compose.animation.AnimatedContentTransitionScope
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.ExperimentalSharedTransitionApi
 import androidx.compose.animation.SharedTransitionLayout
+import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.LinearOutSlowInEasing
-import androidx.compose.animation.core.RepeatMode
-import androidx.compose.animation.core.animateFloat
-import androidx.compose.animation.core.infiniteRepeatable
-import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -428,9 +425,18 @@ open class MainActivity : BaseComposeActivity(), AudioPlay.CallBack {
                                     remember { ModalOverlaySceneStrategy(isTopEntry = { backStack.lastOrNull()?.let { top -> NavEntry(top) {}.contentKey == it } == true }, predictiveBackEnabled = { predictiveBackEnabled }) },
                                     SinglePaneSceneStrategy()
                                 ),
-                                transitionSpec = { (slideIntoContainer(AnimatedContentTransitionScope.SlideDirection.Start, tween(NAV_SLIDE_DURATION_MILLIS, easing = FastOutSlowInEasing), initialOffset = { it }) + fadeIn(tween(NAV_FADE_DURATION_MILLIS, easing = LinearOutSlowInEasing))) togetherWith (slideOutOfContainer(AnimatedContentTransitionScope.SlideDirection.Start, tween(NAV_SLIDE_DURATION_MILLIS, easing = FastOutSlowInEasing), targetOffset = { it / 4 }) + fadeOut(tween(NAV_FADE_DURATION_MILLIS, easing = LinearOutSlowInEasing))) },
-                                popTransitionSpec = { (slideIntoContainer(AnimatedContentTransitionScope.SlideDirection.Start, tween(NAV_SLIDE_DURATION_MILLIS, easing = FastOutSlowInEasing), initialOffset = { -it / 4 }) + fadeIn(tween(NAV_FADE_DURATION_MILLIS, easing = LinearOutSlowInEasing))) togetherWith (scaleOut(0.8f, tween(NAV_SLIDE_DURATION_MILLIS, easing = FastOutSlowInEasing)) + fadeOut(tween(NAV_FADE_DURATION_MILLIS))) },
-                                predictivePopTransitionSpec = { (slideIntoContainer(AnimatedContentTransitionScope.SlideDirection.Start, tween(easing = FastOutSlowInEasing), initialOffset = { -it / 4 }) + fadeIn(tween(easing = LinearOutSlowInEasing))) togetherWith (scaleOut(0.8f, tween(easing = FastOutSlowInEasing)) + fadeOut(tween())) },
+                                transitionSpec = { 
+                                    (slideIntoContainer(AnimatedContentTransitionScope.SlideDirection.Start, tween(durationMillis = NAV_SLIDE_DURATION_MILLIS, easing = FastOutSlowInEasing), initialOffset = { it }) + fadeIn(tween(durationMillis = NAV_FADE_DURATION_MILLIS, easing = LinearOutSlowInEasing))) togetherWith 
+                                    (slideOutOfContainer(AnimatedContentTransitionScope.SlideDirection.Start, tween(durationMillis = NAV_SLIDE_DURATION_MILLIS, easing = FastOutSlowInEasing), targetOffset = { it / 4 }) + fadeOut(tween(durationMillis = NAV_FADE_DURATION_MILLIS, easing = LinearOutSlowInEasing))) 
+                                },
+                                popTransitionSpec = { 
+                                    (slideIntoContainer(AnimatedContentTransitionScope.SlideDirection.Start, tween(durationMillis = NAV_SLIDE_DURATION_MILLIS, easing = FastOutSlowInEasing), initialOffset = { -it / 4 }) + fadeIn(tween(durationMillis = NAV_FADE_DURATION_MILLIS, easing = LinearOutSlowInEasing))) togetherWith 
+                                    (scaleOut(targetScale = 0.8f, animationSpec = tween(durationMillis = NAV_SLIDE_DURATION_MILLIS, easing = FastOutSlowInEasing)) + fadeOut(tween(durationMillis = NAV_FADE_DURATION_MILLIS))) 
+                                },
+                                predictivePopTransitionSpec = { 
+                                    (slideIntoContainer(AnimatedContentTransitionScope.SlideDirection.Start, tween(easing = FastOutSlowInEasing), initialOffset = { -it / 4 }) + fadeIn(tween(easing = LinearOutSlowInEasing))) togetherWith 
+                                    (scaleOut(targetScale = 0.8f, animationSpec = tween(easing = FastOutSlowInEasing)) + fadeOut(tween())) 
+                                },
                                 onBack = { MainNavigator.navigateBack(this@MainActivity, backStack) },
                                 entryProvider = mainEntryProvider(
                                     backStack = backStack,
@@ -482,8 +488,8 @@ open class MainActivity : BaseComposeActivity(), AudioPlay.CallBack {
             
             AnimatedVisibility(
                 visible = showSplashOverlay,
-                enter = fadeIn(animationSpec = tween(0)),
-                exit = fadeOut(animationSpec = tween(400))
+                enter = fadeIn(animationSpec = tween(durationMillis = 0)),
+                exit = fadeOut(animationSpec = tween(durationMillis = 400))
             ) {
                 SplashOverlay()
             }
@@ -569,34 +575,30 @@ open class MainActivity : BaseComposeActivity(), AudioPlay.CallBack {
 
 @Composable
 fun SplashOverlay() {
-    val infiniteTransition = rememberInfiniteTransition(label = "splash_anim")
-    
-    val scale by infiniteTransition.animateFloat(
-        initialValue = 1f, targetValue = 1.06f,
-        animationSpec = infiniteRepeatable<Float>(
-            animation = tween(durationMillis = 1500, easing = FastOutSlowInEasing),
-            repeatMode = RepeatMode.Reverse
-        ),
-        label = "icon_scale"
-    )
-    
-    val dotAlpha1 by infiniteTransition.animateFloat(
-        initialValue = 0.2f, targetValue = 1f,
-        animationSpec = infiniteRepeatable<Float>(
-            animation = tween(durationMillis = 600),
-            repeatMode = RepeatMode.Reverse
-        ), 
-        label = "dot1"
-    )
-    
-    val dotAlpha2 by infiniteTransition.animateFloat(
-        initialValue = 1f, targetValue = 0.2f,
-        animationSpec = infiniteRepeatable<Float>(
-            animation = tween(durationMillis = 600),
-            repeatMode = RepeatMode.Reverse
-        ), 
-        label = "dot2"
-    )
+    val scale = remember { Animatable(1f) }
+    val dotAlpha1 = remember { Animatable(0.2f) }
+    val dotAlpha2 = remember { Animatable(1f) }
+
+    LaunchedEffect(Unit) {
+        launch {
+            while (true) {
+                scale.animateTo(1.06f, animationSpec = tween(durationMillis = 1500, easing = FastOutSlowInEasing))
+                scale.animateTo(1f, animationSpec = tween(durationMillis = 1500, easing = FastOutSlowInEasing))
+            }
+        }
+        launch {
+            while (true) {
+                dotAlpha1.animateTo(1f, animationSpec = tween(durationMillis = 600))
+                dotAlpha1.animateTo(0.2f, animationSpec = tween(durationMillis = 600))
+            }
+        }
+        launch {
+            while (true) {
+                dotAlpha2.animateTo(0.2f, animationSpec = tween(durationMillis = 600))
+                dotAlpha2.animateTo(1f, animationSpec = tween(durationMillis = 600))
+            }
+        }
+    }
 
     Box(
         modifier = Modifier
@@ -611,7 +613,7 @@ fun SplashOverlay() {
                 contentDescription = null,
                 modifier = Modifier
                     .size(88.dp)
-                    .graphicsLayer(scaleX = scale, scaleY = scale)
+                    .graphicsLayer(scaleX = scale.value, scaleY = scale.value)
             )
         }
 
@@ -621,9 +623,9 @@ fun SplashOverlay() {
                 .padding(bottom = 80.dp),
             horizontalArrangement = Arrangement.spacedBy(6.dp)
         ) {
-            Box(modifier = Modifier.size(6.dp).clip(CircleShape).background(Color(0xFF333333).copy(alpha = dotAlpha1)))
-            Box(modifier = Modifier.size(6.dp).clip(CircleShape).background(Color(0xFF333333).copy(alpha = dotAlpha2)))
-            Box(modifier = Modifier.size(6.dp).clip(CircleShape).background(Color(0xFF333333).copy(alpha = dotAlpha1)))
+            Box(modifier = Modifier.size(6.dp).clip(CircleShape).background(Color(0xFF333333).copy(alpha = dotAlpha1.value)))
+            Box(modifier = Modifier.size(6.dp).clip(CircleShape).background(Color(0xFF333333).copy(alpha = dotAlpha2.value)))
+            Box(modifier = Modifier.size(6.dp).clip(CircleShape).background(Color(0xFF333333).copy(alpha = dotAlpha1.value)))
         }
     }
 }
