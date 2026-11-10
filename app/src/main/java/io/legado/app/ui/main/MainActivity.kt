@@ -573,8 +573,8 @@ fun SplashOverlay() {
     
     val scale by infiniteTransition.animateFloat(
         initialValue = 1f, targetValue = 1.06f,
-        animationSpec = infiniteRepeatable(
-            animation = tween<Float>(durationMillis = 1500, easing = FastOutSlowInEasing),
+        animationSpec = infiniteRepeatable<Float>(
+            animation = tween(durationMillis = 1500, easing = FastOutSlowInEasing),
             repeatMode = RepeatMode.Reverse
         ),
         label = "icon_scale"
@@ -582,8 +582,8 @@ fun SplashOverlay() {
     
     val dotAlpha1 by infiniteTransition.animateFloat(
         initialValue = 0.2f, targetValue = 1f,
-        animationSpec = infiniteRepeatable(
-            animation = tween<Float>(durationMillis = 600),
+        animationSpec = infiniteRepeatable<Float>(
+            animation = tween(durationMillis = 600),
             repeatMode = RepeatMode.Reverse
         ), 
         label = "dot1"
@@ -591,8 +591,8 @@ fun SplashOverlay() {
     
     val dotAlpha2 by infiniteTransition.animateFloat(
         initialValue = 1f, targetValue = 0.2f,
-        animationSpec = infiniteRepeatable(
-            animation = tween<Float>(durationMillis = 600),
+        animationSpec = infiniteRepeatable<Float>(
+            animation = tween(durationMillis = 600),
             repeatMode = RepeatMode.Reverse
         ), 
         label = "dot2"
