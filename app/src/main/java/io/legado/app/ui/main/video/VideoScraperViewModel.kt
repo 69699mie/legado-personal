@@ -154,37 +154,28 @@ class VideoScraperViewModel(
             )
         }
 
-        // 🌟 核心改造：直接从内存极速获取预加载的数据
-        viewModelScope.launch {
-            // 如果 App 里的预加载还没完成，就稍微等一下
-            if (!VideoCacheManager.isReady) {
-                while (!VideoCacheManager.isReady) {
-                    delay(50)
-                }
+        // 首帧直接同步获取内存缓存，不延迟等待
+        val initialCached = VideoCacheManager.cachedSeries ?: emptyList()
+        if (initialCached.isNotEmpty()) {
+            initialCached.forEach { series ->
+                val item = ScrapeCacheItem(
+                    title = series.title, category = series.category, posterUrl = series.posterUrl,
+                    backdropUrl = series.backdropUrl, overview = series.overview, rating = series.rating,
+                    seasonDetails = series.seasonDetails, episodeTitles = series.episodeTitles,
+                    episodeStills = series.episodeStills, seasonEpisodeTitles = series.seasonEpisodeTitles,
+                    seasonEpisodeStills = series.seasonEpisodeStills, groupName = series.groupName,
+                    isManuallyEdited = series.isManuallyEdited,
+                    fileListSignature = series.videos.map { it.fid }.sorted().joinToString("|"),
+                    cachedVideos = series.videos
+                )
+                scrapedCache[series.id] = item
             }
+            _uiState.update { it.copy(seriesList = initialCached, isLoading = false) }
+        } else {
+            _uiState.update { it.copy(isLoading = true) }
+        }
 
-            val cachedSeries = VideoCacheManager.cachedSeries ?: emptyList()
-            
-            // 同步到内存的 scrapedCache
-            if (cachedSeries.isNotEmpty()) {
-                cachedSeries.forEach { series ->
-                    val item = ScrapeCacheItem(
-                        title = series.title, category = series.category, posterUrl = series.posterUrl,
-                        backdropUrl = series.backdropUrl, overview = series.overview, rating = series.rating,
-                        seasonDetails = series.seasonDetails, episodeTitles = series.episodeTitles,
-                        episodeStills = series.episodeStills, seasonEpisodeTitles = series.seasonEpisodeTitles,
-                        seasonEpisodeStills = series.seasonEpisodeStills, groupName = series.groupName,
-                        isManuallyEdited = series.isManuallyEdited,
-                        fileListSignature = series.videos.map { it.fid }.sorted().joinToString("|"),
-                        cachedVideos = series.videos
-                    )
-                    scrapedCache[series.id] = item
-                }
-                _uiState.update { it.copy(seriesList = cachedSeries, isLoading = false) }
-            } else {
-                _uiState.update { it.copy(isLoading = false) }
-            }
-
+        viewModelScope.launch(Dispatchers.IO) {
             fetchQuarkFiles("0")
             if (fids.isNotEmpty()) loadLibraryVideos()
         }
@@ -193,10 +184,12 @@ class VideoScraperViewModel(
     private fun saveScrapedCache() {
         val entities = scrapedCache.map { (id, item) -> item.toEntity(id) }
         
-        // 🌟 同步更新 VideoCacheManager，保证下次秒开数据最新
+        // 同步更新 VideoCacheManager，保证下次秒开数据最新
         val currentList = _uiState.value.seriesList
         if (currentList.isNotEmpty()) {
-            VideoCacheManager.updateCache(currentList)
+            viewModelScope.launch(Dispatchers.IO) {
+                VideoCacheManager.updateCache(currentList)
+            }
         }
 
         viewModelScope.launch(Dispatchers.IO) {
