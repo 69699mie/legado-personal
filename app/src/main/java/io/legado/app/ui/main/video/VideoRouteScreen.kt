@@ -72,6 +72,7 @@ import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
+import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
@@ -1688,7 +1689,22 @@ fun MediaDetailScreen(
                         AppText("全部剧集 (${currentSeasonVideos.size})", color = Color(0xFF1A1A1A), fontWeight = FontWeight.Bold, fontSize = 18.sp)
                         IconButton(onClick = { showAllEpisodesDialog = false }) { Icon(Icons.Default.Close, contentDescription = "关闭", tint = Color(0xFF999999)) }
                     }
-                    LazyVerticalGrid(columns = GridCells.Fixed(4), contentPadding = PaddingValues(top = 8.dp, bottom = 12.dp), horizontalArrangement = Arrangement.spacedBy(10.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    
+                    val allEpisodesGridState = rememberLazyGridState()
+                    val currentPlayingIndex = currentSeasonVideos.indexOfFirst { it.fid == (targetPlayFile?.fid ?: "") }
+                    LaunchedEffect(Unit) {
+                        if (currentPlayingIndex != -1) {
+                            allEpisodesGridState.scrollToItem(currentPlayingIndex)
+                        }
+                    }
+
+                    LazyVerticalGrid(
+                        state = allEpisodesGridState,
+                        columns = GridCells.Fixed(4), 
+                        contentPadding = PaddingValues(top = 8.dp, bottom = 12.dp), 
+                        horizontalArrangement = Arrangement.spacedBy(10.dp), 
+                        verticalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
                         items(currentSeasonVideos) { file ->
                             val e = file.parsedInfo?.episode
                             val label = if (e != null && series.category != "电影" && series.videos.size > 1) "第${e}集" else if (series.videos.size == 1) series.title else (file.folderPath.lastOrNull() ?: file.name.substringBeforeLast("."))
