@@ -97,11 +97,13 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shadow
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
@@ -912,6 +914,7 @@ fun InternalVideoPlayer(url: String, title: String, cookie: String, series: Medi
     val videoSettingsRepository = koinInject<VideoSettingsRepository>()
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val latestSeries = uiState.seriesList.find { it.id == series.id || it.title == series.title } ?: series
+    val haptic = LocalHapticFeedback.current
     
     val sortedVideos = remember(latestSeries.videos) {
         latestSeries.videos.sortedWith(
@@ -1195,7 +1198,7 @@ fun InternalVideoPlayer(url: String, title: String, cookie: String, series: Medi
     }
 
     LaunchedEffect(showEpisodeDrawer, sortedVideos) { if (showEpisodeDrawer) { val idx = sortedVideos.indexOfFirst { it.fid == currentFile.fid }; if (idx != -1) episodeListState.animateScrollToItem(idx) } }
-    LaunchedEffect(showControls, isPlaying, gestureType, showSettingsPanel, showEpisodeDrawer) { if (showControls && isPlaying && !isLocked && gestureType.isEmpty() && !showSettingsPanel && !showEpisodeDrawer && !isInPip.value) { delay(3000); showControls = false } }
+    LaunchedEffect(showControls, isPlaying, gestureType, showSettingsPanel, showEpisodeDrawer) { if (showControls && isPlaying && !isLocked && gestureType.isEmpty() && !showSettingsPanel && !showEpisodeDrawer && !isInPip.value && !isDraggingSeekBar) { delay(3000); showControls = false } }
     LaunchedEffect(isLocked, showUnlockIcon) { if (isLocked && showUnlockIcon) { delay(3000); showUnlockIcon = false } }
     LaunchedEffect(seekMessage) { if (seekMessage != null) { delay(1500); seekMessage = null } }
 
@@ -1234,19 +1237,33 @@ fun InternalVideoPlayer(url: String, title: String, cookie: String, series: Medi
                     "volume" -> { val maxVol = audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC); val newVolFloat = (startVolume.toFloat() / maxVol) - (deltaY / size.height); gestureValue = newVolFloat.coerceIn(0f, 1f); audioManager.setStreamVolume(AudioManager.STREAM_MUSIC, (gestureValue * maxVol).roundToInt(), 0) }
                 }
             },
-            onDragEnd = { if (gestureMode == "seek") { if (abs(currentPosition - dragStartPosition) > 1000L) { exoPlayer.seekTo(currentPosition); if (isPlaying) exoPlayer.play() } else currentPosition = dragStartPosition }; gestureMode = ""; gestureType = ""; isDraggingSeekBar = false },
+            onDragEnd = { 
+                if (gestureMode == "seek") { 
+                    if (abs(currentPosition - dragStartPosition) > 1000L) { 
+                        exoPlayer.seekTo(currentPosition); if (isPlaying) exoPlayer.play() 
+                        haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                    } else currentPosition = dragStartPosition 
+                }; 
+                gestureMode = ""; gestureType = ""; isDraggingSeekBar = false 
+            },
             onDragCancel = { if (gestureMode == "seek") currentPosition = dragStartPosition; gestureMode = ""; gestureType = ""; isDraggingSeekBar = false }
         )
     }.pointerInput(isLocked, showControls, showSettingsPanel, showEpisodeDrawer, isInPip.value) {
         if (isLocked || showSettingsPanel || showEpisodeDrawer || isInPip.value) return@pointerInput
         detectTapGestures(
             onTap = { showControls = !showControls },
-            onDoubleTap = { offset -> when { 
-                offset.x < size.width * 0.25f -> { exoPlayer.seekTo((exoPlayer.currentPosition - 10000).coerceAtLeast(0)); seekMessage = "已快退 10 秒" }; 
-                offset.x > size.width * 0.75f -> { exoPlayer.seekTo((exoPlayer.currentPosition + 10000).coerceAtMost(if (duration > 0) duration else Long.MAX_VALUE)); seekMessage = "已快进 10 秒" }; 
-                else -> { if (isPlaying) exoPlayer.pause() else exoPlayer.play() } 
-            } },
-            onLongPress = { isLongPressing = true; exoPlayer.setPlaybackSpeed(2.0f) },
+            onDoubleTap = { offset -> 
+                haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                when { 
+                    offset.x < size.width * 0.25f -> { exoPlayer.seekTo((exoPlayer.currentPosition - 10000).coerceAtLeast(0)); seekMessage = "已快退 10 秒" }; 
+                    offset.x > size.width * 0.75f -> { exoPlayer.seekTo((exoPlayer.currentPosition + 10000).coerceAtMost(if (duration > 0) duration else Long.MAX_VALUE)); seekMessage = "已快进 10 秒" }; 
+                    else -> { if (isPlaying) exoPlayer.pause() else exoPlayer.play() } 
+                } 
+            },
+            onLongPress = { 
+                haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                isLongPressing = true; exoPlayer.setPlaybackSpeed(2.0f) 
+            },
             onPress = { 
                 try {
                     tryAwaitRelease()
@@ -1288,13 +1305,101 @@ fun InternalVideoPlayer(url: String, title: String, cookie: String, series: Medi
             }
         }
 
-        if (gestureType.isNotEmpty()) {
-            Box(modifier = Modifier.align(Alignment.Center).background(Color.Black.copy(alpha = 0.6f), RoundedCornerShape(8.dp)).padding(16.dp)) {
-                Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    Icon(imageVector = if (gestureType == "volume") { if (gestureValue == 0f) Icons.Default.VolumeMute else Icons.Default.VolumeUp } else Icons.Default.BrightnessHigh, contentDescription = null, tint = Color.White, modifier = Modifier.size(36.dp))
-                    Spacer(modifier = Modifier.height(8.dp)); LinearProgressIndicator(progress = { gestureValue }, modifier = Modifier.width(150.dp), color = Color.White, trackColor = Color.DarkGray); Spacer(modifier = Modifier.height(8.dp))
-                    AppText(text = "${(gestureValue * 100).roundToInt()}%", color = Color.White, fontSize = 14.sp)
+        // 贴边式亮度进度条
+        AnimatedVisibility(
+            visible = gestureType == "brightness",
+            enter = fadeIn(),
+            exit = fadeOut(),
+            modifier = Modifier.align(Alignment.CenterStart).padding(start = 32.dp)
+        ) {
+            Column(
+                horizontalAlignment = Alignment.CenterHorizontally,
+                modifier = Modifier
+                    .width(40.dp)
+                    .height(260.dp)
+                    .background(Color.Black.copy(alpha = 0.6f), RoundedCornerShape(20.dp))
+                    .border(1.dp, Color.White.copy(alpha = 0.1f), RoundedCornerShape(20.dp))
+                    .padding(vertical = 16.dp)
+            ) {
+                Icon(
+                    imageVector = if (gestureValue < 0.5f) Icons.Default.BrightnessLow else Icons.Default.BrightnessHigh,
+                    contentDescription = null,
+                    tint = Color.White,
+                    modifier = Modifier.size(20.dp)
+                )
+                Spacer(modifier = Modifier.height(12.dp))
+                Box(
+                    modifier = Modifier
+                        .weight(1f)
+                        .width(4.dp)
+                        .background(Color.White.copy(alpha = 0.2f), RoundedCornerShape(2.dp)),
+                    contentAlignment = Alignment.BottomCenter
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .fillMaxHeight(gestureValue.coerceIn(0f, 1f))
+                            .background(Color.White, RoundedCornerShape(2.dp))
+                    )
                 }
+                Spacer(modifier = Modifier.height(12.dp))
+                AppText(
+                    text = "${(gestureValue * 100).roundToInt()}%",
+                    color = Color.White,
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.Bold
+                )
+            }
+        }
+
+        // 贴边式音量进度条
+        AnimatedVisibility(
+            visible = gestureType == "volume",
+            enter = fadeIn(),
+            exit = fadeOut(),
+            modifier = Modifier.align(Alignment.CenterEnd).padding(end = 32.dp)
+        ) {
+            Column(
+                horizontalAlignment = Alignment.CenterHorizontally,
+                modifier = Modifier
+                    .width(40.dp)
+                    .height(260.dp)
+                    .background(Color.Black.copy(alpha = 0.6f), RoundedCornerShape(20.dp))
+                    .border(1.dp, Color.White.copy(alpha = 0.1f), RoundedCornerShape(20.dp))
+                    .padding(vertical = 16.dp)
+            ) {
+                Icon(
+                    imageVector = when {
+                        gestureValue == 0f -> Icons.Default.VolumeMute
+                        gestureValue < 0.5f -> Icons.Default.VolumeDown
+                        else -> Icons.Default.VolumeUp
+                    },
+                    contentDescription = null,
+                    tint = Color.White,
+                    modifier = Modifier.size(20.dp)
+                )
+                Spacer(modifier = Modifier.height(12.dp))
+                Box(
+                    modifier = Modifier
+                        .weight(1f)
+                        .width(4.dp)
+                        .background(Color.White.copy(alpha = 0.2f), RoundedCornerShape(2.dp)),
+                    contentAlignment = Alignment.BottomCenter
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .fillMaxHeight(gestureValue.coerceIn(0f, 1f))
+                            .background(Color.White, RoundedCornerShape(2.dp))
+                    )
+                }
+                Spacer(modifier = Modifier.height(12.dp))
+                AppText(
+                    text = "${(gestureValue * 100).roundToInt()}%",
+                    color = Color.White,
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.Bold
+                )
             }
         }
 
@@ -1366,7 +1471,7 @@ fun InternalVideoPlayer(url: String, title: String, cookie: String, series: Medi
                                     detectDragGestures(
                                         onDragStart = { offset -> if (duration > 0) { isDraggingSeekBar = true; dragStartPosition = exoPlayer.currentPosition; val target = (offset.x / sliderWidth).coerceIn(0f, 1f); currentPosition = (target * duration).toLong(); seekDeltaMillis = currentPosition - dragStartPosition } },
                                         onDrag = { change, _ -> change.consume(); if (duration > 0) { val target = (change.position.x / sliderWidth).coerceIn(0f, 1f); currentPosition = (target * duration).toLong(); seekDeltaMillis = currentPosition - dragStartPosition } },
-                                        onDragEnd = { isDraggingSeekBar = false; if (abs(currentPosition - dragStartPosition) > 1000L) { exoPlayer.seekTo(currentPosition); if (isPlaying) exoPlayer.play() } else currentPosition = dragStartPosition },
+                                        onDragEnd = { isDraggingSeekBar = false; if (abs(currentPosition - dragStartPosition) > 1000L) { exoPlayer.seekTo(currentPosition); if (isPlaying) exoPlayer.play(); haptic.performHapticFeedback(HapticFeedbackType.LongPress) } else currentPosition = dragStartPosition },
                                         onDragCancel = { isDraggingSeekBar = false }
                                     )
                                 }, contentAlignment = Alignment.Center
