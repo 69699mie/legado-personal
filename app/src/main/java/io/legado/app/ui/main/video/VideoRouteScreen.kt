@@ -1351,12 +1351,12 @@ fun InternalVideoPlayer(url: String, title: String, cookie: String, series: Medi
             }
         }
 
-        // 贴边式亮度进度条
+        // 贴边式亮度进度条 (显示在右侧，避免左手遮挡)
         AnimatedVisibility(
             visible = gestureType == "brightness",
             enter = fadeIn(),
             exit = fadeOut(),
-            modifier = Modifier.align(Alignment.CenterStart).padding(start = 48.dp)
+            modifier = Modifier.align(Alignment.CenterEnd).padding(end = 48.dp)
         ) {
             Column(
                 horizontalAlignment = Alignment.CenterHorizontally,
@@ -1404,12 +1404,12 @@ fun InternalVideoPlayer(url: String, title: String, cookie: String, series: Medi
             }
         }
 
-        // 贴边式音量进度条
+        // 贴边式音量进度条 (显示在左侧，避免右手遮挡)
         AnimatedVisibility(
             visible = gestureType == "volume",
             enter = fadeIn(),
             exit = fadeOut(),
-            modifier = Modifier.align(Alignment.CenterEnd).padding(end = 48.dp)
+            modifier = Modifier.align(Alignment.CenterStart).padding(start = 48.dp)
         ) {
             Column(
                 horizontalAlignment = Alignment.CenterHorizontally,
