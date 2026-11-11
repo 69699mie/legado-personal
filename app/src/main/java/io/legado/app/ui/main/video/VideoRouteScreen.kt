@@ -943,10 +943,17 @@ fun InternalVideoPlayer(url: String, title: String, cookie: String, series: Medi
     var isLongPressing by remember { mutableStateOf(false) }
     var playerToastMessage by remember { mutableStateOf<String?>(null) }
     
+    var lastCenterMessage by remember { mutableStateOf<String?>(null) }
     val currentCenterMessage = when {
         isLongPressing -> "2.0x快进中"
         playerToastMessage != null -> playerToastMessage
         else -> null
+    }
+    
+    LaunchedEffect(currentCenterMessage) {
+        if (currentCenterMessage != null) {
+            lastCenterMessage = currentCenterMessage
+        }
     }
 
     LaunchedEffect(playerToastMessage) {
@@ -1236,9 +1243,12 @@ fun InternalVideoPlayer(url: String, title: String, cookie: String, series: Medi
             } },
             onLongPress = { isLongPressing = true; exoPlayer.setPlaybackSpeed(2.0f) },
             onPress = { 
-                tryAwaitRelease(); 
-                isLongPressing = false
-                exoPlayer.setPlaybackSpeed(playbackSpeed) 
+                try {
+                    tryAwaitRelease()
+                } finally {
+                    isLongPressing = false
+                    exoPlayer.setPlaybackSpeed(playbackSpeed) 
+                }
             }
         )
     }) {
@@ -1259,7 +1269,7 @@ fun InternalVideoPlayer(url: String, title: String, cookie: String, series: Medi
                     .padding(horizontal = 20.dp, vertical = 12.dp)
             ) {
                 AppText(
-                    text = currentCenterMessage ?: "",
+                    text = lastCenterMessage ?: "",
                     color = Color.White,
                     fontSize = 14.sp,
                     fontWeight = FontWeight.Medium
@@ -1514,6 +1524,9 @@ fun MediaDetailScreen(
     val context = LocalContext.current
     val activity = context.findActivity()
     val view = LocalView.current
+    
+    val uiState by viewModel.uiState.collectAsStateWithLifecycle()
+    
     var showAllEpisodesDialog by remember { mutableStateOf(false) }
 
     DisposableEffect(Unit) {
@@ -1545,11 +1558,15 @@ fun MediaDetailScreen(
         )
     }
 
-    val latestWatchedInCurrentSeason = remember(currentSeasonVideos) { currentSeasonVideos.maxByOrNull { viewModel.getVideoProgress(it.fid) } }
-    val hasProgressInCurrentSeason = remember(latestWatchedInCurrentSeason) { latestWatchedInCurrentSeason != null && viewModel.getVideoProgress(latestWatchedInCurrentSeason.fid) > 0 }
+    val latestWatchedInCurrentSeason = remember(currentSeasonVideos, uiState.playUrl) { 
+        currentSeasonVideos.maxByOrNull { viewModel.getVideoProgress(it.fid) } 
+    }
+    val hasProgressInCurrentSeason = remember(latestWatchedInCurrentSeason, uiState.playUrl) { 
+        latestWatchedInCurrentSeason != null && viewModel.getVideoProgress(latestWatchedInCurrentSeason.fid) > 0 
+    }
     val targetPlayFile = if (hasProgressInCurrentSeason && latestWatchedInCurrentSeason != null) latestWatchedInCurrentSeason else currentSeasonVideos.firstOrNull()
 
-    val playBtnText = remember(targetPlayFile, series) {
+    val playBtnText = remember(targetPlayFile, series, uiState.playUrl) {
         if (targetPlayFile != null && viewModel.getVideoProgress(targetPlayFile.fid) > 0) {
             val ep = targetPlayFile.parsedInfo?.episode
             if (ep != null && series.category != "电影" && series.videos.size > 1) "继续播放 第${ep}集" else "继续播放"
