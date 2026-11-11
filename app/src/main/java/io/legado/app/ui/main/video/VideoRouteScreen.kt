@@ -923,13 +923,24 @@ fun InternalVideoPlayer(url: String, title: String, cookie: String, series: Medi
     val isInMultiWindowMode = remember { activity?.isInMultiWindowMode == true }
     DisposableEffect(Unit) { view.keepScreenOn = true; onDispose { view.keepScreenOn = false } }
 
+    // 🌟 修复标题重复：使用正则剔除剧名和 TMDB 集标题中自带的“第 xxx 集”
     val dynamicTitle = remember(latestSeries, currentFile) {
         val parsedInfo = currentFile.parsedInfo ?: io.legado.app.utils.VideoFileNameParser.parse(currentFile.name)
         val epNum = parsedInfo.episode ?: Regex("第\\s*([0-9]+)\\s*集").find(currentFile.name)?.groupValues?.get(1)?.toIntOrNull()
         val season = parsedInfo.season ?: 1
         if (epNum != null && latestSeries.category != "电影") {
             val tmdbEpTitle = latestSeries.seasonEpisodeTitles["${season}_${epNum}"] ?: latestSeries.episodeTitles[epNum]
-            if (!tmdbEpTitle.isNullOrBlank()) "${latestSeries.title} 第${epNum}集 $tmdbEpTitle" else "${latestSeries.title} 第${epNum}集"
+            
+            // 清洗剧名（去掉可能存在的“第248集”）
+            val cleanBaseTitle = latestSeries.title.replace(Regex("\\s*第\\s*\\d+\\s*集.*$"), "").trim().ifBlank { latestSeries.title }
+            
+            if (!tmdbEpTitle.isNullOrBlank()) {
+                // 清洗 TMDB 标题（如果 TMDB 返回的标题本身就等于“第248集”，去掉它，避免重复）
+                val cleanTmdbTitle = tmdbEpTitle.replace(Regex("^\\s*第\\s*\\d+\\s*集\\s*"), "").trim()
+                if (cleanTmdbTitle.isNotBlank()) "$cleanBaseTitle 第${epNum}集 $cleanTmdbTitle" else "$cleanBaseTitle 第${epNum}集"
+            } else {
+                "$cleanBaseTitle 第${epNum}集"
+            }
         } else latestSeries.title
     }
 
