@@ -1521,6 +1521,7 @@ fun MediaDetailScreen(
     onPlay: (MediaSeries, QuarkFile) -> Unit, onLongClickPoster: (MediaSeries) -> Unit, onSelectSeries: (MediaSeries) -> Unit
 ) {
     val viewModel: VideoScraperViewModel = koinViewModel()
+    val videoSettingsRepository = koinInject<VideoSettingsRepository>()
     val context = LocalContext.current
     val activity = context.findActivity()
     val view = LocalView.current
@@ -1558,12 +1559,28 @@ fun MediaDetailScreen(
         )
     }
 
-    val latestWatchedInCurrentSeason = remember(currentSeasonVideos, uiState.playUrl) { 
-        currentSeasonVideos.maxByOrNull { viewModel.getVideoProgress(it.fid) } 
+    val latestWatchedFid = remember(uiState.playUrl, videoSettingsRepository.recentWatchedVideos, series.title) {
+        try {
+            val jsonArray = JSONArray(videoSettingsRepository.recentWatchedVideos)
+            for (i in 0 until jsonArray.length()) {
+                val obj = jsonArray.getJSONObject(i)
+                if (obj.optString("seriesTitle") == series.title) {
+                    return@remember obj.optString("fid")
+                }
+            }
+        } catch (e: Exception) {}
+        null
     }
+
+    val latestWatchedInCurrentSeason = remember(currentSeasonVideos, uiState.playUrl, latestWatchedFid) { 
+        val matchedFile = latestWatchedFid?.let { fid -> currentSeasonVideos.find { it.fid == fid } }
+        matchedFile ?: currentSeasonVideos.maxByOrNull { viewModel.getVideoProgress(it.fid) } 
+    }
+
     val hasProgressInCurrentSeason = remember(latestWatchedInCurrentSeason, uiState.playUrl) { 
         latestWatchedInCurrentSeason != null && viewModel.getVideoProgress(latestWatchedInCurrentSeason.fid) > 0 
     }
+    
     val targetPlayFile = if (hasProgressInCurrentSeason && latestWatchedInCurrentSeason != null) latestWatchedInCurrentSeason else currentSeasonVideos.firstOrNull()
 
     val playBtnText = remember(targetPlayFile, series, uiState.playUrl) {
