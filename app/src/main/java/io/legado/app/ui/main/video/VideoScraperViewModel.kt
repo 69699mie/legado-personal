@@ -491,7 +491,9 @@ class VideoScraperViewModel(
                 val groupedSeries = aggregateToSeries(uniqueVideos)
 
                 val validIds = groupedSeries.map { it.id }.toSet()
-                val invalidIds = scrapedCache.keys.filter { it !in validIds && (it.startsWith("temp_") || it.matches(Regex("^\\d+$"))) }
+                
+                // 🌟 修复缓存闪现问题：只要不在最新扫描结果里，统统从缓存中剔除！
+                val invalidIds = scrapedCache.keys.filter { it !in validIds }
                 if (invalidIds.isNotEmpty()) {
                     invalidIds.forEach { scrapedCache.remove(it) }
                     saveScrapedCache()
