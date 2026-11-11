@@ -925,6 +925,10 @@ fun InternalVideoPlayer(url: String, title: String, cookie: String, series: Medi
     var hasVibratedVolumeMin by remember { mutableStateOf(false) }
     var hasVibratedVolumeMax by remember { mutableStateOf(false) }
 
+    // 独立 UI 状态，防止退出动画期间数值跳变
+    var brightnessDisplayValue by remember { mutableFloatStateOf(0f) }
+    var volumeDisplayValue by remember { mutableFloatStateOf(0f) }
+
     val sortedVideos = remember(latestSeries.videos) {
         latestSeries.videos.sortedWith(
             compareBy<QuarkFile> { extractEpisodeNumber(it.name, it.parsedInfo?.episode) }
@@ -1231,11 +1235,23 @@ fun InternalVideoPlayer(url: String, title: String, cookie: String, series: Medi
                 val deltaX = change.position.x - startX; val deltaY = change.position.y - startY; val absX = abs(deltaX); val absY = abs(deltaY)
                 if (gestureMode.isEmpty()) {
                     if (absX > 15f || absY > 15f) {
-                        if (absX > absY) { gestureMode = "seek"; isDraggingSeekBar = true; dragStartPosition = startPos; change.consume() }
-                        else {
-                            if (startX < size.width / 3f) { gestureMode = "brightness"; gestureType = "brightness"; gestureValue = startBrightness; change.consume() }
-                            else if (startX > size.width * 2f / 3f) { gestureMode = "volume"; gestureType = "volume"; val maxVol = audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC); gestureValue = startVolume.toFloat() / maxVol; change.consume() }
-                            else { gestureMode = "none"; change.consume() }
+                        if (absX > absY) { 
+                            gestureMode = "seek"; isDraggingSeekBar = true; dragStartPosition = startPos; change.consume() 
+                        } else {
+                            if (startX < size.width / 3f) { 
+                                gestureMode = "brightness"; gestureType = "brightness"; 
+                                gestureValue = startBrightness
+                                brightnessDisplayValue = startBrightness
+                                change.consume() 
+                            } else if (startX > size.width * 2f / 3f) { 
+                                gestureMode = "volume"; gestureType = "volume"; 
+                                val maxVol = audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC); 
+                                gestureValue = startVolume.toFloat() / maxVol
+                                volumeDisplayValue = gestureValue
+                                change.consume() 
+                            } else { 
+                                gestureMode = "none"; change.consume() 
+                            }
                         }
                     }
                 } else change.consume()
@@ -1243,21 +1259,27 @@ fun InternalVideoPlayer(url: String, title: String, cookie: String, series: Medi
                 when (gestureMode) {
                     "seek" -> { val timeDeltaMs = ((deltaX / size.width) * 300 * 1000).toLong(); seekDeltaMillis = timeDeltaMs; currentPosition = (startPos + timeDeltaMs).coerceIn(0L, if (duration > 0) duration else Long.MAX_VALUE) }
                     "brightness" -> { 
-                        gestureValue = (startBrightness - (deltaY / size.height)).coerceIn(0f, 1f); 
-                        activity?.window?.let { val params = it.attributes; params.screenBrightness = gestureValue; it.attributes = params }
-                        // 极值精准震动
-                        if (gestureValue == 0f && !hasVibratedBrightnessMin) { haptic.performHapticFeedback(HapticFeedbackType.LongPress); hasVibratedBrightnessMin = true }
-                        if (gestureValue > 0f) hasVibratedBrightnessMin = false
-                        if (gestureValue == 1f && !hasVibratedBrightnessMax) { haptic.performHapticFeedback(HapticFeedbackType.LongPress); hasVibratedBrightnessMax = true }
-                        if (gestureValue < 1f) hasVibratedBrightnessMax = false
+                        val newB = (startBrightness - (deltaY / size.height)).coerceIn(0f, 1f)
+                        gestureValue = newB
+                        brightnessDisplayValue = newB
+                        activity?.window?.let { val params = it.attributes; params.screenBrightness = newB; it.attributes = params }
+                        
+                        if (newB == 0f && !hasVibratedBrightnessMin) { haptic.performHapticFeedback(HapticFeedbackType.LongPress); hasVibratedBrightnessMin = true }
+                        if (newB > 0f) hasVibratedBrightnessMin = false
+                        if (newB == 1f && !hasVibratedBrightnessMax) { haptic.performHapticFeedback(HapticFeedbackType.LongPress); hasVibratedBrightnessMax = true }
+                        if (newB < 1f) hasVibratedBrightnessMax = false
                     }
                     "volume" -> { 
-                        val maxVol = audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC); val newVolFloat = (startVolume.toFloat() / maxVol) - (deltaY / size.height); gestureValue = newVolFloat.coerceIn(0f, 1f); audioManager.setStreamVolume(AudioManager.STREAM_MUSIC, (gestureValue * maxVol).roundToInt(), 0) 
-                        // 极值精准震动
-                        if (gestureValue == 0f && !hasVibratedVolumeMin) { haptic.performHapticFeedback(HapticFeedbackType.LongPress); hasVibratedVolumeMin = true }
-                        if (gestureValue > 0f) hasVibratedVolumeMin = false
-                        if (gestureValue == 1f && !hasVibratedVolumeMax) { haptic.performHapticFeedback(HapticFeedbackType.LongPress); hasVibratedVolumeMax = true }
-                        if (gestureValue < 1f) hasVibratedVolumeMax = false
+                        val maxVol = audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC); 
+                        val newV = ((startVolume.toFloat() / maxVol) - (deltaY / size.height)).coerceIn(0f, 1f)
+                        gestureValue = newV
+                        volumeDisplayValue = newV
+                        audioManager.setStreamVolume(AudioManager.STREAM_MUSIC, (newV * maxVol).roundToInt(), 0) 
+                        
+                        if (newV == 0f && !hasVibratedVolumeMin) { haptic.performHapticFeedback(HapticFeedbackType.LongPress); hasVibratedVolumeMin = true }
+                        if (newV > 0f) hasVibratedVolumeMin = false
+                        if (newV == 1f && !hasVibratedVolumeMax) { haptic.performHapticFeedback(HapticFeedbackType.LongPress); hasVibratedVolumeMax = true }
+                        if (newV < 1f) hasVibratedVolumeMax = false
                     }
                 }
             },
@@ -1265,7 +1287,7 @@ fun InternalVideoPlayer(url: String, title: String, cookie: String, series: Medi
                 if (gestureMode == "seek") { 
                     if (abs(currentPosition - dragStartPosition) > 1000L) { 
                         exoPlayer.seekTo(currentPosition); if (isPlaying) exoPlayer.play() 
-                        haptic.performHapticFeedback(HapticFeedbackType.LongPress) // 拖拽结束震动
+                        haptic.performHapticFeedback(HapticFeedbackType.LongPress)
                     } else currentPosition = dragStartPosition 
                 }; 
                 gestureMode = ""; gestureType = ""; isDraggingSeekBar = false 
@@ -1277,7 +1299,7 @@ fun InternalVideoPlayer(url: String, title: String, cookie: String, series: Medi
         detectTapGestures(
             onTap = { showControls = !showControls },
             onDoubleTap = { offset -> 
-                haptic.performHapticFeedback(HapticFeedbackType.LongPress) // 双击震动
+                haptic.performHapticFeedback(HapticFeedbackType.LongPress)
                 when { 
                     offset.x < size.width * 0.25f -> { exoPlayer.seekTo((exoPlayer.currentPosition - 10000).coerceAtLeast(0)); seekMessage = "已快退 10 秒" }; 
                     offset.x > size.width * 0.75f -> { exoPlayer.seekTo((exoPlayer.currentPosition + 10000).coerceAtMost(if (duration > 0) duration else Long.MAX_VALUE)); seekMessage = "已快进 10 秒" }; 
@@ -1285,7 +1307,7 @@ fun InternalVideoPlayer(url: String, title: String, cookie: String, series: Medi
                 } 
             },
             onLongPress = { 
-                haptic.performHapticFeedback(HapticFeedbackType.LongPress) // 长按震动
+                haptic.performHapticFeedback(HapticFeedbackType.LongPress)
                 isLongPressing = true; exoPlayer.setPlaybackSpeed(2.0f) 
             },
             onPress = { 
@@ -1346,7 +1368,7 @@ fun InternalVideoPlayer(url: String, title: String, cookie: String, series: Medi
                     .padding(vertical = 16.dp)
             ) {
                 Crossfade(
-                    targetState = gestureValue < 0.5f,
+                    targetState = brightnessDisplayValue < 0.5f,
                     animationSpec = tween(durationMillis = 200),
                     label = "brightness_icon_crossfade"
                 ) { isLow ->
@@ -1368,13 +1390,13 @@ fun InternalVideoPlayer(url: String, title: String, cookie: String, series: Medi
                     Box(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .fillMaxHeight(gestureValue.coerceIn(0f, 1f))
+                            .fillMaxHeight(brightnessDisplayValue.coerceIn(0f, 1f))
                             .background(Color.White, RoundedCornerShape(2.dp))
                     )
                 }
                 Spacer(modifier = Modifier.height(12.dp))
                 AppText(
-                    text = if (gestureValue == 0f) "极暗" else "${(gestureValue * 100).roundToInt()}%",
+                    text = if (brightnessDisplayValue == 0f) "极暗" else "${(brightnessDisplayValue * 100).roundToInt()}%",
                     color = Color.White,
                     fontSize = 12.sp,
                     fontWeight = FontWeight.Bold
@@ -1400,8 +1422,8 @@ fun InternalVideoPlayer(url: String, title: String, cookie: String, series: Medi
             ) {
                 Crossfade(
                     targetState = when {
-                        gestureValue == 0f -> 0
-                        gestureValue < 0.5f -> 1
+                        volumeDisplayValue == 0f -> 0
+                        volumeDisplayValue < 0.5f -> 1
                         else -> 2
                     },
                     animationSpec = tween(durationMillis = 200),
@@ -1430,13 +1452,13 @@ fun InternalVideoPlayer(url: String, title: String, cookie: String, series: Medi
                     Box(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .fillMaxHeight(gestureValue.coerceIn(0f, 1f))
+                            .fillMaxHeight(volumeDisplayValue.coerceIn(0f, 1f))
                             .background(Color.White, RoundedCornerShape(2.dp))
                     )
                 }
                 Spacer(modifier = Modifier.height(12.dp))
                 AppText(
-                    text = if (gestureValue == 0f) "静音" else "${(gestureValue * 100).roundToInt()}%",
+                    text = if (volumeDisplayValue == 0f) "静音" else "${(volumeDisplayValue * 100).roundToInt()}%",
                     color = Color.White,
                     fontSize = 12.sp,
                     fontWeight = FontWeight.Bold
