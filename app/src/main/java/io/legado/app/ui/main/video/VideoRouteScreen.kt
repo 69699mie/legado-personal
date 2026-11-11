@@ -923,7 +923,6 @@ fun InternalVideoPlayer(url: String, title: String, cookie: String, series: Medi
     val isInMultiWindowMode = remember { activity?.isInMultiWindowMode == true }
     DisposableEffect(Unit) { view.keepScreenOn = true; onDispose { view.keepScreenOn = false } }
 
-    // 🌟 修复标题重复：使用正则剔除剧名和 TMDB 集标题中自带的“第 xxx 集”
     val dynamicTitle = remember(latestSeries, currentFile) {
         val parsedInfo = currentFile.parsedInfo ?: io.legado.app.utils.VideoFileNameParser.parse(currentFile.name)
         val epNum = parsedInfo.episode ?: Regex("第\\s*([0-9]+)\\s*集").find(currentFile.name)?.groupValues?.get(1)?.toIntOrNull()
@@ -931,16 +930,10 @@ fun InternalVideoPlayer(url: String, title: String, cookie: String, series: Medi
         if (epNum != null && latestSeries.category != "电影") {
             val tmdbEpTitle = latestSeries.seasonEpisodeTitles["${season}_${epNum}"] ?: latestSeries.episodeTitles[epNum]
             
-            // 清洗剧名（去掉可能存在的“第248集”）
             val cleanBaseTitle = latestSeries.title.replace(Regex("\\s*第\\s*\\d+\\s*集.*$"), "").trim().ifBlank { latestSeries.title }
-            
-            if (!tmdbEpTitle.isNullOrBlank()) {
-                // 清洗 TMDB 标题（如果 TMDB 返回的标题本身就等于“第248集”，去掉它，避免重复）
-                val cleanTmdbTitle = tmdbEpTitle.replace(Regex("^\\s*第\\s*\\d+\\s*集\\s*"), "").trim()
-                if (cleanTmdbTitle.isNotBlank()) "$cleanBaseTitle 第${epNum}集 $cleanTmdbTitle" else "$cleanBaseTitle 第${epNum}集"
-            } else {
-                "$cleanBaseTitle 第${epNum}集"
-            }
+            val cleanTmdbTitle = tmdbEpTitle?.replace(Regex("^\\s*第\\s*\\d+\\s*集\\s*"), "")?.trim()
+
+            if (!cleanTmdbTitle.isNullOrBlank()) "$cleanBaseTitle 第${epNum}集 $cleanTmdbTitle" else "$cleanBaseTitle 第${epNum}集"
         } else latestSeries.title
     }
 
@@ -1424,7 +1417,8 @@ fun InternalVideoPlayer(url: String, title: String, cookie: String, series: Medi
                             items(sortedVideos) { file ->
                                 val e = file.parsedInfo?.episode; val s = file.parsedInfo?.season ?: 1
                                 val tmdbTitle = if (e != null) latestSeries.seasonEpisodeTitles["${s}_${e}"] ?: latestSeries.episodeTitles[e] else null
-                                val label = if (e != null && latestSeries.category != "电影" && latestSeries.videos.size > 1) "第${e}集" + if (!tmdbTitle.isNullOrBlank()) " $tmdbTitle" else "" else if (latestSeries.videos.size == 1) latestSeries.title else (file.folderPath.lastOrNull() ?: file.name.substringBeforeLast("."))
+                                val cleanTmdbTitle = tmdbTitle?.replace(Regex("^\\s*第\\s*\\d+\\s*集\\s*"), "")?.trim()
+                                val label = if (e != null && latestSeries.category != "电影" && latestSeries.videos.size > 1) "第${e}集" + if (!cleanTmdbTitle.isNullOrBlank()) " $cleanTmdbTitle" else "" else if (latestSeries.videos.size == 1) latestSeries.title else (file.folderPath.lastOrNull() ?: file.name.substringBeforeLast("."))
                                 val isCurrent = file.fid == currentFile.fid
                                 AppText(text = label, color = if (isCurrent) Color.White else Color.Gray, fontWeight = if (isCurrent) FontWeight.Bold else FontWeight.Normal, fontSize = 15.sp, modifier = Modifier.fillMaxWidth().background(if (isCurrent) Color(0x33FFFFFF) else Color.Transparent, RoundedCornerShape(8.dp)).clickable { viewModel.playVideo(context, latestSeries, file); showEpisodeDrawer = false }.padding(vertical = 12.dp, horizontal = 8.dp))
                             }
@@ -1646,8 +1640,9 @@ fun MediaDetailScreen(
                     items(currentSeasonVideos.take(10)) { file ->
                         val e = file.parsedInfo?.episode; val s = file.parsedInfo?.season ?: 1
                         val tmdbTitle = if (e != null) series.seasonEpisodeTitles["${s}_${e}"] ?: series.episodeTitles[e] else null
+                        val cleanTmdbTitle = tmdbTitle?.replace(Regex("^\\s*第\\s*\\d+\\s*集\\s*"), "")?.trim()
                         val stillUrl = if (e != null) series.seasonEpisodeStills["${s}_${e}"] ?: series.episodeStills[e] else null
-                        val label = if (e != null && series.category != "电影" && series.videos.size > 1) "第${e}集" + if (!tmdbTitle.isNullOrBlank()) " $tmdbTitle" else "" else if (series.videos.size == 1) series.title else (file.folderPath.lastOrNull() ?: file.name.substringBeforeLast("."))
+                        val label = if (e != null && series.category != "电影" && series.videos.size > 1) "第${e}集" + if (!cleanTmdbTitle.isNullOrBlank()) " $cleanTmdbTitle" else "" else if (series.videos.size == 1) series.title else (file.folderPath.lastOrNull() ?: file.name.substringBeforeLast("."))
                         Column(modifier = Modifier.width(160.dp).clickable { onPlay(series, file) }) {
                             Box(modifier = Modifier.fillMaxWidth().aspectRatio(16f / 9f).clip(RoundedCornerShape(8.dp)).background(Color(0xFFE0E0E0)), contentAlignment = Alignment.Center) {
                                 if (stillUrl != null) AsyncImage(model = stillUrl, contentDescription = null, modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Crop) else Icon(Icons.Default.PlayArrow, null, tint = Color.White)
