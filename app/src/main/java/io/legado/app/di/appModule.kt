@@ -1,9 +1,6 @@
 package io.legado.app.di
 
 import android.os.Build
-import androidx.media3.database.StandaloneDatabaseProvider
-import androidx.media3.datasource.cache.LeastRecentlyUsedCacheEvictor
-import androidx.media3.datasource.cache.SimpleCache
 import coil3.ImageLoader
 import coil3.gif.AnimatedImageDecoder
 import coil3.gif.GifDecoder
@@ -341,14 +338,12 @@ import io.legado.app.ui.widget.components.privacy.PrivateReadGateViewModel
 import io.legado.app.utils.isNightMode
 import io.legado.app.utils.sysConfiguration
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.runBlocking
 import okio.Path.Companion.toOkioPath
 import org.koin.core.module.dsl.factoryOf
 import org.koin.core.module.dsl.singleOf
 import org.koin.core.module.dsl.viewModel
 import org.koin.core.module.dsl.viewModelOf
 import org.koin.dsl.module
-import java.io.File
 import kotlin.time.Clock
 
 val appModule = module {
@@ -365,20 +360,6 @@ val appModule = module {
     
     // 显式指定返回类型为 VideoScrapedDao，防止 R8 混淆后 Koin 反射注入崩溃
     single<VideoScrapedDao> { get<AppDatabase>().videoScrapedDao }
-
-    // 🌟 核心修复：使用 runBlocking(Dispatchers.IO) 确保 SimpleCache 初始化不阻塞主线程
-    // 由于 App 拥有启动页遮罩（1.5秒），这里的毫秒级耗时会被完美掩盖，彻底杜绝播放卡顿风险
-    single<SimpleCache> {
-        val context = get<android.content.Context>()
-        runBlocking(Dispatchers.IO) {
-            val cacheDir = File(context.cacheDir, "video_cache")
-            SimpleCache(
-                cacheDir,
-                LeastRecentlyUsedCacheEvictor(1024L * 1024 * 1024), // 1GB 缓存上限
-                StandaloneDatabaseProvider(context)
-            )
-        }
-    }
 
     singleOf(::ReadRecordRepository)
     single<HomeDashboardGateway> { HomeDashboardRepository(get(), get()) }
