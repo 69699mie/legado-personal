@@ -87,7 +87,6 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.*
-import androidx.compose.material.icons.outlined.StarBorder
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -133,6 +132,7 @@ import androidx.media3.common.TrackGroup
 import androidx.media3.common.TrackSelectionOverride
 import androidx.media3.common.Tracks
 import androidx.media3.common.VideoSize
+import androidx.media3.datasource.DefaultDataSource
 import androidx.media3.datasource.HttpDataSource
 import androidx.media3.exoplayer.DefaultLoadControl
 import androidx.media3.exoplayer.DefaultRenderersFactory
@@ -142,15 +142,20 @@ import androidx.media3.session.MediaSession
 import androidx.media3.ui.PlayerView
 import coil3.compose.AsyncImage
 import io.legado.app.data.repository.VideoSettingsRepository
+import io.legado.app.ui.main.video.proxy.LocalProxyServer
 import io.legado.app.ui.widget.components.text.AppText
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
+import okhttp3.Request
 import org.json.JSONArray
 import org.koin.androidx.compose.koinViewModel
 import org.koin.compose.koinInject
 import sh.calvin.reorderable.ReorderableItem
 import sh.calvin.reorderable.rememberReorderableLazyListState
+import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -904,6 +909,31 @@ fun WebLoginView(onLoginSuccess: (String) -> Unit, onCancel: () -> Unit) {
     }
 }
 
+private suspend fun fetchTotalLength(url: String, cookie: String): Long = withContext(Dispatchers.IO) {
+    try {
+        val client = OkHttpClient.Builder()
+            .connectTimeout(10, TimeUnit.SECONDS)
+            .readTimeout(10, TimeUnit.SECONDS)
+            .build()
+        val req = Request.Builder()
+            .url(url)
+            .header("Cookie", cookie)
+            .header("Referer", "https://drive.quark.cn/")
+            .header("Range", "bytes=0-0")
+            .head()
+            .build()
+        client.newCall(req).execute().use { res ->
+            res.header("Content-Range")
+                ?.substringAfter("/")
+                ?.toLongOrNull()
+                ?: res.header("Content-Length")?.toLongOrNull()
+                ?: 0L
+        }
+    } catch (e: Exception) {
+        0L
+    }
+}
+
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
 fun InternalVideoPlayer(url: String, title: String, cookie: String, series: MediaSeries, currentFile: QuarkFile, viewModel: VideoScraperViewModel, downloadThreads: Int, onBack: () -> Unit) {
@@ -913,6 +943,7 @@ fun InternalVideoPlayer(url: String, title: String, cookie: String, series: Medi
     val configuration = LocalConfiguration.current
     val isLandscape = configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
     val videoSettingsRepository = koinInject<VideoSettingsRepository>()
+    val proxyServer = koinInject<LocalProxyServer>()
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val latestSeries = uiState.seriesList.find { it.id == series.id || it.title == series.title } ?: series
     
@@ -1056,12 +1087,7 @@ fun InternalVideoPlayer(url: String, title: String, cookie: String, series: Medi
     }
 
     val exoPlayer = remember {
-        val headers = mapOf("Cookie" to cookie, "Referer" to "https://drive.quark.cn/")
-        val okHttpClient = OkHttpClient.Builder().connectTimeout(60, TimeUnit.SECONDS).readTimeout(60, TimeUnit.SECONDS).build()
-        val dataSourceFactory = ParallelDownloadDataSource.Factory(okHttpClient, headers, downloadThreads)
         val renderersFactory = DefaultRenderersFactory(context).setEnableAudioFloatOutput(true)
-        val mediaItem = MediaItem.Builder().setUri(url).setMediaMetadata(MediaMetadata.Builder().setTitle(title).build()).build()
-        val mediaSource = ProgressiveMediaSource.Factory(dataSourceFactory).createMediaSource(mediaItem)
         
         // 🌟 修复 OOM：强制限制缓冲区上限为 48MB，防止高码率视频撑爆内存
         val loadControl = DefaultLoadControl.Builder()
@@ -1069,7 +1095,7 @@ fun InternalVideoPlayer(url: String, title: String, cookie: String, series: Medi
             .setTargetBufferBytes(48 * 1024 * 1024) 
             .build()
             
-        ExoPlayer.Builder(context, renderersFactory).setLoadControl(loadControl).build().apply { setMediaSource(mediaSource); prepare(); playWhenReady = true; setWakeMode(androidx.media3.common.C.WAKE_MODE_NETWORK) }
+        ExoPlayer.Builder(context, renderersFactory).setLoadControl(loadControl).build().apply { playWhenReady = true; setWakeMode(androidx.media3.common.C.WAKE_MODE_NETWORK) }
     }
 
     val mediaSession = remember { MediaSession.Builder(context, exoPlayer).build() }
@@ -1125,13 +1151,50 @@ fun InternalVideoPlayer(url: String, title: String, cookie: String, series: Medi
         val savedPos = viewModel.getVideoProgress(currentFile.fid)
         val startPositionMs = if (savedPos > 0L) savedPos else 0L
 
-        val headers = mapOf("Cookie" to cookie, "Referer" to "https://drive.quark.cn/")
-        val okHttpClient = OkHttpClient.Builder().connectTimeout(60, TimeUnit.SECONDS).readTimeout(60, TimeUnit.SECONDS).build()
-        val dataSourceFactory = ParallelDownloadDataSource.Factory(okHttpClient, headers, downloadThreads)
+        // 1. 获取 totalLength（HEAD 或 Range: bytes=0-0）
+        val totalLength = fetchTotalLength(url, cookie)
+        if (totalLength <= 0L) {
+            errorDialogMsg = "无法获取视频文件大小，请重试"
+            return@LaunchedEffect
+        }
 
-        val mediaItem = MediaItem.Builder().setUri(url).setMediaMetadata(MediaMetadata.Builder().setTitle(title).build()).build()
-        val mediaSource = ProgressiveMediaSource.Factory(dataSourceFactory).createMediaSource(mediaItem)
-        
+        // 2. 缓存文件
+        val cacheFile = File(context.cacheDir, "proxy_${currentFile.fid}.mp4")
+
+        // 3. 注册代理 + 直链刷新
+        val headers = mapOf(
+            "Cookie" to cookie,
+            "Referer" to "https://drive.quark.cn/"
+        )
+        val refreshUrl: (suspend () -> String?) = {
+            withContext(Dispatchers.IO) {
+                try {
+                    viewModel.getPlayUrl(currentFile.fid)
+                } catch (e: Exception) {
+                    null
+                }
+            }
+        }
+
+        proxyServer.registerVideo(
+            id = currentFile.fid,
+            url = url,
+            headers = headers,
+            file = cacheFile,
+            totalLength = totalLength,
+            refreshUrl = refreshUrl
+        )
+
+        // 4. 播放代理地址
+        val proxyUrl = proxyServer.proxyUrlFor(currentFile.fid)
+        val mediaItem = MediaItem.Builder()
+            .setUri(proxyUrl)
+            .setMediaMetadata(MediaMetadata.Builder().setTitle(title).build())
+            .build()
+        val mediaSource = ProgressiveMediaSource
+            .Factory(DefaultDataSource.Factory(context))
+            .createMediaSource(mediaItem)
+
         exoPlayer.setMediaSource(mediaSource)
         if (startPositionMs > 0L) exoPlayer.seekTo(startPositionMs)
         exoPlayer.prepare()
@@ -1181,7 +1244,12 @@ fun InternalVideoPlayer(url: String, title: String, cookie: String, series: Medi
             }
         }
         exoPlayer.addListener(listener)
-        onDispose { exoPlayer.removeListener(listener); exoPlayer.stop(); exoPlayer.release() }
+        onDispose { 
+            exoPlayer.removeListener(listener)
+            exoPlayer.stop()
+            exoPlayer.release() 
+            proxyServer.unregisterAll()
+        }
     }
 
     LaunchedEffect(isPlaying) {
