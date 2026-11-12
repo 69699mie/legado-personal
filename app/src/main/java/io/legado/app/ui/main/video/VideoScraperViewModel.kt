@@ -67,7 +67,7 @@ data class MediaSeries(
     val seasonEpisodeTitles: Map<String, String> = emptyMap(),
     val seasonEpisodeStills: Map<String, String> = emptyMap(),
     val groupName: String? = null,
-    val isManuallyEdited: Boolean = false 
+    val isManuallyEdited: Boolean = false
 )
 
 @Immutable
@@ -181,6 +181,18 @@ class VideoScraperViewModel(
             fetchQuarkFiles("0")
             if (fids.isNotEmpty()) loadLibraryVideos()
         }
+    }
+
+    // 🌟 新增：强力提取集数的兜底方法，解决 264.mp4 无法识别的问题
+    fun extractEpisodeNumber(fileName: String, parsedEpisode: Int?): Int {
+        if (parsedEpisode != null && parsedEpisode > 0) return parsedEpisode
+        val seasonEpisodeMatch = Regex("(?i)S\\d+E(\\d+)").find(fileName)
+        if (seasonEpisodeMatch != null) return seasonEpisodeMatch.groupValues[1].toIntOrNull() ?: 0
+        val cnMatch = Regex("(?:第|EP|E)\\s*(\\d+)", RegexOption.IGNORE_CASE).find(fileName)
+        if (cnMatch != null) return cnMatch.groupValues[1].toIntOrNull() ?: 0
+        val cleanName = fileName.replace(Regex("\\d{3,4}[pP]", RegexOption.IGNORE_CASE), "").replace(Regex("\\d{4}"), "")
+        val numMatch = Regex("(?<!\\d)(\\d{1,4})(?!\\d)").find(cleanName)
+        return numMatch?.groupValues?.get(1)?.toIntOrNull() ?: 0
     }
 
     private fun saveScrapedCache() {
@@ -1287,16 +1299,17 @@ class VideoScraperViewModel(
         val cookie = _uiState.value.cookie
         
         val parsedInfo = file.parsedInfo ?: VideoFileNameParser.parse(file.name)
-        val epNum = parsedInfo.episode
+        
+        // 🌟 核心修复：使用兜底方法提取集数，解决 264.mp4 等命名未识别问题
+        val epNum = extractEpisodeNumber(file.name, parsedInfo.episode).takeIf { it > 0 }
         val season = parsedInfo.season ?: 1
         
         var titleText = realSeries.title
         if (realSeries.category != "电影") {
-            val realEpNum = epNum ?: Regex("第\\s*([0-9]+)\\s*集").find(file.name)?.groupValues?.get(1)?.toIntOrNull()
-            if (realEpNum != null) {
-                val tmdbEpTitle = realSeries.seasonEpisodeTitles["${season}_${realEpNum}"] ?: realSeries.episodeTitles[realEpNum]
-                titleText = if (!tmdbEpTitle.isNullOrBlank()) "${realSeries.title} 第${realEpNum}集 $tmdbEpTitle"
-                else "${realSeries.title} 第${realEpNum}集"
+            if (epNum != null) {
+                val tmdbEpTitle = realSeries.seasonEpisodeTitles["${season}_${epNum}"] ?: realSeries.episodeTitles[epNum]
+                titleText = if (!tmdbEpTitle.isNullOrBlank()) "${realSeries.title} 第${epNum}集 $tmdbEpTitle"
+                else "${realSeries.title} 第${epNum}集"
             } else if (file.name.contains("第") && file.name.contains("集")) {
                 titleText = file.name 
             }
@@ -1366,16 +1379,15 @@ class VideoScraperViewModel(
             videoSettingsRepository.pendingPlayFid = null
             
             val parsedInfo = file.parsedInfo ?: VideoFileNameParser.parse(file.name)
-            val epNum = parsedInfo.episode
+            val epNum = extractEpisodeNumber(file.name, parsedInfo.episode).takeIf { it > 0 }
             val season = parsedInfo.season ?: 1
             
             var titleText = series.title
             if (series.category != "电影") {
-                val realEpNum = epNum ?: Regex("第\\s*([0-9]+)\\s*集").find(file.name)?.groupValues?.get(1)?.toIntOrNull()
-                if (realEpNum != null) {
-                    val tmdbEpTitle = series.seasonEpisodeTitles["${season}_${realEpNum}"] ?: series.episodeTitles[realEpNum]
-                    titleText = if (!tmdbEpTitle.isNullOrBlank()) "${series.title} 第${realEpNum}集 $tmdbEpTitle"
-                    else "${series.title} 第${realEpNum}集"
+                if (epNum != null) {
+                    val tmdbEpTitle = series.seasonEpisodeTitles["${season}_${epNum}"] ?: series.episodeTitles[epNum]
+                    titleText = if (!tmdbEpTitle.isNullOrBlank()) "${series.title} 第${epNum}集 $tmdbEpTitle"
+                    else "${series.title} 第${epNum}集"
                 } else if (file.name.contains("第") && file.name.contains("集")) {
                     titleText = file.name
                 }
@@ -1525,7 +1537,6 @@ class VideoScraperViewModel(
         } catch (e: Exception) {}
     }
 
-    // 🌟 新增：供代理层刷新直链使用
     fun getPlayUrl(fid: String): String? {
         val cookie = _uiState.value.cookie
         return fetchDirectDownloadUrl(fid, cookie)
