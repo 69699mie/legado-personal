@@ -1062,7 +1062,13 @@ fun InternalVideoPlayer(url: String, title: String, cookie: String, series: Medi
         val renderersFactory = DefaultRenderersFactory(context).setEnableAudioFloatOutput(true)
         val mediaItem = MediaItem.Builder().setUri(url).setMediaMetadata(MediaMetadata.Builder().setTitle(title).build()).build()
         val mediaSource = ProgressiveMediaSource.Factory(dataSourceFactory).createMediaSource(mediaItem)
-        val loadControl = DefaultLoadControl.Builder().setBufferDurationsMs(30000, 120000, 1500, 3000).build()
+        
+        // 🌟 修复 OOM：强制限制缓冲区上限为 48MB，防止高码率视频撑爆内存
+        val loadControl = DefaultLoadControl.Builder()
+            .setBufferDurationsMs(30000, 120000, 1500, 3000)
+            .setTargetBufferBytes(48 * 1024 * 1024) 
+            .build()
+            
         ExoPlayer.Builder(context, renderersFactory).setLoadControl(loadControl).build().apply { setMediaSource(mediaSource); prepare(); playWhenReady = true; setWakeMode(androidx.media3.common.C.WAKE_MODE_NETWORK) }
     }
 
@@ -1236,7 +1242,6 @@ fun InternalVideoPlayer(url: String, title: String, cookie: String, series: Medi
                     }) { AppText("复制错误", color = Color(0xFF333333)) }
                     TextButton(onClick = {
                         errorDialogMsg = null
-                        // 触发重试机制，重新获取最新直链并播放
                         viewModel.playVideo(context, series, currentFile)
                     }) { AppText("重试", color = Color(0xFF333333)) }
                     TextButton(onClick = { errorDialogMsg = null }) { AppText("关闭", color = Color(0xFF333333)) }
