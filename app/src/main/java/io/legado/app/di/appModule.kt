@@ -358,7 +358,7 @@ val appModule = module {
     single { get<AppDatabase>().ruleSubDao }
     single { get<AppDatabase>().videoDao }
     
-    // 显式指定返回类型为 VideoScrapedDao，防止 R8 混淆后 Koin 反射注入崩溃
+    // 🌟 核心修复：显式指定返回类型为 VideoScrapedDao，防止 R8 混淆后 Koin 反射注入崩溃
     single<VideoScrapedDao> { get<AppDatabase>().videoScrapedDao }
 
     singleOf(::ReadRecordRepository)
@@ -624,7 +624,7 @@ val appModule = module {
     viewModelOf(::AllBookmarkViewModel)
     viewModelOf(::TxtTocRuleViewModel)
     
-    // 核心修复：将 viewModelOf 改为显式实例化，避免 R8 混淆后泛型推断丢失
+    // 🌟 核心修复 2：将 viewModelOf 改为显式实例化，避免 R8 混淆后泛型推断丢失
     viewModel { VideoScraperViewModel(get(), get()) }
 
     viewModel {
