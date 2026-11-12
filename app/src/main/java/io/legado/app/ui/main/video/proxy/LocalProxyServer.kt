@@ -14,7 +14,8 @@ class LocalProxyServer(
         val url: String,
         val headers: Map<String, String>,
         val file: File,
-        val totalLength: Long
+        val totalLength: Long,
+        val refreshUrl: (suspend () -> String?)?
     )
 
     fun registerVideo(
@@ -22,20 +23,20 @@ class LocalProxyServer(
         url: String,
         headers: Map<String, String>,
         file: File,
-        totalLength: Long
+        totalLength: Long,
+        refreshUrl: (suspend () -> String?)? = null
     ) {
-        registry[id] = VideoInfo(url, headers, file, totalLength)
+        registry[id] = VideoInfo(url, headers, file, totalLength, refreshUrl)
     }
 
-    fun proxyUrlFor(id: String): String = "http://127.0.0.1:$listeningPort/$id"
+    fun proxyUrlFor(id: String): String =
+        "http://127.0.0.1:$listeningPort/$id"
 
     override fun serve(session: IHTTPSession): Response {
         val id = session.uri.removePrefix("/").substringBefore("?")
         val info = registry[id]
             ?: return newFixedLengthResponse(
-                Response.Status.NOT_FOUND,
-                "text/plain",
-                "Not Found"
+                Response.Status.NOT_FOUND, "text/plain", "Not Found"
             )
 
         val rangeHeader = session.headers["range"]
@@ -53,7 +54,8 @@ class LocalProxyServer(
         }
 
         downloadManager.startTask(
-            id, info.url, info.headers, info.totalLength, info.file
+            id, info.url, info.headers, info.totalLength,
+            info.file, info.refreshUrl
         )
 
         if (!downloadManager.awaitData(id, start)) {
