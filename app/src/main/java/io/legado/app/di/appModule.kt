@@ -322,6 +322,8 @@ import io.legado.app.ui.main.homepage.HomepageViewModel
 import io.legado.app.ui.main.my.MyViewModel
 import io.legado.app.ui.main.rss.RssViewModel
 import io.legado.app.ui.main.video.VideoScraperViewModel
+import io.legado.app.ui.main.video.proxy.LocalProxyServer
+import io.legado.app.ui.main.video.proxy.VideoDownloadManager
 import io.legado.app.ui.replace.ReplaceEditRoute
 import io.legado.app.ui.replace.ReplaceRuleViewModel
 import io.legado.app.ui.replace.edit.ReplaceEditViewModel
@@ -360,6 +362,10 @@ val appModule = module {
     
     // 🌟 核心修复：显式指定返回类型为 VideoScrapedDao，防止 R8 混淆后 Koin 反射注入崩溃
     single<VideoScrapedDao> { get<AppDatabase>().videoScrapedDao }
+
+    // 🌟 影视本地代理注册
+    single { VideoDownloadManager(okHttpClient) }
+    single { LocalProxyServer(get()) }
 
     singleOf(::ReadRecordRepository)
     single<HomeDashboardGateway> { HomeDashboardRepository(get(), get()) }
