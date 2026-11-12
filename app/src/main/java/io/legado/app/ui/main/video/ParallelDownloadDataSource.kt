@@ -95,6 +95,7 @@ class ParallelDownloadDataSource(
         remainingBytes = endPosition - startPosition
         if (remainingBytes <= 0) return 0
 
+        // 2MB 管道缓冲
         pipedInputStream = PipedInputStream(2 * 1024 * 1024)
         pipedOutputStream = PipedOutputStream(pipedInputStream)
 
@@ -109,14 +110,16 @@ class ParallelDownloadDataSource(
         
         readyStreams?.put(0, PendingStream(firstChunkStream, firstChunkActualLen, null))
 
+        // 自适应并发：由于流式读取极快，不需要太多线程，maxBufferedChunks + 2 足以跑满带宽
         val actualThreads = maxBufferedChunks.coerceAtMost(threadCount).coerceAtLeast(1) + 2 
+        
         downloadExecutor = Executors.newFixedThreadPool(actualThreads) { r ->
             Thread(r, "parallel-dl").apply { isDaemon = true }
         }
 
         val nextIdx = AtomicInteger(1)
         for (i in 0 until actualThreads) {
-            downloadExecutor.execute {
+            downloadExecutor?.execute {
                 while (running.get()) {
                     val idx = nextIdx.getAndIncrement()
                     if (idx >= chunkCount) break
@@ -131,15 +134,17 @@ class ParallelDownloadDataSource(
                     if (chunkStart <= chunkEnd) {
                         try {
                             val stream = downloadChunkStream(chunkStart, chunkEnd)
-                            // 🌟 修复1：如果流获取成功但组件已关闭，立即释放流，防止连接泄漏
-                            if (running.get()) {
-                                readyStreams?.put(idx, PendingStream(stream, (chunkEnd - chunkStart + 1), null))
+                            // 🌟 加固：防止 close() 并发导致流泄漏
+                            val map = readyStreams
+                            if (running.get() && map != null) {
+                                map.put(idx, PendingStream(stream, (chunkEnd - chunkStart + 1), null))
                             } else {
                                 try { stream.close() } catch (_: Exception) {}
                             }
                         } catch (e: Exception) {
-                            if (running.get()) {
-                                readyStreams?.put(idx, PendingStream(null, 0, e))
+                            val map = readyStreams
+                            if (running.get() && map != null) {
+                                map.put(idx, PendingStream(null, 0, e))
                             }
                         }
                     }
@@ -212,6 +217,7 @@ class ParallelDownloadDataSource(
     override fun close() {
         running.set(false)
         
+        // 1. 释放足够的信号量，唤醒所有卡在 acquire() 的下载线程
         val sem = semaphore
         if (sem != null) {
             for (i in 0 until (threadCount + maxBufferedChunks + 2)) {
@@ -220,18 +226,21 @@ class ParallelDownloadDataSource(
         }
         semaphore = null
 
+        // 2. 关闭所有还未被写入管道的 InputStream
         readyStreams?.values?.forEach { pending ->
             try { pending.stream?.close() } catch (_: Exception) {}
         }
         readyStreams?.clear()
         readyStreams = null
 
+        // 3. 关闭管道，唤醒 Writer 和 Reader
         try { pipedOutputStream?.close() } catch (_: Exception) {}
         pipedOutputStream = null
         
         try { pipedInputStream?.close() } catch (_: Exception) {}
         pipedInputStream = null
 
+        // 4. 彻底销毁线程池
         try { downloadExecutor?.shutdownNow() } catch (_: Exception) {}
         downloadExecutor = null
         
