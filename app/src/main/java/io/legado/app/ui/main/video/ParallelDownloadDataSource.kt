@@ -56,13 +56,19 @@ class ParallelDownloadDataSource(
                     throw IOException("探测数据失败: HTTP ${res.code}")
                 }
                 
-                val contentType = res.header("Content-Type") ?: ""
-                if (contentType.contains("html") || contentType.contains("json")) {
+                // 加固1：拦截更多类型的伪装错误页
+                val contentType = (res.header("Content-Type") ?: "").lowercase()
+                if (contentType.contains("html") || contentType.contains("json") || contentType.contains("text/plain") || contentType.contains("xml")) {
                     val errMsg = res.body?.string()?.take(200) ?: ""
-                    throw IOException("服务器返回了错误格式: $contentType\n$errMsg")
+                    throw IOException("服务器返回了错误格式(可能触发风控): $contentType\n$errMsg")
                 }
                 
                 firstChunkData = res.body?.bytes() ?: throw IOException("返回数据为空")
+                
+                // 加固2：首块数据如果小得离谱，说明是报错页截断
+                if (firstChunkData.size < 1024) {
+                    throw IOException("返回数据异常截断，大小: ${firstChunkData.size} 字节")
+                }
 
                 val cr = res.header("Content-Range")
                 if (!cr.isNullOrBlank() && cr.contains("/")) {
@@ -218,12 +224,23 @@ class ParallelDownloadDataSource(
             if (res.code == 200 && start > 0) {
                 throw IOException("服务器未正确响应分片请求(HTTP 200)")
             }
-            val contentType = res.header("Content-Type") ?: ""
-            if (contentType.contains("html") || contentType.contains("json")) {
+            
+            // 加固3：分片下载同样校验 Content-Type
+            val contentType = (res.header("Content-Type") ?: "").lowercase()
+            if (contentType.contains("html") || contentType.contains("json") || contentType.contains("text/plain") || contentType.contains("xml")) {
                 throw IOException("服务器返回了错误格式: $contentType")
             }
+            
             val body = res.body ?: throw IOException("empty body")
-            return body.bytes()
+            val bytes = body.bytes()
+            
+            // 加固4：如果请求 8MB，只返回几百字节，绝对是报错或截断
+            val expectedLen = end - start + 1
+            if (bytes.size < expectedLen / 2 && expectedLen > 1024 * 1024) {
+                throw IOException("分片数据异常截断，预期: $expectedLen，实际: ${bytes.size}")
+            }
+            
+            return bytes
         }
     }
 
