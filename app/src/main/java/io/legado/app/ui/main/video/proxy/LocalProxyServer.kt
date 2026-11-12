@@ -15,6 +15,7 @@ class LocalProxyServer(
         val headers: Map<String, String>,
         val file: File,
         val totalLength: Long,
+        val downloadThreads: Int,
         val refreshUrl: (suspend () -> String?)?
     )
 
@@ -24,9 +25,10 @@ class LocalProxyServer(
         headers: Map<String, String>,
         file: File,
         totalLength: Long,
+        downloadThreads: Int,
         refreshUrl: (suspend () -> String?)? = null
     ) {
-        registry[id] = VideoInfo(url, headers, file, totalLength, refreshUrl)
+        registry[id] = VideoInfo(url, headers, file, totalLength, downloadThreads, refreshUrl)
     }
 
     fun proxyUrlFor(id: String): String =
@@ -51,12 +53,12 @@ class LocalProxyServer(
             }
         }
 
-        downloadManager.startTask(id, info.url, info.headers, info.totalLength, info.file, info.refreshUrl)
+        downloadManager.startTask(
+            id, info.url, info.headers, info.totalLength, info.file, info.refreshUrl
+        )
 
-        // 核心：如果请求的起始位置没下载过，立刻通知后台按需下载此区间
-        if (downloadManager.getDownloadedRange(id, start) == -1L) {
-            downloadManager.downloadRangeAsync(id, start)
-        }
+        // 发起按需下载及多线程预读
+        downloadManager.downloadRangeAsync(id, start, info.downloadThreads)
 
         if (!downloadManager.awaitData(id, start)) {
             return newFixedLengthResponse(Response.Status.RANGE_NOT_SATISFIABLE, "text/plain", "Range Not Ready")
