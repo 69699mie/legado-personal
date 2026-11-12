@@ -56,7 +56,6 @@ class ParallelDownloadDataSource(
                     throw IOException("探测数据失败: HTTP ${res.code}")
                 }
                 
-                // 仅做最基础的防脏数据拦截
                 val contentType = res.header("Content-Type") ?: ""
                 if (contentType.contains("html") || contentType.contains("json")) {
                     val errMsg = res.body?.string()?.take(200) ?: ""
