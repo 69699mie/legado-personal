@@ -12,11 +12,8 @@ import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
 import java.util.concurrent.Semaphore
-import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
-import java.util.concurrent.locks.Condition
-import java.util.concurrent.locks.ReentrantLock
 
 class ParallelDownloadDataSource(
     private val client: OkHttpClient,
@@ -40,10 +37,6 @@ class ParallelDownloadDataSource(
     private var readyChunks: ConcurrentHashMap<Int, PendingChunk>? = null
     private var semaphore: Semaphore? = null
 
-    // 🌟 新增：用于替代 Thread.sleep 的精准唤醒机制
-    private val chunkLock = ReentrantLock()
-    private val chunkAvailable = chunkLock.newCondition()
-
     override fun open(spec: DataSpec): Long {
         close()
 
@@ -57,13 +50,7 @@ class ParallelDownloadDataSource(
         var firstChunkData: ByteArray
         
         try {
-            // 🌟 修改：为探测请求设置独立超时，防止首次连接无限挂起
-            val probeClient = client.newBuilder()
-                .connectTimeout(8, TimeUnit.SECONDS)
-                .readTimeout(12, TimeUnit.SECONDS)
-                .build()
-            
-            probeClient.newCall(req).execute().use { res ->
+            client.newCall(req).execute().use { res ->
                 if (!res.isSuccessful) {
                     throw IOException("探测数据失败: HTTP ${res.code}")
                 }
@@ -91,7 +78,7 @@ class ParallelDownloadDataSource(
                 }
             }
         } catch (e: Exception) {
-            throw IOException("获取首块数据超时或异常", e)
+            throw IOException("获取首块数据异常", e)
         }
 
         endPosition = if (spec.length > 0 && spec.position + spec.length <= totalLength) {
@@ -114,8 +101,6 @@ class ParallelDownloadDataSource(
         semaphore = Semaphore(maxBufferedChunks)
 
         readyChunks?.put(0, PendingChunk(0, firstChunkData, null))
-        // 🌟 新增：首块就绪后唤醒等待线程
-        chunkLock.lock(); chunkAvailable.signalAll(); chunkLock.unlock()
 
         val ex = Executors.newFixedThreadPool(threadCount) { r ->
             Thread(r, "parallel-dl").apply { isDaemon = true }
@@ -140,11 +125,8 @@ class ParallelDownloadDataSource(
                         try {
                             val data = downloadRange(chunkStart, chunkEnd)
                             readyChunks?.put(idx, PendingChunk(idx, data, null))
-                            // 🌟 新增：分片就绪后唤醒等待线程
-                            chunkLock.lock(); chunkAvailable.signalAll(); chunkLock.unlock()
                         } catch (e: Exception) {
                             readyChunks?.put(idx, PendingChunk(idx, null, e))
-                            chunkLock.lock(); chunkAvailable.signalAll(); chunkLock.unlock()
                         }
                     }
                 }
@@ -182,17 +164,8 @@ class ParallelDownloadDataSource(
 
             val chunk = readyChunks?.remove(nextExpectedIndex)
             if (chunk == null) {
-                // 🌟 修改：使用 Condition 高效等待，替代 Thread.sleep(30)
-                chunkLock.lock()
-                try {
-                    if (readyChunks?.containsKey(nextExpectedIndex) != true && running.get()) {
-                        chunkAvailable.await(100, TimeUnit.MILLISECONDS)
-                    }
-                } catch (e: InterruptedException) {
-                    return C.RESULT_END_OF_INPUT
-                } finally {
-                    chunkLock.unlock()
-                }
+                // 🌟 恢复原版：不抢锁，直接让出 CPU，避免读取延迟
+                try { Thread.sleep(10) } catch (e: InterruptedException) { return C.RESULT_END_OF_INPUT }
                 continue
             }
 
@@ -213,8 +186,6 @@ class ParallelDownloadDataSource(
 
     override fun close() {
         running.set(false)
-        // 🌟 修改：关闭时唤醒所有阻塞线程，使其安全退出
-        chunkLock.lock(); chunkAvailable.signalAll(); chunkLock.unlock()
         try { currentChunkStream?.close() } catch (_: Exception) {}
         currentChunkStream = null
         try { executor?.shutdownNow() } catch (_: Exception) {}
@@ -269,10 +240,13 @@ class ParallelDownloadDataSource(
     }
 
     companion object {
-        private const val DEFAULT_THREAD_COUNT = 6
-        private const val INITIAL_CHUNK_SIZE = 2L * 1024 * 1024
-        private const val SUBSEQUENT_CHUNK_SIZE = 8L * 1024 * 1024
-        private const val DEFAULT_MAX_BUFFERED = 3
+        // 🌟 恢复 6 线程，拉满极速
+        private const val DEFAULT_THREAD_COUNT = 6 
+        private const val INITIAL_CHUNK_SIZE = 2L * 1024 * 1024 
+        // 🌟 核心优化：分块调为 4MB，避免 8MB 的瞬时并发峰值过高被夸克风控
+        private const val SUBSEQUENT_CHUNK_SIZE = 4L * 1024 * 1024 
+        // 🌟 核心优化：缓冲块调为 8，这能让下载器在后台疯狂预读（8 * 4MB = 32MB 缓冲池），不卡网速！
+        private const val DEFAULT_MAX_BUFFERED = 8 
         private const val QUARK_DESKTOP_UA =
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) quark-cloud-drive/2.5.20 Chrome/100.0.4896.160 Electron/18.3.5.4-b478491100 Safari/537.36 Channel/pckk_other_ch"
     }
