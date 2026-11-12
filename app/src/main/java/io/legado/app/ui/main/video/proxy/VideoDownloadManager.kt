@@ -13,7 +13,7 @@ import kotlin.concurrent.withLock
 class VideoDownloadManager(private val client: OkHttpClient) {
 
     data class DownloadTask(
-        val url: String,
+        @Volatile var url: String, // 🌟 必须允许动态刷新
         val headers: Map<String, String>,
         val totalLength: Long,
         val file: File,
@@ -21,7 +21,6 @@ class VideoDownloadManager(private val client: OkHttpClient) {
         val running: AtomicBoolean = AtomicBoolean(true),
         val writeLock: ReentrantLock = ReentrantLock(),
         val condition: java.util.concurrent.locks.Condition = writeLock.newCondition(),
-        // 直链刷新回调：返回新直链，失败返回 null
         val refreshUrl: (suspend () -> String?)? = null
     )
 
@@ -54,33 +53,33 @@ class VideoDownloadManager(private val client: OkHttpClient) {
             refreshUrl = refreshUrl
         )
         tasks[id] = task
-
-        executor.execute { downloadLoop(id, task) }
     }
 
-    private fun downloadLoop(id: String, task: DownloadTask) {
-        var nextStart = findFirstGap(task)
-        while (task.running.get() && nextStart < task.totalLength) {
-            val rangeEnd = (nextStart + CHUNK_SIZE - 1)
-                .coerceAtMost(task.totalLength - 1)
+    // 🌟 按需精准下载指定区间，彻底解决 Seek 卡死
+    fun downloadRangeAsync(id: String, start: Long) {
+        val task = tasks[id] ?: return
+        if (getDownloadedRange(id, start) != -1L) return
 
-            val success = downloadRange(id, task, nextStart, rangeEnd)
+        val rangeEnd = (start + CHUNK_SIZE - 1).coerceAtMost(task.totalLength - 1)
+
+        executor.execute {
+            // 二次检查，防止并发浪费
+            if (getDownloadedRange(id, start) != -1L) return@execute
+            
+            val success = downloadRange(id, task, start, rangeEnd)
             if (!success) {
-                // 下载失败，可能是直链过期，尝试刷新
-                val refreshedUrl = task.refreshUrl?.invoke()
-                if (refreshedUrl != null) {
-                    // 替换 task 中的 url（通过重新创建 task 或修改内部状态）
-                    // 由于 DownloadTask 是 data class，这里用反射或可变字段更合适
-                    // 简化处理：重建 task
-                    val newTask = task.copy(url = refreshedUrl)
-                    tasks[id] = newTask
-                    nextStart = findFirstGap(newTask)
-                    continue
+                // 下载失败可能直链过期，尝试异步刷新
+                task.refreshUrl?.let { refresh ->
+                    executor.execute {
+                        val newUrl = kotlinx.coroutines.runBlocking { refresh() }
+                        if (newUrl != null) {
+                            task.url = newUrl
+                            // 重新尝试下载该分片
+                            downloadRange(id, task, start, rangeEnd)
+                        }
+                    }
                 }
-                Thread.sleep(500)
-                continue
             }
-            nextStart = findFirstGap(task)
         }
     }
 
@@ -98,13 +97,7 @@ class VideoDownloadManager(private val client: OkHttpClient) {
                 .build()
 
             client.newCall(req).execute().use { res ->
-                if (!res.isSuccessful) {
-                    // 403/401 通常意味着直链过期
-                    if (res.code == 403 || res.code == 401) {
-                        return false
-                    }
-                    return false
-                }
+                if (!res.isSuccessful) return false
 
                 val body = res.body ?: return false
 
@@ -139,15 +132,6 @@ class VideoDownloadManager(private val client: OkHttpClient) {
         }
     }
 
-    private fun findFirstGap(task: DownloadTask): Long {
-        task.writeLock.withLock {
-            if (task.downloadedRanges.isEmpty()) return 0L
-            mergeRanges(task.downloadedRanges)
-            val first = task.downloadedRanges.first()
-            return if (first.first > 0) 0L else first.last + 1
-        }
-    }
-
     private fun mergeRanges(ranges: MutableList<LongRange>) {
         if (ranges.size < 2) return
         ranges.sortBy { it.first }
@@ -178,7 +162,7 @@ class VideoDownloadManager(private val client: OkHttpClient) {
         return -1L
     }
 
-    fun awaitData(id: String, start: Long, timeoutMs: Long = 3000L): Boolean {
+    fun awaitData(id: String, start: Long, timeoutMs: Long = 60000L): Boolean {
         val task = tasks[id] ?: return false
         task.writeLock.withLock {
             val deadline = System.currentTimeMillis() + timeoutMs
@@ -204,7 +188,7 @@ class VideoDownloadManager(private val client: OkHttpClient) {
     }
 
     companion object {
-        private const val CHUNK_SIZE = 2L * 1024 * 1024
+        private const val CHUNK_SIZE = 2L * 1024 * 1024 // 2MB 分片
         private const val BUFFER_SIZE = 128 * 1024
     }
 }
