@@ -18,7 +18,7 @@ import java.util.concurrent.atomic.AtomicInteger
 class ParallelDownloadDataSource(
     private val client: OkHttpClient,
     private val headers: Map<String, String>,
-    private val threadCount: Int = DEFAULT_THREAD_COUNT, // 用户设置的线程数，仅作参考
+    private val threadCount: Int = DEFAULT_THREAD_COUNT,
     private val maxBufferedChunks: Int = DEFAULT_MAX_BUFFERED
 ) : BaseDataSource(false) {
 
@@ -35,6 +35,7 @@ class ParallelDownloadDataSource(
     private var running: AtomicBoolean = AtomicBoolean(false)
     private var executor: ExecutorService? = null
     private var readyChunks: ConcurrentHashMap<Int, PendingChunk>? = null
+    private var semaphore: Semaphore? = null
 
     override fun open(spec: DataSpec): Long {
         close()
@@ -43,6 +44,7 @@ class ParallelDownloadDataSource(
         currentUrl = spec.uri.toString()
         startPosition = spec.position
 
+        // 直接请求第一块作为探测，同时拿到第一块数据
         val reqEnd = startPosition + INITIAL_CHUNK_SIZE - 1
         val req = buildRequest(mapOf("Range" to "bytes=$startPosition-$reqEnd")).build()
         
@@ -50,8 +52,11 @@ class ParallelDownloadDataSource(
         
         try {
             client.newCall(req).execute().use { res ->
-                if (!res.isSuccessful) throw IOException("探测数据失败: HTTP ${res.code}")
+                if (!res.isSuccessful) {
+                    throw IOException("探测数据失败: HTTP ${res.code}")
+                }
                 
+                // 加固1：拦截伪装错误页
                 val contentType = (res.header("Content-Type") ?: "").lowercase()
                 if (contentType.contains("html") || contentType.contains("json") || contentType.contains("text/plain") || contentType.contains("xml")) {
                     val errMsg = res.body?.string()?.take(200) ?: ""
@@ -59,7 +64,11 @@ class ParallelDownloadDataSource(
                 }
                 
                 firstChunkData = res.body?.bytes() ?: throw IOException("返回数据为空")
-                if (firstChunkData.size < 1024) throw IOException("返回数据异常截断，大小: ${firstChunkData.size} 字节")
+                
+                // 加固2：防截断
+                if (firstChunkData.size < 1024) {
+                    throw IOException("返回数据异常截断，大小: ${firstChunkData.size} 字节")
+                }
 
                 val cr = res.header("Content-Range")
                 if (!cr.isNullOrBlank() && cr.contains("/")) {
@@ -68,18 +77,27 @@ class ParallelDownloadDataSource(
                 }
                 
                 if (totalLength <= 0) {
-                    if (res.code == 200) totalLength = res.header("Content-Length")?.toLongOrNull() ?: -1L
-                    else throw IOException("无法获取文件总长度")
+                    if (res.code == 200) {
+                        totalLength = res.header("Content-Length")?.toLongOrNull() ?: -1L
+                    } else {
+                        throw IOException("无法获取文件总长度")
+                    }
                 }
             }
         } catch (e: Exception) {
             throw IOException("获取首块数据异常", e)
         }
 
-        endPosition = if (spec.length > 0 && spec.position + spec.length <= totalLength) spec.position + spec.length else totalLength
+        endPosition = if (spec.length > 0 && spec.position + spec.length <= totalLength) {
+            spec.position + spec.length
+        } else {
+            totalLength
+        }
+        
         remainingBytes = endPosition - startPosition
         if (remainingBytes <= 0) return 0
 
+        // 计算分块数量（此时 SUBSEQUENT_CHUNK_SIZE 已被改为 2MB）
         val firstChunkActualLen = firstChunkData.size.toLong()
         val remainingAfterFirst = remainingBytes - firstChunkActualLen
         val subsequentChunks = if (remainingAfterFirst > 0) ((remainingAfterFirst + SUBSEQUENT_CHUNK_SIZE - 1) / SUBSEQUENT_CHUNK_SIZE).toInt() else 0
@@ -88,23 +106,29 @@ class ParallelDownloadDataSource(
         nextExpectedIndex = 0
         running.set(true)
         readyChunks = ConcurrentHashMap()
+        semaphore = Semaphore(maxBufferedChunks)
+
+        // 把首块直接塞进去
         readyChunks?.put(0, PendingChunk(0, firstChunkData, null))
 
-        // 🌟 架构级修正：真正的并发数，应该由缓冲区大小（maxBufferedChunks）决定，而不是用户盲选的32。
-        // 假设缓存3块，我们就只开3个线程。循环去取任务。这能彻底斩断内存碎片。
-        val actualThreads = maxBufferedChunks.coerceAtMost(threadCount).coerceAtLeast(1)
-        
-        val ex = Executors.newFixedThreadPool(actualThreads) { r ->
+        // 🌟 恢复用户设置：用户选多少线程，就建多大的线程池
+        val ex = Executors.newFixedThreadPool(threadCount) { r ->
             Thread(r, "parallel-dl").apply { isDaemon = true }
         }
         executor = ex
 
+        // 线程池从 index 1 开始领任务
         val nextIdx = AtomicInteger(1)
-        for (i in 0 until actualThreads) {
+        for (i in 0 until threadCount) {
             ex.execute {
                 while (running.get()) {
                     val idx = nextIdx.getAndIncrement()
                     if (idx >= chunkCount) break
+
+                    // 背压控制：如果缓存块满了，就在这里挂起等待
+                    val sem = semaphore ?: break
+                    try { sem.acquire() } catch (e: InterruptedException) { break }
+                    if (!running.get()) break
 
                     val chunkStart = startPosition + INITIAL_CHUNK_SIZE + (idx - 1) * SUBSEQUENT_CHUNK_SIZE
                     val chunkEnd = minOf(chunkStart + SUBSEQUENT_CHUNK_SIZE, endPosition) - 1
@@ -161,6 +185,8 @@ class ParallelDownloadDataSource(
             }
 
             nextExpectedIndex++
+            semaphore?.release() // 消费了一块，释放一个许可，唤醒一个正在等待的线程
+
             val data = chunk.data
             if (data == null || data.isEmpty()) continue
             currentChunkStream = data.inputStream()
@@ -173,6 +199,16 @@ class ParallelDownloadDataSource(
         running.set(false)
         try { currentChunkStream?.close() } catch (_: Exception) {}
         currentChunkStream = null
+        
+        // 🌟 安全退出：唤醒所有可能卡在 acquire() 的线程，防止线程池占满卡死
+        val sem = semaphore
+        if (sem != null) {
+            for (i in 0 until threadCount) {
+                sem.release()
+            }
+        }
+        semaphore = null
+
         try { executor?.shutdownNow() } catch (_: Exception) {}
         executor = null
         readyChunks = null
@@ -208,6 +244,7 @@ class ParallelDownloadDataSource(
             if (bytes.size < expectedLen / 2 && expectedLen > 1024 * 1024) {
                 throw IOException("分片数据异常截断，预期: $expectedLen，实际: ${bytes.size}")
             }
+            
             return bytes
         }
     }
@@ -229,8 +266,9 @@ class ParallelDownloadDataSource(
 
     companion object {
         private const val DEFAULT_THREAD_COUNT = 6
-        private const val INITIAL_CHUNK_SIZE = 2L * 1024 * 1024 
-        private const val SUBSEQUENT_CHUNK_SIZE = 8L * 1024 * 1024 
+        private const val INITIAL_CHUNK_SIZE = 2L * 1024 * 1024 // 首块 2MB
+        // 🌟 核心治本：将 8MB 砍到 2MB，配合 32 线程，瞬间最大占用仅 64MB
+        private const val SUBSEQUENT_CHUNK_SIZE = 2L * 1024 * 1024 
         private const val DEFAULT_MAX_BUFFERED = 3
         private const val QUARK_DESKTOP_UA =
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) quark-cloud-drive/2.5.20 Chrome/100.0.4896.160 Electron/18.3.5.4-b478491100 Safari/537.36 Channel/pckk_other_ch"
