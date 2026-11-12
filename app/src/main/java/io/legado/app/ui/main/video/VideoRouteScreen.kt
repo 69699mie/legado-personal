@@ -1223,7 +1223,26 @@ fun InternalVideoPlayer(url: String, title: String, cookie: String, series: Medi
     }
 
     if (errorDialogMsg != null) {
-        AlertDialog(onDismissRequest = { errorDialogMsg = null }, title = { AppText("播放失败详情", fontWeight = FontWeight.Bold) }, text = { Column { SelectionContainer { Text(text = errorDialogMsg ?: "", modifier = Modifier.heightIn(max = 400.dp).verticalScroll(rememberScrollState()), fontSize = 12.sp, color = Color.DarkGray) } } }, confirmButton = { Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) { TextButton(onClick = { val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager; clipboard.setPrimaryClip(ClipData.newPlainText("播放错误", errorDialogMsg)); Toast.makeText(context, "已复制到剪贴板", Toast.LENGTH_SHORT).show() }) { AppText("复制全部", color = Color(0xFF333333)) }; TextButton(onClick = { errorDialogMsg = null }) { AppText("关闭") } } })
+        AlertDialog(
+            onDismissRequest = { errorDialogMsg = null },
+            title = { AppText("播放失败详情", fontWeight = FontWeight.Bold) },
+            text = { Column { SelectionContainer { Text(text = errorDialogMsg ?: "", modifier = Modifier.heightIn(max = 400.dp).verticalScroll(rememberScrollState()), fontSize = 12.sp, color = Color.DarkGray) } } },
+            confirmButton = {
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    TextButton(onClick = {
+                        val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                        clipboard.setPrimaryClip(ClipData.newPlainText("播放错误", errorDialogMsg))
+                        Toast.makeText(context, "已复制到剪贴板", Toast.LENGTH_SHORT).show()
+                    }) { AppText("复制错误", color = Color(0xFF333333)) }
+                    TextButton(onClick = {
+                        errorDialogMsg = null
+                        // 触发重试机制，重新获取最新直链并播放
+                        viewModel.playVideo(context, series, currentFile)
+                    }) { AppText("重试", color = Color(0xFF333333)) }
+                    TextButton(onClick = { errorDialogMsg = null }) { AppText("关闭", color = Color(0xFF333333)) }
+                }
+            }
+        )
     }
 
     Box(modifier = Modifier.fillMaxSize().background(Color.Black).pointerInput(isLocked, isInPip.value) {
