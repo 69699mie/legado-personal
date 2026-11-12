@@ -1046,10 +1046,16 @@ fun InternalVideoPlayer(url: String, title: String, cookie: String, series: Medi
     val exoPlayer = remember {
         val renderersFactory = DefaultRenderersFactory(context).setEnableAudioFloatOutput(true)
 
-        // 修复 OOM：强制限制缓冲区上限为 48MB，防止高码率视频撑爆内存
+        // 🌟 核心：升级为 96MB 缓冲 + 时间优先策略
         val loadControl = DefaultLoadControl.Builder()
-            .setBufferDurationsMs(30000, 120000, 1500, 3000)
-            .setTargetBufferBytes(48 * 1024 * 1024)
+            .setBufferDurationsMs(
+                5_000,   // minBufferMs: 5秒
+                30_000,  // maxBufferMs: 30秒
+                1_500,   // bufferForPlaybackMs: 1.5秒
+                3_000    // bufferForPlaybackAfterRebufferMs: 3秒
+            )
+            .setTargetBufferBytes(96 * 1024 * 1024)
+            .setPrioritizeTimeOverSizeThresholds(true) // 🌟 防止“字节否决”导致卡死
             .build()
 
         ExoPlayer.Builder(context, renderersFactory).setLoadControl(loadControl).build().apply { playWhenReady = true; setWakeMode(androidx.media3.common.C.WAKE_MODE_NETWORK) }
