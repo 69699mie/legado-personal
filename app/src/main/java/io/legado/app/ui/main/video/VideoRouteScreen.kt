@@ -1063,13 +1063,13 @@ fun InternalVideoPlayer(url: String, title: String, cookie: String, series: Medi
         val mediaItem = MediaItem.Builder().setUri(url).setMediaMetadata(MediaMetadata.Builder().setTitle(title).build()).build()
         val mediaSource = ProgressiveMediaSource.Factory(dataSourceFactory).createMediaSource(mediaItem)
         
-        // 🌟 核心修改：增大缓冲池，应对高码率视频
+        // 🌟 核心修改：配套最新 DataSource 的缓冲策略，保证高码率视频流畅
         val loadControl = DefaultLoadControl.Builder()
             .setBufferDurationsMs(
-                30000,  // minBufferMs
-                120000, // maxBufferMs (最大2分钟)
-                2500,   // bufferForPlaybackMs
-                5000    // bufferForPlaybackAfterRebufferMs (卡顿后重缓冲)
+                20000,  // minBufferMs：从15000提至20000，给高码率视频更充裕的基础缓冲
+                60000,  // maxBufferMs：从50000提至60000
+                3000,   // bufferForPlaybackMs
+                7500    // bufferForPlaybackAfterRebufferMs
             )
             .build()
             
