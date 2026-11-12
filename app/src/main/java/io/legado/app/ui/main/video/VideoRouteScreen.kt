@@ -184,17 +184,17 @@ val pinyinCollator = Collator.getInstance(Locale.CHINA)
 
 fun extractEpisodeNumber(fileName: String, parsedEpisode: Int?): Int {
     if (parsedEpisode != null && parsedEpisode > 0) return parsedEpisode
-    
+
     val seasonEpisodeMatch = Regex("(?i)S\\d+E(\\d+)").find(fileName)
     if (seasonEpisodeMatch != null) {
         return seasonEpisodeMatch.groupValues[1].toIntOrNull() ?: 0
     }
-    
+
     val cnMatch = Regex("(?:第|EP|E)\\s*(\\d+)", RegexOption.IGNORE_CASE).find(fileName)
     if (cnMatch != null) {
         return cnMatch.groupValues[1].toIntOrNull() ?: 0
     }
-    
+
     val cleanName = fileName.replace(Regex("\\d{3,4}[pP]", RegexOption.IGNORE_CASE), "").replace(Regex("\\d{4}"), "")
     val numMatch = Regex("(?<!\\d)(\\d{1,4})(?!\\d)").find(cleanName)
     return numMatch?.groupValues?.get(1)?.toIntOrNull() ?: 0
@@ -240,27 +240,27 @@ fun VideoLibraryScreen(modifier: Modifier = Modifier, viewModel: VideoScraperVie
             IconButton(onClick = { showSettingsDialog = true }) { Icon(Icons.Default.Settings, contentDescription = "设置", tint = Color.DarkGray) }
         }
         if (uiState.errorMsg != null && !uiState.isLoading) { Box(modifier = Modifier.fillMaxWidth().background(Color(0xFFFFCDD2)).padding(8.dp), contentAlignment = Alignment.Center) { AppText(uiState.errorMsg!!, color = Color.Red, style = MaterialTheme.typography.bodySmall) } }
-        if (uiState.isLoading && uiState.fileList.isEmpty()) { Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CircularProgressIndicator() } } 
+        if (uiState.isLoading && uiState.fileList.isEmpty()) { Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CircularProgressIndicator() } }
         else {
-            if (uiState.fileList.isEmpty()) { Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { AppText("当前文件夹为空", color = Color.Gray) } } 
+            if (uiState.fileList.isEmpty()) { Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { AppText("当前文件夹为空", color = Color.Gray) } }
             else {
                 LazyColumn(modifier = Modifier.fillMaxSize(), contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     items(uiState.fileList) { file ->
                         Row(modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).background(Color.White).clickable(enabled = file.isFolder) { if (file.isFolder) viewModel.fetchQuarkFiles(file.fid, folderName = file.name) }.padding(horizontal = 12.dp, vertical = 14.dp), verticalAlignment = Alignment.CenterVertically) {
                             Icon(if (file.isFolder) Icons.Default.Folder else Icons.Default.Movie, null, tint = if (file.isFolder) Color(0xFFFFB300) else Color.Gray, modifier = Modifier.size(28.dp))
-                            Column(modifier = Modifier.padding(start = 16.dp).weight(1f)) { 
-                                AppText(text = file.name, maxLines = 1, overflow = TextOverflow.Ellipsis, fontWeight = FontWeight.Medium) 
+                            Column(modifier = Modifier.padding(start = 16.dp).weight(1f)) {
+                                AppText(text = file.name, maxLines = 1, overflow = TextOverflow.Ellipsis, fontWeight = FontWeight.Medium)
                             }
-                            
-                            if (file.isFolder) { 
+
+                            if (file.isFolder) {
                                 val isExplicitlySelected = uiState.selectedLibraryFids.contains(file.fid)
                                 val isParentSelected = uiState.selectedLibraryFids.contains(uiState.currentFid)
                                 val isExcluded = uiState.excludedLibraryFids.contains(file.fid)
 
                                 IconButton(
-                                    onClick = { 
+                                    onClick = {
                                         val fullPath = (viewModel.browsePath + file.name).joinToString("/")
-                                        viewModel.toggleLibrary(file.fid, fullPath) 
+                                        viewModel.toggleLibrary(file.fid, fullPath)
                                     }
                                 ) {
                                     Box(
@@ -269,8 +269,8 @@ fun VideoLibraryScreen(modifier: Modifier = Modifier, viewModel: VideoScraperVie
                                             .clip(RoundedCornerShape(4.dp))
                                             .background(if (isExplicitlySelected || (isParentSelected && !isExcluded)) Color(0xFF333333) else Color.Transparent)
                                             .border(
-                                                width = 1.dp, 
-                                                color = if (isExcluded || isExplicitlySelected || isParentSelected) Color(0xFF666666) else Color.LightGray, 
+                                                width = 1.dp,
+                                                color = if (isExcluded || isExplicitlySelected || isParentSelected) Color(0xFF666666) else Color.LightGray,
                                                 shape = RoundedCornerShape(4.dp)
                                             ),
                                         contentAlignment = Alignment.Center
@@ -371,7 +371,7 @@ fun VideoScraperScreen(isActive: Boolean = true, modifier: Modifier = Modifier, 
 
             if (latestSeries != null) {
                 val showLoading = !latestSeries.isManuallyEdited && (latestSeries.videos.isEmpty() || latestSeries.posterUrl == null)
-                
+
                 AnimatedContent(targetState = showLoading, transitionSpec = { fadeIn(animationSpec = tween(400)) togetherWith fadeOut(animationSpec = tween(400)) }, label = "detail_transition") { isLoading ->
                     if (isLoading) {
                         Column(modifier = Modifier.fillMaxSize().background(Color.White).statusBarsPadding().verticalScroll(rememberScrollState())) {
@@ -429,12 +429,12 @@ fun VideoScraperScreen(isActive: Boolean = true, modifier: Modifier = Modifier, 
                             item(span = { GridItemSpan(maxLineSpan) }) { AppText(text = category, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, modifier = Modifier.padding(top = 16.dp, bottom = 8.dp)) }
                             items(items) { historyItem ->
                                 RecentWatchedGridCard(item = historyItem, isSelectionMode = isSelectionMode, isSelected = selectedTitles.contains(historyItem.seriesTitle), onClick = {
-                                    if (isSelectionMode) { if (selectedTitles.contains(historyItem.seriesTitle)) selectedTitles.remove(historyItem.seriesTitle) else selectedTitles.add(historyItem.seriesTitle) } 
+                                    if (isSelectionMode) { if (selectedTitles.contains(historyItem.seriesTitle)) selectedTitles.remove(historyItem.seriesTitle) else selectedTitles.add(historyItem.seriesTitle) }
                                     else {
                                         if (activity != null && !activity.isInMultiWindowMode) { activity.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE }
                                         val series = uiState.seriesList.find { it.title == historyItem.seriesTitle }
                                         val file = series?.videos?.find { it.fid == historyItem.fid }
-                                        if (series != null && file != null) viewModel.playVideo(context, series, file) 
+                                        if (series != null && file != null) viewModel.playVideo(context, series, file)
                                         else {
                                             val tempFile = QuarkFile(historyItem.fid, historyItem.title, false)
                                             val tempSeries = MediaSeries(id = "temp_${historyItem.fid}", title = historyItem.seriesTitle, originalParsedTitle = historyItem.seriesTitle, year = null, category = category, posterUrl = historyItem.coverPath.ifBlank { null }, videos = listOf(tempFile))
@@ -456,12 +456,12 @@ fun VideoScraperScreen(isActive: Boolean = true, modifier: Modifier = Modifier, 
                 }
                 if (uiState.errorMsg != null && !uiState.isLoading) { Box(modifier = Modifier.fillMaxWidth().background(Color(0xFFFFCDD2)).padding(8.dp), contentAlignment = Alignment.Center) { AppText(uiState.errorMsg!!, color = Color.Red, style = MaterialTheme.typography.bodySmall) } }
 
-                if (uiState.isLoading && uiState.seriesList.isEmpty()) { 
-                    Box(modifier = Modifier.fillMaxSize().background(AppBackgroundColor)) 
-                } 
+                if (uiState.isLoading && uiState.seriesList.isEmpty()) {
+                    Box(modifier = Modifier.fillMaxSize().background(AppBackgroundColor))
+                }
                 else {
-                    if (uiState.selectedLibraryFids.isEmpty()) { Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { AppText("请先在资源库中勾选媒体文件夹") } } 
-                    else if (uiState.seriesList.isEmpty() && !uiState.isLoading) { Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { AppText("没找到任何视频，点击右上角刷新") } } 
+                    if (uiState.selectedLibraryFids.isEmpty()) { Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { AppText("请先在资源库中勾选媒体文件夹") } }
+                    else if (uiState.seriesList.isEmpty() && !uiState.isLoading) { Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { AppText("没找到任何视频，点击右上角刷新") } }
                     else {
                         val grouped = uiState.seriesList.groupBy { it.category }
                         val savedOrder = uiState.categoryOrder.split(",").filter { it.isNotBlank() }
@@ -643,16 +643,16 @@ fun CategoryOrderDialog(uiState: VideoUiState, viewModel: VideoScraperViewModel,
 private fun ManualScrapeDialog(series: MediaSeries, viewModel: VideoScraperViewModel, onDismiss: () -> Unit) {
     var searchKeyword by remember { mutableStateOf(series.title) }
     var categoryInput by remember { mutableStateOf(series.category) }
-    
+
     var currentStep by remember { mutableIntStateOf(0) }
     var searchResults by remember { mutableStateOf<List<TmdbSearchResult>?>(null) }
     var selectedResult by remember { mutableStateOf<TmdbSearchResult?>(null) }
-    
+
     var posterList by remember { mutableStateOf<List<String>>(emptyList()) }
     var backdropList by remember { mutableStateOf<List<String>>(emptyList()) }
     var selectedPoster by remember { mutableStateOf<String?>(null) }
     var selectedBackdrop by remember { mutableStateOf<String?>(null) }
-    
+
     var isLoadingImages by remember { mutableStateOf(false) }
     var selectedSeason by remember { mutableStateOf<Int?>(null) }
 
@@ -667,7 +667,7 @@ private fun ManualScrapeDialog(series: MediaSeries, viewModel: VideoScraperViewM
             selectedPoster = result.posterUrl ?: posters.firstOrNull()
             selectedBackdrop = result.backdropUrl ?: backdrops.firstOrNull()
             isLoadingImages = false
-            currentStep = 1 
+            currentStep = 1
         }
     }
 
@@ -708,13 +708,13 @@ private fun ManualScrapeDialog(series: MediaSeries, viewModel: VideoScraperViewM
                                             modifier = Modifier.fillMaxWidth().clickable {
                                                 selectedResult = result
                                                 selectedSeason = null
-                                                
+
                                                 if (result.mediaType == "tv") {
                                                     isLoadingImages = true
                                                     viewModel.fetchSeriesSeasons(result.id) { seasons ->
                                                         isLoadingImages = false
                                                         fetchedSeasons = seasons
-                                                        
+
                                                         if (seasons.size > 1) {
                                                             showSeasonPicker = true
                                                         } else {
@@ -751,7 +751,7 @@ private fun ManualScrapeDialog(series: MediaSeries, viewModel: VideoScraperViewM
                             Column(modifier = Modifier.fillMaxSize().padding(horizontal = 20.dp)) {
                                 AppText("已选择版本：${result.title} (${result.year})", fontWeight = FontWeight.Medium, color = Color(0xFF333333))
                                 Spacer(modifier = Modifier.height(16.dp))
-                                
+
                                 AppText("竖屏海报 (列表封面)", style = MaterialTheme.typography.titleSmall, color = Color.Gray)
                                 LazyRow(modifier = Modifier.padding(vertical = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                                     items(posterList) { url ->
@@ -784,7 +784,7 @@ private fun ManualScrapeDialog(series: MediaSeries, viewModel: VideoScraperViewM
                                 }
 
                                 Spacer(modifier = Modifier.height(16.dp))
-                                
+
                                 AppText("横屏背景图 (详情页顶部)", style = MaterialTheme.typography.titleSmall, color = Color.Gray)
                                 LazyRow(modifier = Modifier.padding(vertical = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                                     items(backdropList) { url ->
@@ -815,23 +815,23 @@ private fun ManualScrapeDialog(series: MediaSeries, viewModel: VideoScraperViewM
                                     }
                                     if (backdropList.isEmpty()) { item { AppText("无背景图", color = Color.Gray, fontSize = 12.sp) } }
                                 }
-                                
+
                                 Spacer(modifier = Modifier.weight(1f))
-                                
+
                                 Row(modifier = Modifier.fillMaxWidth().padding(vertical = 16.dp), horizontalArrangement = Arrangement.SpaceBetween) {
                                     OutlinedButton(onClick = { currentStep = 0 }) { AppText("上一步") }
                                     Button(
-                                        onClick = { 
+                                        onClick = {
                                             viewModel.applyManualScrape(
-                                                series.id, 
-                                                result, 
-                                                categoryInput, 
-                                                result.title, 
-                                                customPoster = selectedPoster, 
+                                                series.id,
+                                                result,
+                                                categoryInput,
+                                                result.title,
+                                                customPoster = selectedPoster,
                                                 customBackdrop = selectedBackdrop,
-                                                targetSeason = selectedSeason 
+                                                targetSeason = selectedSeason
                                             )
-                                            onDismiss() 
+                                            onDismiss()
                                         },
                                         colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF333333))
                                     ) { AppText("确认保存并更新剧集", color = Color.White) }
@@ -909,31 +909,6 @@ fun WebLoginView(onLoginSuccess: (String) -> Unit, onCancel: () -> Unit) {
     }
 }
 
-private suspend fun fetchTotalLength(url: String, cookie: String): Long = withContext(Dispatchers.IO) {
-    try {
-        val client = OkHttpClient.Builder()
-            .connectTimeout(10, TimeUnit.SECONDS)
-            .readTimeout(10, TimeUnit.SECONDS)
-            .build()
-        val req = Request.Builder()
-            .url(url)
-            .header("Cookie", cookie)
-            .header("Referer", "https://drive.quark.cn/")
-            .header("Range", "bytes=0-0")
-            .head()
-            .build()
-        client.newCall(req).execute().use { res ->
-            res.header("Content-Range")
-                ?.substringAfter("/")
-                ?.toLongOrNull()
-                ?: res.header("Content-Length")?.toLongOrNull()
-                ?: 0L
-        }
-    } catch (e: Exception) {
-        0L
-    }
-}
-
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
 fun InternalVideoPlayer(url: String, title: String, cookie: String, series: MediaSeries, currentFile: QuarkFile, viewModel: VideoScraperViewModel, downloadThreads: Int, onBack: () -> Unit) {
@@ -946,10 +921,10 @@ fun InternalVideoPlayer(url: String, title: String, cookie: String, series: Medi
     val proxyServer = koinInject<LocalProxyServer>()
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val latestSeries = uiState.seriesList.find { it.id == series.id || it.title == series.title } ?: series
-    
+
     // 触觉反馈（震动）
     val haptic = LocalHapticFeedback.current
-    
+
     // 防抖状态
     var hasVibratedBrightnessMin by remember { mutableStateOf(false) }
     var hasVibratedBrightnessMax by remember { mutableStateOf(false) }
@@ -976,7 +951,7 @@ fun InternalVideoPlayer(url: String, title: String, cookie: String, series: Medi
         val season = parsedInfo.season ?: 1
         if (epNum != null && latestSeries.category != "电影") {
             val tmdbEpTitle = latestSeries.seasonEpisodeTitles["${season}_${epNum}"] ?: latestSeries.episodeTitles[epNum]
-            
+
             val cleanBaseTitle = latestSeries.title.replace(Regex("\\s*第\\s*\\d+\\s*集.*$"), "").trim().ifBlank { latestSeries.title }
             val cleanTmdbTitle = tmdbEpTitle?.replace(Regex("^\\s*第\\s*\\d+\\s*集\\s*"), "")?.trim()
 
@@ -994,14 +969,14 @@ fun InternalVideoPlayer(url: String, title: String, cookie: String, series: Medi
 
     var isLongPressing by remember { mutableStateOf(false) }
     var playerToastMessage by remember { mutableStateOf<String?>(null) }
-    
+
     var lastCenterMessage by remember { mutableStateOf<String?>(null) }
     val currentCenterMessage = when {
         isLongPressing -> "2.0x快进中"
         playerToastMessage != null -> playerToastMessage
         else -> null
     }
-    
+
     LaunchedEffect(currentCenterMessage) {
         if (currentCenterMessage != null) {
             lastCenterMessage = currentCenterMessage
@@ -1088,13 +1063,13 @@ fun InternalVideoPlayer(url: String, title: String, cookie: String, series: Medi
 
     val exoPlayer = remember {
         val renderersFactory = DefaultRenderersFactory(context).setEnableAudioFloatOutput(true)
-        
-        // 🌟 修复 OOM：强制限制缓冲区上限为 48MB，防止高码率视频撑爆内存
+
+        // 修复 OOM：强制限制缓冲区上限为 48MB，防止高码率视频撑爆内存
         val loadControl = DefaultLoadControl.Builder()
             .setBufferDurationsMs(30000, 120000, 1500, 3000)
-            .setTargetBufferBytes(48 * 1024 * 1024) 
+            .setTargetBufferBytes(48 * 1024 * 1024)
             .build()
-            
+
         ExoPlayer.Builder(context, renderersFactory).setLoadControl(loadControl).build().apply { playWhenReady = true; setWakeMode(androidx.media3.common.C.WAKE_MODE_NETWORK) }
     }
 
@@ -1151,17 +1126,15 @@ fun InternalVideoPlayer(url: String, title: String, cookie: String, series: Medi
         val savedPos = viewModel.getVideoProgress(currentFile.fid)
         val startPositionMs = if (savedPos > 0L) savedPos else 0L
 
-        // 1. 获取 totalLength（HEAD 或 Range: bytes=0-0）
-        val totalLength = fetchTotalLength(url, cookie)
+        // 直接使用元数据中的 size，避免不可靠的网络 HEAD 请求
+        val totalLength = currentFile.size
         if (totalLength <= 0L) {
             errorDialogMsg = "无法获取视频文件大小，请重试"
             return@LaunchedEffect
         }
 
-        // 2. 缓存文件
         val cacheFile = File(context.cacheDir, "proxy_${currentFile.fid}.mp4")
 
-        // 3. 注册代理 + 直链刷新
         val headers = mapOf(
             "Cookie" to cookie,
             "Referer" to "https://drive.quark.cn/"
@@ -1185,7 +1158,6 @@ fun InternalVideoPlayer(url: String, title: String, cookie: String, series: Medi
             refreshUrl = refreshUrl
         )
 
-        // 4. 播放代理地址
         val proxyUrl = proxyServer.proxyUrlFor(currentFile.fid)
         val mediaItem = MediaItem.Builder()
             .setUri(proxyUrl)
@@ -1220,7 +1192,7 @@ fun InternalVideoPlayer(url: String, title: String, cookie: String, series: Medi
                     if (idx != -1 && idx < sortedVideos.size - 1) {
                         viewModel.playVideo(context, latestSeries, sortedVideos[idx + 1])
                     } else {
-                        if (!outroWarningTriggered) { 
+                        if (!outroWarningTriggered) {
                             playerToastMessage = "已是最新集"
                         }
                     }
@@ -1244,10 +1216,10 @@ fun InternalVideoPlayer(url: String, title: String, cookie: String, series: Medi
             }
         }
         exoPlayer.addListener(listener)
-        onDispose { 
+        onDispose {
             exoPlayer.removeListener(listener)
             exoPlayer.stop()
-            exoPlayer.release() 
+            exoPlayer.release()
             proxyServer.unregisterAll()
         }
     }
@@ -1255,10 +1227,10 @@ fun InternalVideoPlayer(url: String, title: String, cookie: String, series: Medi
     LaunchedEffect(isPlaying) {
         while (isPlaying) {
             if (!isDraggingSeekBar) { currentPosition = exoPlayer.currentPosition; bufferedPosition = exoPlayer.bufferedPosition }
-            
+
             if (outroSeconds > 0 && duration > 0 && outroSeconds * 1000L < duration) {
                 val outroTriggerPos = duration - outroSeconds * 1000L
-                val warningPos = outroTriggerPos - 6000L 
+                val warningPos = outroTriggerPos - 6000L
 
                 if (currentPosition >= warningPos && !outroWarningTriggered) {
                     outroWarningTriggered = true
@@ -1327,22 +1299,22 @@ fun InternalVideoPlayer(url: String, title: String, cookie: String, series: Medi
                 val deltaX = change.position.x - startX; val deltaY = change.position.y - startY; val absX = abs(deltaX); val absY = abs(deltaY)
                 if (gestureMode.isEmpty()) {
                     if (absX > 15f || absY > 15f) {
-                        if (absX > absY) { 
-                            gestureMode = "seek"; isDraggingSeekBar = true; dragStartPosition = startPos; change.consume() 
+                        if (absX > absY) {
+                            gestureMode = "seek"; isDraggingSeekBar = true; dragStartPosition = startPos; change.consume()
                         } else {
-                            if (startX < size.width / 3f) { 
-                                gestureMode = "brightness"; gestureType = "brightness"; 
+                            if (startX < size.width / 3f) {
+                                gestureMode = "brightness"; gestureType = "brightness";
                                 gestureValue = startBrightness
                                 brightnessDisplayValue = startBrightness
-                                change.consume() 
-                            } else if (startX > size.width * 2f / 3f) { 
-                                gestureMode = "volume"; gestureType = "volume"; 
-                                val maxVol = audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC); 
+                                change.consume()
+                            } else if (startX > size.width * 2f / 3f) {
+                                gestureMode = "volume"; gestureType = "volume";
+                                val maxVol = audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC);
                                 gestureValue = startVolume.toFloat() / maxVol
                                 volumeDisplayValue = gestureValue
-                                change.consume() 
-                            } else { 
-                                gestureMode = "none"; change.consume() 
+                                change.consume()
+                            } else {
+                                gestureMode = "none"; change.consume()
                             }
                         }
                     }
@@ -1350,24 +1322,24 @@ fun InternalVideoPlayer(url: String, title: String, cookie: String, series: Medi
 
                 when (gestureMode) {
                     "seek" -> { val timeDeltaMs = ((deltaX / size.width) * 300 * 1000).toLong(); seekDeltaMillis = timeDeltaMs; currentPosition = (startPos + timeDeltaMs).coerceIn(0L, if (duration > 0) duration else Long.MAX_VALUE) }
-                    "brightness" -> { 
+                    "brightness" -> {
                         val newB = (startBrightness - (deltaY / size.height)).coerceIn(0f, 1f)
                         gestureValue = newB
                         brightnessDisplayValue = newB
                         activity?.window?.let { val params = it.attributes; params.screenBrightness = newB; it.attributes = params }
-                        
+
                         if (newB == 0f && !hasVibratedBrightnessMin) { haptic.performHapticFeedback(HapticFeedbackType.LongPress); hasVibratedBrightnessMin = true }
                         if (newB > 0f) hasVibratedBrightnessMin = false
                         if (newB == 1f && !hasVibratedBrightnessMax) { haptic.performHapticFeedback(HapticFeedbackType.LongPress); hasVibratedBrightnessMax = true }
                         if (newB < 1f) hasVibratedBrightnessMax = false
                     }
-                    "volume" -> { 
-                        val maxVol = audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC); 
+                    "volume" -> {
+                        val maxVol = audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC);
                         val newV = ((startVolume.toFloat() / maxVol) - (deltaY / size.height)).coerceIn(0f, 1f)
                         gestureValue = newV
                         volumeDisplayValue = newV
-                        audioManager.setStreamVolume(AudioManager.STREAM_MUSIC, (newV * maxVol).roundToInt(), 0) 
-                        
+                        audioManager.setStreamVolume(AudioManager.STREAM_MUSIC, (newV * maxVol).roundToInt(), 0)
+
                         if (newV == 0f && !hasVibratedVolumeMin) { haptic.performHapticFeedback(HapticFeedbackType.LongPress); hasVibratedVolumeMin = true }
                         if (newV > 0f) hasVibratedVolumeMin = false
                         if (newV == 1f && !hasVibratedVolumeMax) { haptic.performHapticFeedback(HapticFeedbackType.LongPress); hasVibratedVolumeMax = true }
@@ -1375,14 +1347,14 @@ fun InternalVideoPlayer(url: String, title: String, cookie: String, series: Medi
                     }
                 }
             },
-            onDragEnd = { 
-                if (gestureMode == "seek") { 
-                    if (abs(currentPosition - dragStartPosition) > 1000L) { 
-                        exoPlayer.seekTo(currentPosition); if (isPlaying) exoPlayer.play() 
+            onDragEnd = {
+                if (gestureMode == "seek") {
+                    if (abs(currentPosition - dragStartPosition) > 1000L) {
+                        exoPlayer.seekTo(currentPosition); if (isPlaying) exoPlayer.play()
                         haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                    } else currentPosition = dragStartPosition 
-                }; 
-                gestureMode = ""; gestureType = ""; isDraggingSeekBar = false 
+                    } else currentPosition = dragStartPosition
+                };
+                gestureMode = ""; gestureType = ""; isDraggingSeekBar = false
             },
             onDragCancel = { if (gestureMode == "seek") currentPosition = dragStartPosition; gestureMode = ""; gestureType = ""; isDraggingSeekBar = false }
         )
@@ -1390,24 +1362,24 @@ fun InternalVideoPlayer(url: String, title: String, cookie: String, series: Medi
         if (isLocked || showSettingsPanel || showEpisodeDrawer || isInPip.value) return@pointerInput
         detectTapGestures(
             onTap = { showControls = !showControls },
-            onDoubleTap = { offset -> 
+            onDoubleTap = { offset ->
                 haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                when { 
-                    offset.x < size.width * 0.25f -> { exoPlayer.seekTo((exoPlayer.currentPosition - 10000).coerceAtLeast(0)); seekMessage = "已快退 10 秒" }; 
-                    offset.x > size.width * 0.75f -> { exoPlayer.seekTo((exoPlayer.currentPosition + 10000).coerceAtMost(if (duration > 0) duration else Long.MAX_VALUE)); seekMessage = "已快进 10 秒" }; 
-                    else -> { if (isPlaying) exoPlayer.pause() else exoPlayer.play() } 
-                } 
+                when {
+                    offset.x < size.width * 0.25f -> { exoPlayer.seekTo((exoPlayer.currentPosition - 10000).coerceAtLeast(0)); seekMessage = "已快退 10 秒" };
+                    offset.x > size.width * 0.75f -> { exoPlayer.seekTo((exoPlayer.currentPosition + 10000).coerceAtMost(if (duration > 0) duration else Long.MAX_VALUE)); seekMessage = "已快进 10 秒" };
+                    else -> { if (isPlaying) exoPlayer.pause() else exoPlayer.play() }
+                }
             },
-            onLongPress = { 
+            onLongPress = {
                 haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                isLongPressing = true; exoPlayer.setPlaybackSpeed(2.0f) 
+                isLongPressing = true; exoPlayer.setPlaybackSpeed(2.0f)
             },
-            onPress = { 
+            onPress = {
                 try {
                     tryAwaitRelease()
                 } finally {
                     isLongPressing = false
-                    exoPlayer.setPlaybackSpeed(playbackSpeed) 
+                    exoPlayer.setPlaybackSpeed(playbackSpeed)
                 }
             }
         )
@@ -1646,14 +1618,14 @@ fun InternalVideoPlayer(url: String, title: String, cookie: String, series: Medi
                             Text(text = "${playbackSpeed}x", color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.Bold, modifier = Modifier.clickable { val nextSpeed = when(playbackSpeed) { 0.5f -> 0.75f; 0.75f -> 1.0f; 1.0f -> 1.25f; 1.25f -> 1.5f; 1.5f -> 2.0f; 2.0f -> 3.0f; else -> 0.5f }; playbackSpeed = nextSpeed; exoPlayer.setPlaybackSpeed(nextSpeed) }.padding(8.dp))
                             Row(modifier = Modifier.weight(1f), horizontalArrangement = Arrangement.Center, verticalAlignment = Alignment.CenterVertically) {
                                 if (isLandscape) AppText(text = if (introSeconds > 0) formatIntroOutro(introSeconds) else "片头", color = Color.White, fontSize = 12.sp, modifier = Modifier.combinedClickable(
-                                    onClick = { introSeconds = (currentPosition / 1000).toInt(); viewModel.saveIntroOutro(latestSeries.title, season, introSeconds, outroSeconds) }, 
+                                    onClick = { introSeconds = (currentPosition / 1000).toInt(); viewModel.saveIntroOutro(latestSeries.title, season, introSeconds, outroSeconds) },
                                     onLongClick = { introSeconds = 0; viewModel.saveIntroOutro(latestSeries.title, season, introSeconds, outroSeconds) }
                                 ).padding(horizontal = 8.dp, vertical = 4.dp))
                                 IconButton(onClick = { val videos = sortedVideos; val idx = videos.indexOfFirst { it.fid == currentFile.fid }; if (idx > 0) viewModel.playVideo(context, latestSeries, videos[idx - 1]) }, modifier = Modifier.size(36.dp)) { Icon(Icons.Default.SkipPrevious, null, tint = Color.White, modifier = Modifier.size(24.dp)) }
                                 IconButton(onClick = { if (isPlaying) exoPlayer.pause() else exoPlayer.play() }, modifier = Modifier.size(40.dp)) { Icon(if (isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow, null, tint = Color.White, modifier = Modifier.size(28.dp)) }
                                 IconButton(onClick = { val videos = sortedVideos; val idx = videos.indexOfFirst { it.fid == currentFile.fid }; if (idx != -1 && idx < videos.size - 1) viewModel.playVideo(context, latestSeries, videos[idx + 1]) }, modifier = Modifier.size(36.dp)) { Icon(Icons.Default.SkipNext, null, tint = Color.White, modifier = Modifier.size(24.dp)) }
                                 if (isLandscape) AppText(text = if (outroSeconds > 0) formatIntroOutro(outroSeconds) else "片尾", color = Color.White, fontSize = 12.sp, modifier = Modifier.combinedClickable(
-                                    onClick = { val remain = duration - currentPosition; if (remain > 0) { outroSeconds = (remain / 1000).toInt(); viewModel.saveIntroOutro(latestSeries.title, season, introSeconds, outroSeconds); outroWarningTriggered = false } }, 
+                                    onClick = { val remain = duration - currentPosition; if (remain > 0) { outroSeconds = (remain / 1000).toInt(); viewModel.saveIntroOutro(latestSeries.title, season, introSeconds, outroSeconds); outroWarningTriggered = false } },
                                     onLongClick = { outroSeconds = 0; viewModel.saveIntroOutro(latestSeries.title, season, introSeconds, outroSeconds); outroWarningTriggered = false }
                                 ).padding(horizontal = 8.dp, vertical = 4.dp))
                             }
@@ -1791,9 +1763,9 @@ fun MediaDetailScreen(
     val context = LocalContext.current
     val activity = context.findActivity()
     val view = LocalView.current
-    
+
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
-    
+
     var showAllEpisodesDialog by remember { mutableStateOf(false) }
 
     DisposableEffect(Unit) {
@@ -1838,15 +1810,15 @@ fun MediaDetailScreen(
         null
     }
 
-    val latestWatchedInCurrentSeason = remember(currentSeasonVideos, uiState.playUrl, latestWatchedFid) { 
+    val latestWatchedInCurrentSeason = remember(currentSeasonVideos, uiState.playUrl, latestWatchedFid) {
         val matchedFile = latestWatchedFid?.let { fid -> currentSeasonVideos.find { it.fid == fid } }
-        matchedFile ?: currentSeasonVideos.maxByOrNull { viewModel.getVideoProgress(it.fid) } 
+        matchedFile ?: currentSeasonVideos.maxByOrNull { viewModel.getVideoProgress(it.fid) }
     }
 
-    val hasProgressInCurrentSeason = remember(latestWatchedInCurrentSeason, uiState.playUrl) { 
-        latestWatchedInCurrentSeason != null && viewModel.getVideoProgress(latestWatchedInCurrentSeason.fid) > 0 
+    val hasProgressInCurrentSeason = remember(latestWatchedInCurrentSeason, uiState.playUrl) {
+        latestWatchedInCurrentSeason != null && viewModel.getVideoProgress(latestWatchedInCurrentSeason.fid) > 0
     }
-    
+
     val targetPlayFile = if (hasProgressInCurrentSeason && latestWatchedInCurrentSeason != null) latestWatchedInCurrentSeason else currentSeasonVideos.firstOrNull()
 
     val playBtnText = remember(targetPlayFile, series, uiState.playUrl) {
@@ -1955,7 +1927,7 @@ fun MediaDetailScreen(
                         AppText("全部剧集 (${currentSeasonVideos.size})", color = Color(0xFF1A1A1A), fontWeight = FontWeight.Bold, fontSize = 18.sp)
                         IconButton(onClick = { showAllEpisodesDialog = false }) { Icon(Icons.Default.Close, contentDescription = "关闭", tint = Color(0xFF999999)) }
                     }
-                    
+
                     val allEpisodesGridState = rememberLazyGridState()
                     val currentPlayingIndex = currentSeasonVideos.indexOfFirst { it.fid == (targetPlayFile?.fid ?: "") }
                     LaunchedEffect(Unit) {
@@ -1966,9 +1938,9 @@ fun MediaDetailScreen(
 
                     LazyVerticalGrid(
                         state = allEpisodesGridState,
-                        columns = GridCells.Fixed(4), 
-                        contentPadding = PaddingValues(top = 8.dp, bottom = 12.dp), 
-                        horizontalArrangement = Arrangement.spacedBy(10.dp), 
+                        columns = GridCells.Fixed(4),
+                        contentPadding = PaddingValues(top = 8.dp, bottom = 12.dp),
+                        horizontalArrangement = Arrangement.spacedBy(10.dp),
                         verticalArrangement = Arrangement.spacedBy(10.dp)
                     ) {
                         items(currentSeasonVideos) { file ->
