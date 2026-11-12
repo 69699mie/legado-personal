@@ -182,24 +182,6 @@ const val CONTROL_NEXT = 3
 
 val pinyinCollator = Collator.getInstance(Locale.CHINA)
 
-fun extractEpisodeNumber(fileName: String, parsedEpisode: Int?): Int {
-    if (parsedEpisode != null && parsedEpisode > 0) return parsedEpisode
-
-    val seasonEpisodeMatch = Regex("(?i)S\\d+E(\\d+)").find(fileName)
-    if (seasonEpisodeMatch != null) {
-        return seasonEpisodeMatch.groupValues[1].toIntOrNull() ?: 0
-    }
-
-    val cnMatch = Regex("(?:第|EP|E)\\s*(\\d+)", RegexOption.IGNORE_CASE).find(fileName)
-    if (cnMatch != null) {
-        return cnMatch.groupValues[1].toIntOrNull() ?: 0
-    }
-
-    val cleanName = fileName.replace(Regex("\\d{3,4}[pP]", RegexOption.IGNORE_CASE), "").replace(Regex("\\d{4}"), "")
-    val numMatch = Regex("(?<!\\d)(\\d{1,4})(?!\\d)").find(cleanName)
-    return numMatch?.groupValues?.get(1)?.toIntOrNull() ?: 0
-}
-
 fun createPipIcon(type: String, context: Context): Bitmap {
     val size = 96
     val bitmap = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)
@@ -937,7 +919,7 @@ fun InternalVideoPlayer(url: String, title: String, cookie: String, series: Medi
 
     val sortedVideos = remember(latestSeries.videos) {
         latestSeries.videos.sortedWith(
-            compareBy<QuarkFile> { extractEpisodeNumber(it.name, it.parsedInfo?.episode) }
+            compareBy<QuarkFile> { viewModel.extractEpisodeNumber(it.name, it.parsedInfo?.episode) }
                 .thenBy { it.name }
         )
     }
@@ -947,7 +929,7 @@ fun InternalVideoPlayer(url: String, title: String, cookie: String, series: Medi
 
     val dynamicTitle = remember(latestSeries, currentFile) {
         val parsedInfo = currentFile.parsedInfo ?: io.legado.app.utils.VideoFileNameParser.parse(currentFile.name)
-        val epNum = parsedInfo.episode ?: Regex("第\\s*([0-9]+)\\s*集").find(currentFile.name)?.groupValues?.get(1)?.toIntOrNull()
+        val epNum = viewModel.extractEpisodeNumber(currentFile.name, parsedInfo.episode).takeIf { it > 0 }
         val season = parsedInfo.season ?: 1
         if (epNum != null && latestSeries.category != "电影") {
             val tmdbEpTitle = latestSeries.seasonEpisodeTitles["${season}_${epNum}"] ?: latestSeries.episodeTitles[epNum]
@@ -1155,6 +1137,7 @@ fun InternalVideoPlayer(url: String, title: String, cookie: String, series: Medi
             headers = headers,
             file = cacheFile,
             totalLength = totalLength,
+            downloadThreads = downloadThreads, // 🌟 核心修复：传入多线程数量
             refreshUrl = refreshUrl
         )
 
@@ -1647,7 +1630,8 @@ fun InternalVideoPlayer(url: String, title: String, cookie: String, series: Medi
                         Spacer(modifier = Modifier.height(16.dp))
                         LazyColumn(state = episodeListState) {
                             items(sortedVideos) { file ->
-                                val e = file.parsedInfo?.episode; val s = file.parsedInfo?.season ?: 1
+                                val e = viewModel.extractEpisodeNumber(file.name, file.parsedInfo?.episode).takeIf { it > 0 }
+                                val s = file.parsedInfo?.season ?: 1
                                 val tmdbTitle = if (e != null) latestSeries.seasonEpisodeTitles["${s}_${e}"] ?: latestSeries.episodeTitles[e] else null
                                 val cleanTmdbTitle = tmdbTitle?.replace(Regex("^\\s*第\\s*\\d+\\s*集\\s*"), "")?.trim()
                                 val label = if (e != null && latestSeries.category != "电影" && latestSeries.videos.size > 1) "第${e}集" + if (!cleanTmdbTitle.isNullOrBlank()) " $cleanTmdbTitle" else "" else if (latestSeries.videos.size == 1) latestSeries.title else (file.folderPath.lastOrNull() ?: file.name.substringBeforeLast("."))
@@ -1792,7 +1776,7 @@ fun MediaDetailScreen(
 
     val currentSeasonVideos = remember(series) {
         series.videos.sortedWith(
-            compareBy<QuarkFile> { extractEpisodeNumber(it.name, it.parsedInfo?.episode) }
+            compareBy<QuarkFile> { viewModel.extractEpisodeNumber(it.name, it.parsedInfo?.episode) }
                 .thenBy { it.name }
         )
     }
@@ -1823,7 +1807,7 @@ fun MediaDetailScreen(
 
     val playBtnText = remember(targetPlayFile, series, uiState.playUrl) {
         if (targetPlayFile != null && viewModel.getVideoProgress(targetPlayFile.fid) > 0) {
-            val ep = targetPlayFile.parsedInfo?.episode
+            val ep = viewModel.extractEpisodeNumber(targetPlayFile.name, targetPlayFile.parsedInfo?.episode).takeIf { it > 0 }
             if (ep != null && series.category != "电影" && series.videos.size > 1) "继续播放 第${ep}集" else "继续播放"
         } else "播放"
     }
@@ -1870,7 +1854,8 @@ fun MediaDetailScreen(
             else {
                 LazyRow(contentPadding = PaddingValues(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                     items(currentSeasonVideos.take(10)) { file ->
-                        val e = file.parsedInfo?.episode; val s = file.parsedInfo?.season ?: 1
+                        val e = viewModel.extractEpisodeNumber(file.name, file.parsedInfo?.episode).takeIf { it > 0 }
+                        val s = file.parsedInfo?.season ?: 1
                         val tmdbTitle = if (e != null) series.seasonEpisodeTitles["${s}_${e}"] ?: series.episodeTitles[e] else null
                         val cleanTmdbTitle = tmdbTitle?.replace(Regex("^\\s*第\\s*\\d+\\s*集\\s*"), "")?.trim()
                         val stillUrl = if (e != null) series.seasonEpisodeStills["${s}_${e}"] ?: series.episodeStills[e] else null
@@ -1944,7 +1929,7 @@ fun MediaDetailScreen(
                         verticalArrangement = Arrangement.spacedBy(10.dp)
                     ) {
                         items(currentSeasonVideos) { file ->
-                            val e = file.parsedInfo?.episode
+                            val e = viewModel.extractEpisodeNumber(file.name, file.parsedInfo?.episode).takeIf { it > 0 }
                             val label = if (e != null && series.category != "电影" && series.videos.size > 1) "第${e}集" else if (series.videos.size == 1) series.title else (file.folderPath.lastOrNull() ?: file.name.substringBeforeLast("."))
                             val isCurrent = file.fid == (targetPlayFile?.fid ?: "")
                             Box(
