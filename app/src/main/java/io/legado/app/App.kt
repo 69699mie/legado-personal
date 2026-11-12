@@ -67,6 +67,7 @@ import io.legado.app.help.source.SourceHelp
 import io.legado.app.help.storage.Backup
 import io.legado.app.lib.theme.primaryColor
 import io.legado.app.model.BookCover
+import io.legado.app.ui.main.video.proxy.LocalProxyServer
 import io.legado.app.utils.ChineseUtils
 import io.legado.app.utils.FirebaseManager
 import io.legado.app.utils.LogUtils
@@ -193,7 +194,12 @@ class App : Application(), SingletonImageLoader.Factory {
         registerActivityLifecycleCallbacks(LifecycleHelp)
         initRhino()
 
-        // ❌ 已移除 VideoCacheManager，完全由 Room 接管本地缓存
+        // 🌟 启动本地代理服务器（端口 0 让系统分配空闲端口，防止占用崩溃）
+        runCatching {
+            get<LocalProxyServer>().start(fi.iki.elonen.NanoHTTPD.SOCKET_READ_TIMEOUT, false)
+        }.onFailure {
+            LogUtils.e("App", "LocalProxyServer start failed: ${it.message}")
+        }
         
         Coroutine.async {
             get<BackupSettingsGateway>().settings
