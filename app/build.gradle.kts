@@ -211,9 +211,11 @@ dependencies {
     implementation(libs.media3.datasource.okhttp)
     implementation("androidx.media3:media3-ui:1.11.0")
     implementation("androidx.media3:media3-exoplayer-hls:1.11.0")
-    implementation("androidx.media3:media3-session:1.11.0") // 👈 新增：用于解决画中画响应
-    // FFmpeg 扩展已移除（Maven 无可用制品，且许可证合规性待定）
+    implementation("androidx.media3:media3-session:1.11.0")
     // =====================
+
+    // 🌟 核心新增：本地代理服务器依赖
+    implementation("org.nanohttpd:nanohttpd:2.3.1")
 
     implementation(libs.splitties.appctx)
     implementation(libs.splitties.systemservices)
