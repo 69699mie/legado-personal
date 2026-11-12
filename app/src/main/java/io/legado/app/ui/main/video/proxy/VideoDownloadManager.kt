@@ -13,7 +13,7 @@ import kotlin.concurrent.withLock
 class VideoDownloadManager(private val client: OkHttpClient) {
 
     data class DownloadTask(
-        @Volatile var url: String, // 🌟 必须允许动态刷新
+        @Volatile var url: String,
         val headers: Map<String, String>,
         val totalLength: Long,
         val file: File,
@@ -21,11 +21,13 @@ class VideoDownloadManager(private val client: OkHttpClient) {
         val running: AtomicBoolean = AtomicBoolean(true),
         val writeLock: ReentrantLock = ReentrantLock(),
         val condition: java.util.concurrent.locks.Condition = writeLock.newCondition(),
-        val refreshUrl: (suspend () -> String?)? = null
+        val refreshUrl: (suspend () -> String?)? = null,
+        val downloadingRanges: MutableSet<Long> = ConcurrentHashMap.newKeySet() // 防止同一块重复下载
     )
 
     private val tasks = ConcurrentHashMap<String, DownloadTask>()
-    private val executor = Executors.newFixedThreadPool(4) { r ->
+    // 线程池大小可以动态调整，但基础给 16 个足够了
+    private val executor = Executors.newFixedThreadPool(16) { r ->
         Thread(r, "proxy-range-dl").apply { isDaemon = true }
     }
 
@@ -55,29 +57,44 @@ class VideoDownloadManager(private val client: OkHttpClient) {
         tasks[id] = task
     }
 
-    // 🌟 按需精准下载指定区间，彻底解决 Seek 卡死
-    fun downloadRangeAsync(id: String, start: Long) {
+    // 🌟 增加 downloadThreads 参数，支持并发预读
+    fun downloadRangeAsync(id: String, start: Long, downloadThreads: Int) {
         val task = tasks[id] ?: return
-        if (getDownloadedRange(id, start) != -1L) return
+        
+        // 计算当前起始块的索引
+        val startChunkIndex = start / CHUNK_SIZE
+        val totalChunks = (task.totalLength + CHUNK_SIZE - 1) / CHUNK_SIZE
 
-        val rangeEnd = (start + CHUNK_SIZE - 1).coerceAtMost(task.totalLength - 1)
+        // 计算需要预读的并发数量，最大不超过用户设置
+        val readAheadCount = downloadThreads.coerceIn(1, 16)
 
-        executor.execute {
-            // 二次检查，防止并发浪费
-            if (getDownloadedRange(id, start) != -1L) return@execute
-            
-            val success = downloadRange(id, task, start, rangeEnd)
-            if (!success) {
-                // 下载失败可能直链过期，尝试异步刷新
-                task.refreshUrl?.let { refresh ->
-                    executor.execute {
-                        val newUrl = kotlinx.coroutines.runBlocking { refresh() }
-                        if (newUrl != null) {
-                            task.url = newUrl
-                            // 重新尝试下载该分片
-                            downloadRange(id, task, start, rangeEnd)
+        // 把当前块和后续块一起提交
+        for (i in 0 until readAheadCount) {
+            val targetChunkIndex = startChunkIndex + i
+            if (targetChunkIndex >= totalChunks) break
+
+            val chunkStart = targetChunkIndex * CHUNK_SIZE
+            // 如果该分片已经下载或正在下载，跳过
+            if (getDownloadedRange(id, chunkStart) != -1L) continue
+            if (!task.downloadingRanges.add(chunkStart)) continue
+
+            val chunkEnd = ((targetChunkIndex + 1) * CHUNK_SIZE - 1).coerceAtMost(task.totalLength - 1)
+
+            executor.execute {
+                try {
+                    var success = downloadRange(id, task, chunkStart, chunkEnd)
+                    if (!success) {
+                        // 直链过期刷新机制
+                        task.refreshUrl?.let { refresh ->
+                            val newUrl = kotlinx.coroutines.runBlocking { refresh() }
+                            if (newUrl != null) {
+                                task.url = newUrl
+                                success = downloadRange(id, task, chunkStart, chunkEnd)
+                            }
                         }
                     }
+                } finally {
+                    task.downloadingRanges.remove(chunkStart)
                 }
             }
         }
@@ -98,7 +115,6 @@ class VideoDownloadManager(private val client: OkHttpClient) {
 
             client.newCall(req).execute().use { res ->
                 if (!res.isSuccessful) return false
-
                 val body = res.body ?: return false
 
                 RandomAccessFile(task.file, "rw").use { raf ->
@@ -162,7 +178,7 @@ class VideoDownloadManager(private val client: OkHttpClient) {
         return -1L
     }
 
-    fun awaitData(id: String, start: Long, timeoutMs: Long = 60000L): Boolean {
+    fun awaitData(id: String, start: Long, timeoutMs: Long = 30000L): Boolean {
         val task = tasks[id] ?: return false
         task.writeLock.withLock {
             val deadline = System.currentTimeMillis() + timeoutMs
