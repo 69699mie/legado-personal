@@ -1062,7 +1062,17 @@ fun InternalVideoPlayer(url: String, title: String, cookie: String, series: Medi
         val renderersFactory = DefaultRenderersFactory(context).setEnableAudioFloatOutput(true)
         val mediaItem = MediaItem.Builder().setUri(url).setMediaMetadata(MediaMetadata.Builder().setTitle(title).build()).build()
         val mediaSource = ProgressiveMediaSource.Factory(dataSourceFactory).createMediaSource(mediaItem)
-        val loadControl = DefaultLoadControl.Builder().setBufferDurationsMs(30000, 120000, 1500, 3000).build()
+        
+        // 🌟 核心修改：增大缓冲池，应对高码率视频
+        val loadControl = DefaultLoadControl.Builder()
+            .setBufferDurationsMs(
+                30000,  // minBufferMs
+                120000, // maxBufferMs (最大2分钟)
+                2500,   // bufferForPlaybackMs
+                5000    // bufferForPlaybackAfterRebufferMs (卡顿后重缓冲)
+            )
+            .build()
+            
         ExoPlayer.Builder(context, renderersFactory).setLoadControl(loadControl).build().apply { setMediaSource(mediaSource); prepare(); playWhenReady = true; setWakeMode(androidx.media3.common.C.WAKE_MODE_NETWORK) }
     }
 
