@@ -134,8 +134,6 @@ import androidx.media3.common.TrackSelectionOverride
 import androidx.media3.common.Tracks
 import androidx.media3.common.VideoSize
 import androidx.media3.datasource.HttpDataSource
-import androidx.media3.datasource.cache.CacheDataSource
-import androidx.media3.datasource.cache.SimpleCache
 import androidx.media3.exoplayer.DefaultLoadControl
 import androidx.media3.exoplayer.DefaultRenderersFactory
 import androidx.media3.exoplayer.ExoPlayer
@@ -1057,43 +1055,14 @@ fun InternalVideoPlayer(url: String, title: String, cookie: String, series: Medi
         }
     }
 
-    // 注入 SimpleCache 单例
-    val simpleCache: SimpleCache = koinInject()
-
     val exoPlayer = remember {
         val headers = mapOf("Cookie" to cookie, "Referer" to "https://drive.quark.cn/")
         val okHttpClient = OkHttpClient.Builder().connectTimeout(60, TimeUnit.SECONDS).readTimeout(60, TimeUnit.SECONDS).build()
-        
-        // 1. 上游数据源（保持你原有的多线程逻辑）
-        val upstreamFactory = ParallelDownloadDataSource.Factory(okHttpClient, headers, downloadThreads)
-        
-        // 2. 包装官方 CacheDataSource
-        val cacheDataSourceFactory = CacheDataSource.Factory()
-            .setCache(simpleCache)
-            .setUpstreamDataSourceFactory(upstreamFactory)
-            .setFlags(CacheDataSource.FLAG_BLOCK_ON_CACHE) // 缓存未命中时阻塞等待，避免重复请求
-
+        val dataSourceFactory = ParallelDownloadDataSource.Factory(okHttpClient, headers, downloadThreads)
         val renderersFactory = DefaultRenderersFactory(context).setEnableAudioFloatOutput(true)
-        
-        // 3. 给 MediaItem 加上稳定的 cacheKey，防止 URL 改变导致缓存失效
-        val mediaItem = MediaItem.Builder()
-            .setUri(url)
-            .setCustomCacheKey(currentFile.fid) 
-            .setMediaMetadata(MediaMetadata.Builder().setTitle(title).build())
-            .build()
-            
-        val mediaSource = ProgressiveMediaSource.Factory(cacheDataSourceFactory).createMediaSource(mediaItem)
-        
-        // 4. 极速起播的 LoadControl 配置
-        val loadControl = DefaultLoadControl.Builder()
-            .setBufferDurationsMs(
-                15000,  // minBufferMs：起播基础缓冲，15秒够了
-                50000,  // maxBufferMs
-                1000,   // bufferForPlaybackMs：只需 1 秒数据即可起播，极致秒开
-                2000    // bufferForPlaybackAfterRebufferMs：卡顿后重缓冲
-            )
-            .build()
-            
+        val mediaItem = MediaItem.Builder().setUri(url).setMediaMetadata(MediaMetadata.Builder().setTitle(title).build()).build()
+        val mediaSource = ProgressiveMediaSource.Factory(dataSourceFactory).createMediaSource(mediaItem)
+        val loadControl = DefaultLoadControl.Builder().setBufferDurationsMs(30000, 120000, 1500, 3000).build()
         ExoPlayer.Builder(context, renderersFactory).setLoadControl(loadControl).build().apply { setMediaSource(mediaSource); prepare(); playWhenReady = true; setWakeMode(androidx.media3.common.C.WAKE_MODE_NETWORK) }
     }
 
@@ -1152,20 +1121,10 @@ fun InternalVideoPlayer(url: String, title: String, cookie: String, series: Medi
 
         val headers = mapOf("Cookie" to cookie, "Referer" to "https://drive.quark.cn/")
         val okHttpClient = OkHttpClient.Builder().connectTimeout(60, TimeUnit.SECONDS).readTimeout(60, TimeUnit.SECONDS).build()
-        
-        val upstreamFactory = ParallelDownloadDataSource.Factory(okHttpClient, headers, downloadThreads)
-        val cacheDataSourceFactory = CacheDataSource.Factory()
-            .setCache(simpleCache)
-            .setUpstreamDataSourceFactory(upstreamFactory)
-            .setFlags(CacheDataSource.FLAG_BLOCK_ON_CACHE)
+        val dataSourceFactory = ParallelDownloadDataSource.Factory(okHttpClient, headers, downloadThreads)
 
-        val mediaItem = MediaItem.Builder()
-            .setUri(url)
-            .setCustomCacheKey(currentFile.fid) 
-            .setMediaMetadata(MediaMetadata.Builder().setTitle(title).build())
-            .build()
-            
-        val mediaSource = ProgressiveMediaSource.Factory(cacheDataSourceFactory).createMediaSource(mediaItem)
+        val mediaItem = MediaItem.Builder().setUri(url).setMediaMetadata(MediaMetadata.Builder().setTitle(title).build()).build()
+        val mediaSource = ProgressiveMediaSource.Factory(dataSourceFactory).createMediaSource(mediaItem)
         
         exoPlayer.setMediaSource(mediaSource)
         if (startPositionMs > 0L) exoPlayer.seekTo(startPositionMs)
