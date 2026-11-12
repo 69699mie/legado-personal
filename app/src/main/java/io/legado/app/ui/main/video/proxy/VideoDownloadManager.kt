@@ -204,7 +204,7 @@ class VideoDownloadManager(private val client: OkHttpClient) {
     }
 
     companion object {
-        private const val CHUNK_SIZE = 2L * 1024 * 1024 // 2MB 分片
+        private const val CHUNK_SIZE = 1L * 1024 * 1024 // 1MB 分片
         private const val BUFFER_SIZE = 128 * 1024
     }
 }
