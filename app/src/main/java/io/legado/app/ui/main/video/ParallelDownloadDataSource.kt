@@ -7,7 +7,6 @@ import androidx.media3.datasource.DataSpec
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import java.io.IOException
-import java.io.InputStream
 import java.io.InterruptedIOException
 import java.io.PipedInputStream
 import java.io.PipedOutputStream
@@ -42,8 +41,9 @@ class ParallelDownloadDataSource(
     private var writerExecutor: ExecutorService? = null
     private var semaphore: Semaphore? = null
     
-    private var readyStreams: ConcurrentHashMap<Int, PendingStream>? = null
-    private var nextExpectedIndex = 0
+    // 存储已经下载好的数据块，等待按顺序写入管道
+    private var readyChunks: ConcurrentHashMap<Int, PendingChunk>? = null
+    private var nextWriteIndex = 0
 
     override fun open(spec: DataSpec): Long {
         close()
@@ -52,10 +52,11 @@ class ParallelDownloadDataSource(
         currentUrl = spec.uri.toString()
         startPosition = spec.position
 
+        // 1. 发起首块探测，获取总长度
         val reqEnd = startPosition + INITIAL_CHUNK_SIZE - 1
         val req = buildRequest(mapOf("Range" to "bytes=$startPosition-$reqEnd")).build()
         
-        var firstChunkStream: InputStream? = null
+        var firstChunkData: ByteArray
         
         try {
             val res = client.newCall(req).execute()
@@ -71,7 +72,7 @@ class ParallelDownloadDataSource(
             }
             
             val body = res.body ?: throw IOException("返回数据为空")
-            firstChunkStream = body.byteStream()
+            firstChunkData = body.bytes() // 首块直接读，用于秒开
 
             val cr = res.header("Content-Range")
             if (!cr.isNullOrBlank() && cr.contains("/")) {
@@ -87,7 +88,6 @@ class ParallelDownloadDataSource(
                 }
             }
         } catch (e: Exception) {
-            try { firstChunkStream?.close() } catch (_: Exception) {}
             throw IOException("获取首块数据异常", e)
         }
 
@@ -95,35 +95,37 @@ class ParallelDownloadDataSource(
         remainingBytes = endPosition - startPosition
         if (remainingBytes <= 0) return 0
 
-        // 2MB 管道缓冲
-        pipedInputStream = PipedInputStream(2 * 1024 * 1024)
+        // 初始化管道
+        pipedInputStream = PipedInputStream(2 * 1024 * 1024) // 2MB 管道缓冲
         pipedOutputStream = PipedOutputStream(pipedInputStream)
 
-        val firstChunkActualLen = minOf(remainingBytes, INITIAL_CHUNK_SIZE)
+        val firstChunkActualLen = firstChunkData.size.toLong()
         val remainingAfterFirst = remainingBytes - firstChunkActualLen
+        // 🌟 分块大小改为 2MB，配合多线程高并发，既能满速，又防 OOM
         val subsequentChunks = if (remainingAfterFirst > 0) ((remainingAfterFirst + SUBSEQUENT_CHUNK_SIZE - 1) / SUBSEQUENT_CHUNK_SIZE).toInt() else 0
         chunkCount = 1 + subsequentChunks
 
         running.set(true)
-        readyStreams = ConcurrentHashMap()
-        semaphore = Semaphore(maxBufferedChunks)
+        readyChunks = ConcurrentHashMap()
+        semaphore = Semaphore(maxBufferedChunks) // 内存里最多允许存几个块（默认 3 个）
         
-        readyStreams?.put(0, PendingStream(firstChunkStream, firstChunkActualLen, null))
+        // 首块直接放进去
+        readyChunks?.put(0, PendingChunk(0, firstChunkData, null))
 
-        // 自适应并发：由于流式读取极快，不需要太多线程，maxBufferedChunks + 2 足以跑满带宽
-        val actualThreads = maxBufferedChunks.coerceAtMost(threadCount).coerceAtLeast(1) + 2 
-        
-        downloadExecutor = Executors.newFixedThreadPool(actualThreads) { r ->
+        // 2. 启动多线程下载池
+        // 恢复尊重用户的线程设置，保证《狂飙》满速
+        downloadExecutor = Executors.newFixedThreadPool(threadCount) { r ->
             Thread(r, "parallel-dl").apply { isDaemon = true }
         }
 
         val nextIdx = AtomicInteger(1)
-        for (i in 0 until actualThreads) {
+        for (i in 0 until threadCount) {
             downloadExecutor?.execute {
                 while (running.get()) {
                     val idx = nextIdx.getAndIncrement()
                     if (idx >= chunkCount) break
 
+                    // 如果内存里积压的块过多（比如已经下了 3 个还没被消费），这里会阻塞等待
                     val sem = semaphore ?: break
                     try { sem.acquire() } catch (e: InterruptedException) { break }
                     if (!running.get()) break
@@ -133,18 +135,16 @@ class ParallelDownloadDataSource(
                     
                     if (chunkStart <= chunkEnd) {
                         try {
-                            val stream = downloadChunkStream(chunkStart, chunkEnd)
-                            // 🌟 加固：防止 close() 并发导致流泄漏
-                            val map = readyStreams
+                            // 🌟 核心：下载返回 ByteArray，彻底释放 OkHttp 连接池
+                            val data = downloadChunkData(chunkStart, chunkEnd)
+                            val map = readyChunks
                             if (running.get() && map != null) {
-                                map.put(idx, PendingStream(stream, (chunkEnd - chunkStart + 1), null))
-                            } else {
-                                try { stream.close() } catch (_: Exception) {}
+                                map[idx] = PendingChunk(idx, data, null)
                             }
                         } catch (e: Exception) {
-                            val map = readyStreams
+                            val map = readyChunks
                             if (running.get() && map != null) {
-                                map.put(idx, PendingStream(null, 0, e))
+                                map[idx] = PendingChunk(idx, null, e)
                             }
                         }
                     }
@@ -152,35 +152,32 @@ class ParallelDownloadDataSource(
             }
         }
 
+        // 3. 启动唯一的顺序写入线程
         writerExecutor = Executors.newSingleThreadExecutor { r ->
             Thread(r, "pipe-writer").apply { isDaemon = true }
         }
         writerExecutor?.execute {
             val out = pipedOutputStream ?: return@execute
             try {
-                while (running.get() && nextExpectedIndex < chunkCount) {
-                    val pending = readyStreams?.remove(nextExpectedIndex)
+                while (running.get() && nextWriteIndex < chunkCount) {
+                    val map = readyChunks
+                    // 🌟 核心：严格按顺序死等。如果 0 号还没下完，1 号下完了也不能写。
+                    val pending = map?.remove(nextWriteIndex)
                     if (pending == null) {
-                        Thread.sleep(30)
+                        Thread.sleep(20)
                         continue
                     }
                     
                     if (pending.error != null) throw pending.error
                     
-                    val input = pending.stream ?: continue
-                    input.use { ins ->
-                        val buffer = ByteArray(64 * 1024)
-                        var totalRead = 0L
-                        while (running.get() && totalRead < pending.length) {
-                            val bytesToRead = minOf(buffer.size.toLong(), pending.length - totalRead).toInt()
-                            val read = ins.read(buffer, 0, bytesToRead)
-                            if (read == -1) break
-                            out.write(buffer, 0, read)
-                            totalRead += read
-                        }
+                    val data = pending.data
+                    if (data != null && data.isNotEmpty()) {
+                        out.write(data, 0, data.size)
+                        out.flush()
                     }
                     
-                    nextExpectedIndex++
+                    nextWriteIndex++
+                    // 消费掉一个块，释放一个信号量，允许下载线程继续下新的块
                     semaphore?.release()
                 }
             } catch (e: Exception) {
@@ -217,30 +214,25 @@ class ParallelDownloadDataSource(
     override fun close() {
         running.set(false)
         
-        // 1. 释放足够的信号量，唤醒所有卡在 acquire() 的下载线程
+        // 唤醒所有卡在 sem.acquire() 的线程
         val sem = semaphore
         if (sem != null) {
-            for (i in 0 until (threadCount + maxBufferedChunks + 2)) {
+            for (i in 0 until threadCount) {
                 sem.release()
             }
         }
         semaphore = null
 
-        // 2. 关闭所有还未被写入管道的 InputStream
-        readyStreams?.values?.forEach { pending ->
-            try { pending.stream?.close() } catch (_: Exception) {}
-        }
-        readyStreams?.clear()
-        readyStreams = null
+        readyChunks?.clear()
+        readyChunks = null
 
-        // 3. 关闭管道，唤醒 Writer 和 Reader
+        // 关闭管道，唤醒读/写线程
         try { pipedOutputStream?.close() } catch (_: Exception) {}
         pipedOutputStream = null
         
         try { pipedInputStream?.close() } catch (_: Exception) {}
         pipedInputStream = null
 
-        // 4. 彻底销毁线程池
         try { downloadExecutor?.shutdownNow() } catch (_: Exception) {}
         downloadExecutor = null
         
@@ -260,32 +252,25 @@ class ParallelDownloadDataSource(
         return builder
     }
 
-    private fun downloadChunkStream(start: Long, end: Long): InputStream {
+    private fun downloadChunkData(start: Long, end: Long): ByteArray {
         val req = buildRequest(mapOf("Range" to "bytes=$start-$end")).build()
-        val res = client.newCall(req).execute()
-        
-        if (!res.isSuccessful) {
-            res.close()
-            throw IOException("HTTP ${res.code}")
+        client.newCall(req).execute().use { res ->
+            if (!res.isSuccessful) throw IOException("HTTP ${res.code}")
+            if (res.code == 200 && start > 0) throw IOException("服务器未正确响应分片请求(HTTP 200)")
+            
+            val contentType = (res.header("Content-Type") ?: "").lowercase()
+            if (contentType.contains("html") || contentType.contains("json") || contentType.contains("text/plain") || contentType.contains("xml")) {
+                throw IOException("服务器返回了错误格式: $contentType")
+            }
+            
+            val body = res.body ?: throw IOException("empty body")
+            return body.bytes() // 完整读入内存，随后连接自动关闭
         }
-        if (res.code == 200 && start > 0) {
-            res.close()
-            throw IOException("服务器未正确响应分片请求(HTTP 200)")
-        }
-        
-        val contentType = (res.header("Content-Type") ?: "").lowercase()
-        if (contentType.contains("html") || contentType.contains("json") || contentType.contains("text/plain") || contentType.contains("xml")) {
-            res.close()
-            throw IOException("服务器返回了错误格式: $contentType")
-        }
-        
-        val body = res.body ?: throw IOException("empty body")
-        return body.byteStream()
     }
 
-    private class PendingStream(
-        val stream: InputStream?,
-        val length: Long,
+    private class PendingChunk(
+        val index: Int,
+        val data: ByteArray?,
         val error: Exception?
     )
 
@@ -300,8 +285,9 @@ class ParallelDownloadDataSource(
 
     companion object {
         private const val DEFAULT_THREAD_COUNT = 6
-        private const val INITIAL_CHUNK_SIZE = 2L * 1024 * 1024
-        private const val SUBSEQUENT_CHUNK_SIZE = 2L * 1024 * 1024
+        private const val INITIAL_CHUNK_SIZE = 2L * 1024 * 1024 
+        // 🌟 分块设为 2MB。无论 32 线程还是 64 线程，因为 Semaphore=3，瞬间内存最多 6MB。
+        private const val SUBSEQUENT_CHUNK_SIZE = 2L * 1024 * 1024 
         private const val DEFAULT_MAX_BUFFERED = 3
         private const val QUARK_DESKTOP_UA =
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) quark-cloud-drive/2.5.20 Chrome/100.0.4896.160 Electron/18.3.5.4-b478491100 Safari/537.36 Channel/pckk_other_ch"
