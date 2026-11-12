@@ -1525,6 +1525,12 @@ class VideoScraperViewModel(
         } catch (e: Exception) {}
     }
 
+    // 🌟 新增：供代理层刷新直链使用
+    fun getPlayUrl(fid: String): String? {
+        val cookie = _uiState.value.cookie
+        return fetchDirectDownloadUrl(fid, cookie)
+    }
+
     fun stopPlaying() {
         _uiState.update { it.copy(playUrl = null, playTitle = null, currentPlayFile = null, isDirectPlay = false) }
     }
