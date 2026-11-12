@@ -20,7 +20,9 @@ class VideoDownloadManager(private val client: OkHttpClient) {
         val downloadedRanges: MutableList<LongRange> = mutableListOf(),
         val running: AtomicBoolean = AtomicBoolean(true),
         val writeLock: ReentrantLock = ReentrantLock(),
-        val condition: java.util.concurrent.locks.Condition = writeLock.newCondition()
+        val condition: java.util.concurrent.locks.Condition = writeLock.newCondition(),
+        // 直链刷新回调：返回新直链，失败返回 null
+        val refreshUrl: (suspend () -> String?)? = null
     )
 
     private val tasks = ConcurrentHashMap<String, DownloadTask>()
@@ -33,7 +35,8 @@ class VideoDownloadManager(private val client: OkHttpClient) {
         url: String,
         headers: Map<String, String>,
         totalLength: Long,
-        cacheFile: File
+        cacheFile: File,
+        refreshUrl: (suspend () -> String?)? = null
     ) {
         if (tasks.containsKey(id)) return
         if (totalLength <= 0L) return
@@ -43,7 +46,13 @@ class VideoDownloadManager(private val client: OkHttpClient) {
             RandomAccessFile(cacheFile, "rw").use { it.setLength(totalLength) }
         }
 
-        val task = DownloadTask(url, headers, totalLength, cacheFile)
+        val task = DownloadTask(
+            url = url,
+            headers = headers,
+            totalLength = totalLength,
+            file = cacheFile,
+            refreshUrl = refreshUrl
+        )
         tasks[id] = task
 
         executor.execute { downloadLoop(id, task) }
@@ -52,9 +61,22 @@ class VideoDownloadManager(private val client: OkHttpClient) {
     private fun downloadLoop(id: String, task: DownloadTask) {
         var nextStart = findFirstGap(task)
         while (task.running.get() && nextStart < task.totalLength) {
-            val rangeEnd = (nextStart + CHUNK_SIZE - 1).coerceAtMost(task.totalLength - 1)
+            val rangeEnd = (nextStart + CHUNK_SIZE - 1)
+                .coerceAtMost(task.totalLength - 1)
+
             val success = downloadRange(id, task, nextStart, rangeEnd)
             if (!success) {
+                // 下载失败，可能是直链过期，尝试刷新
+                val refreshedUrl = task.refreshUrl?.invoke()
+                if (refreshedUrl != null) {
+                    // 替换 task 中的 url（通过重新创建 task 或修改内部状态）
+                    // 由于 DownloadTask 是 data class，这里用反射或可变字段更合适
+                    // 简化处理：重建 task
+                    val newTask = task.copy(url = refreshedUrl)
+                    tasks[id] = newTask
+                    nextStart = findFirstGap(newTask)
+                    continue
+                }
                 Thread.sleep(500)
                 continue
             }
@@ -76,7 +98,14 @@ class VideoDownloadManager(private val client: OkHttpClient) {
                 .build()
 
             client.newCall(req).execute().use { res ->
-                if (!res.isSuccessful) return false
+                if (!res.isSuccessful) {
+                    // 403/401 通常意味着直链过期
+                    if (res.code == 403 || res.code == 401) {
+                        return false
+                    }
+                    return false
+                }
+
                 val body = res.body ?: return false
 
                 RandomAccessFile(task.file, "rw").use { raf ->
