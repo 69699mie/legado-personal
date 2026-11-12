@@ -56,11 +56,11 @@ class ParallelDownloadDataSource(
                     throw IOException("探测数据失败: HTTP ${res.code}")
                 }
                 
-                // 严谨校验：拦截非视频流格式
-                val contentType = (res.header("Content-Type") ?: "").lowercase()
-                if (!contentType.contains("video") && !contentType.contains("octet-stream") && contentType.isNotBlank()) {
+                // 仅做最基础的防脏数据拦截
+                val contentType = res.header("Content-Type") ?: ""
+                if (contentType.contains("html") || contentType.contains("json")) {
                     val errMsg = res.body?.string()?.take(200) ?: ""
-                    throw IOException("服务器返回了非视频格式(可能触发风控): $contentType\n$errMsg")
+                    throw IOException("服务器返回了错误格式: $contentType\n$errMsg")
                 }
                 
                 firstChunkData = res.body?.bytes() ?: throw IOException("返回数据为空")
@@ -79,8 +79,8 @@ class ParallelDownloadDataSource(
                     }
                 }
             }
-        } catch (e: Throwable) { // 捕获 Throwable 防止 OOM 或 Error 导致崩溃
-            throw IOException("获取首块数据异常: ${e.message}", e)
+        } catch (e: Exception) {
+            throw IOException("获取首块数据异常", e)
         }
 
         endPosition = if (spec.length > 0 && spec.position + spec.length <= totalLength) {
@@ -130,8 +130,8 @@ class ParallelDownloadDataSource(
                         try {
                             val data = downloadRange(chunkStart, chunkEnd)
                             readyChunks?.put(idx, PendingChunk(idx, data, null))
-                        } catch (e: Throwable) {
-                            readyChunks?.put(idx, PendingChunk(idx, null, e as? Exception ?: Exception(e.message)))
+                        } catch (e: Exception) {
+                            readyChunks?.put(idx, PendingChunk(idx, null, e))
                         }
                     }
                 }
@@ -150,7 +150,7 @@ class ParallelDownloadDataSource(
                 val want = minOf(length.toLong(), remainingBytes).toInt()
                 val n = try {
                     stream.read(buffer, offset, want)
-                } catch (e: Throwable) {
+                } catch (e: Exception) {
                     if (!running.get()) return C.RESULT_END_OF_INPUT
                     throw IOException("读取数据失败", e)
                 }
@@ -169,7 +169,7 @@ class ParallelDownloadDataSource(
 
             val chunk = readyChunks?.remove(nextExpectedIndex)
             if (chunk == null) {
-                try { Thread.sleep(10) } catch (e: InterruptedException) { return C.RESULT_END_OF_INPUT }
+                try { Thread.sleep(30) } catch (e: InterruptedException) { return C.RESULT_END_OF_INPUT }
                 continue
             }
 
@@ -219,8 +219,8 @@ class ParallelDownloadDataSource(
             if (res.code == 200 && start > 0) {
                 throw IOException("服务器未正确响应分片请求(HTTP 200)")
             }
-            val contentType = (res.header("Content-Type") ?: "").lowercase()
-            if (!contentType.contains("video") && !contentType.contains("octet-stream") && contentType.isNotBlank()) {
+            val contentType = res.header("Content-Type") ?: ""
+            if (contentType.contains("html") || contentType.contains("json")) {
                 throw IOException("服务器返回了错误格式: $contentType")
             }
             val body = res.body ?: throw IOException("empty body")
@@ -244,17 +244,10 @@ class ParallelDownloadDataSource(
     }
 
     companion object {
-        // 🌟 核心修改：降低并发至 3，彻底规避夸克瞬时高并发风控
-        private const val DEFAULT_THREAD_COUNT = 3 
-        
+        private const val DEFAULT_THREAD_COUNT = 6
         private const val INITIAL_CHUNK_SIZE = 2L * 1024 * 1024 // 首块 2MB 秒开
-        
-        // 🌟 核心修改：将分块从 8MB 降至 4MB，单次请求数据量减半，让流量曲线更平缓
-        private const val SUBSEQUENT_CHUNK_SIZE = 4L * 1024 * 1024 
-        
-        // 🌟 核心修改：预读缓冲块设为 4（总缓冲 16MB），配合 3 线程足以喂饱播放器，不卡网速
-        private const val DEFAULT_MAX_BUFFERED = 4 
-        
+        private const val SUBSEQUENT_CHUNK_SIZE = 8L * 1024 * 1024 // 后续块 8MB 高速
+        private const val DEFAULT_MAX_BUFFERED = 3
         private const val QUARK_DESKTOP_UA =
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) quark-cloud-drive/2.5.20 Chrome/100.0.4896.160 Electron/18.3.5.4-b478491100 Safari/537.36 Channel/pckk_other_ch"
     }
