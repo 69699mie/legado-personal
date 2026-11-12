@@ -33,7 +33,6 @@ class ParallelDownloadDataSource(
     private var currentChunkStream: InputStream? = null
 
     private var running: AtomicBoolean = AtomicBoolean(false)
-    private var executor: ExecutorService? = null
     private var readyChunks: ConcurrentHashMap<Int, PendingChunk>? = null
     private var semaphore: Semaphore? = null
 
@@ -111,15 +110,10 @@ class ParallelDownloadDataSource(
         // 把首块直接塞进去
         readyChunks?.put(0, PendingChunk(0, firstChunkData, null))
 
-        val ex = Executors.newFixedThreadPool(threadCount) { r ->
-            Thread(r, "parallel-dl").apply { isDaemon = true }
-        }
-        executor = ex
-
         // 线程池从 index 1 开始领任务
         val nextIdx = AtomicInteger(1)
         for (i in 0 until threadCount) {
-            ex.execute {
+            SHARED_DOWNLOAD_EXECUTOR.execute {
                 while (running.get()) {
                     val idx = nextIdx.getAndIncrement()
                     if (idx >= chunkCount) break
@@ -197,9 +191,15 @@ class ParallelDownloadDataSource(
         running.set(false)
         try { currentChunkStream?.close() } catch (_: Exception) {}
         currentChunkStream = null
-        try { executor?.shutdownNow() } catch (_: Exception) {}
-        executor = null
         readyChunks = null
+        
+        // 🌟 核心修复：释放足够的 permit，唤醒所有卡在 sem.acquire() 的线程，让它们立刻退出，腾出共享池的线程
+        val sem = semaphore
+        if (sem != null) {
+            for (i in 0 until threadCount) {
+                sem.release()
+            }
+        }
         semaphore = null
     }
 
@@ -266,5 +266,10 @@ class ParallelDownloadDataSource(
         private const val DEFAULT_MAX_BUFFERED = 3
         private const val QUARK_DESKTOP_UA =
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) quark-cloud-drive/2.5.20 Chrome/100.0.4896.160 Electron/18.3.5.4-b478491100 Safari/537.36 Channel/pckk_other_ch"
+
+        // 🌟 全局共享的下载线程池，固定4个线程，避免频繁创建/销毁线程导致的内存碎片与 OOM
+        private val SHARED_DOWNLOAD_EXECUTOR: ExecutorService = Executors.newFixedThreadPool(4) { r ->
+            Thread(r, "shared-parallel-dl").apply { isDaemon = true }
+        }
     }
 }
