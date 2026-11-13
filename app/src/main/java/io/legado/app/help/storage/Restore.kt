@@ -418,7 +418,6 @@ object Restore : KoinComponent {
         }
     }
 
-    // ... 中间的其他私有方法保持不变（localBookLocationStatus、restoreReadRecord 等）...
     private fun localBookLocationStatus(bookUrl: String): LocalBookLocationStatus {
         val uri = bookUrl.takeIf { it.isUri() }?.toUri()
         if (uri?.isContentScheme() == true) {
@@ -571,7 +570,8 @@ object Restore : KoinComponent {
             }
         } catch (e: Exception) {
             AppLog.put("$fileName\n读取解析出错\n${e.localizedMessage}", e)
-            appCtx.toastToUi("$fileName\n读取文件出错\n${e.localizedMessage}")
+            // 🌟 修复：修正拼写错误 toastOnUi
+            appCtx.toastOnUi("$fileName\n读取文件出错\n${e.localizedMessage}")
         }
         return null
     }
