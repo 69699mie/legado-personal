@@ -41,6 +41,7 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import io.legado.app.R
 import io.legado.app.help.storage.ImportOldData
+import io.legado.app.help.storage.WebDavSyncManager
 import io.legado.app.lib.permission.Permissions
 import io.legado.app.lib.permission.PermissionsCompat
 import io.legado.app.ui.theme.LegadoTheme
@@ -148,7 +149,7 @@ fun BackupConfigScreen(
     val settings = state.settings
     val scrollBehavior = GlassTopAppBarDefaults.defaultScrollBehavior()
 
-    // 🌟 备份间隔的文案和值映射，使用 arrayOf 确保类型匹配
+    // 备份间隔的文案和值映射
     val intervalEntries = arrayOf(
         stringResource(R.string.backup_interval_launch),
         stringResource(R.string.backup_interval_1h),
@@ -161,6 +162,10 @@ fun BackupConfigScreen(
         stringResource(R.string.backup_interval_never)
     )
     val intervalValues = arrayOf("-1", "1", "6", "12", "24", "48", "72", "168", "0")
+
+    // 设备角色文案和值映射
+    val roleEntries = arrayOf("主设备（自动上传/下载）", "备用设备（仅自动下载）")
+    val roleValues = arrayOf(WebDavSyncManager.ROLE_MASTER, WebDavSyncManager.ROLE_SLAVE)
 
     AppScaffold(
         modifier = Modifier.nestedScroll(scrollBehavior.nestedScrollConnection),
@@ -253,14 +258,33 @@ fun BackupConfigScreen(
                             onIntent(BackupConfigIntent.OpenSheet(BackupConfigSheet.ChooseBackupPath))
                         },
                     )
-                    // 🌟 新增：备份间隔选择框
                     DropdownListSettingItem(
                         title = stringResource(R.string.backup_interval_title),
                         selectedValue = state.backupInterval.toString(),
                         displayEntries = intervalEntries,
                         entryValues = intervalValues,
-                        onValueChange = { onIntent(BackupConfigIntent.SetBackupInterval(it.toIntOrNull() ?: 24)) },
+                        onValueChange = { onIntent(BackupConfigIntent.SetBackupInterval(it.toInt())) },
                     )
+                    
+                    // 🌟 新增：设备同步角色
+                    DropdownListSettingItem(
+                        title = "设备同步角色",
+                        description = if (state.deviceRole == WebDavSyncManager.ROLE_MASTER) "主设备：自动上传和下载" else "备用设备：仅自动下载",
+                        selectedValue = state.deviceRole,
+                        displayEntries = roleEntries,
+                        entryValues = roleValues,
+                        onValueChange = { onIntent(BackupConfigIntent.SetDeviceRole(it)) },
+                    )
+
+                    // 🌟 新增：备用设备专属的“手动上传”按钮
+                    if (state.deviceRole == WebDavSyncManager.ROLE_SLAVE) {
+                        ClickableSettingItem(
+                            title = "手动上传本地数据到云端",
+                            description = "将本机的数据强制覆盖云端（请谨慎操作）",
+                            onClick = { onIntent(BackupConfigIntent.RequestSlaveUpload) },
+                        )
+                    }
+
                     ClickableSettingItem(
                         title = stringResource(R.string.backup),
                         description = stringResource(R.string.backup_summary),
@@ -303,6 +327,20 @@ fun BackupConfigScreen(
 
     BackupConfigSheets(state, onIntent)
     BackupConfigDialogs(state, onIntent)
+    
+    // 🌟 新增：备用设备手动上传的二次确认框（复用项目已有的毛玻璃 AlertDialog）
+    if (state.showSlaveUploadConfirm) {
+        AppAlertDialog(
+            show = true,
+            onDismissRequest = { onIntent(BackupConfigIntent.DismissSlaveUploadConfirm) },
+            title = "手动上传确认",
+            text = "当前为备用设备。上传将覆盖云端主设备的数据，确定继续吗？",
+            confirmText = "确认上传",
+            onConfirm = { onIntent(BackupConfigIntent.ConfirmSlaveUpload) },
+            dismissText = "取消",
+            onDismiss = { onIntent(BackupConfigIntent.DismissSlaveUploadConfirm) },
+        )
+    }
 }
 
 @Composable
@@ -359,20 +397,10 @@ private fun BackupConfigSheets(
         ignoreItems = state.ignoreItems,
         dbIgnoreItems = state.dbIgnoreItems,
         onToggleIgnoreItem = { key, value ->
-            onIntent(
-                BackupConfigIntent.ToggleIgnoreItem(
-                    key,
-                    value
-                )
-            )
+            onIntent(BackupConfigIntent.ToggleIgnoreItem(key, value))
         },
         onToggleDbIgnoreItem = { key, value ->
-            onIntent(
-                BackupConfigIntent.ToggleDbIgnoreItem(
-                    key,
-                    value
-                )
-            )
+            onIntent(BackupConfigIntent.ToggleDbIgnoreItem(key, value))
         },
         onConfirm = { onIntent(BackupConfigIntent.SaveIgnoreItems) },
         onDismissRequest = { onIntent(BackupConfigIntent.SaveIgnoreItems) },
@@ -383,20 +411,10 @@ private fun BackupConfigSheets(
         ignoreItems = state.backupIgnoreItems,
         dbIgnoreItems = state.backupDbIgnoreItems,
         onToggleIgnoreItem = { key, value ->
-            onIntent(
-                BackupConfigIntent.ToggleBackupIgnoreItem(
-                    key,
-                    value
-                )
-            )
+            onIntent(BackupConfigIntent.ToggleBackupIgnoreItem(key, value))
         },
         onToggleDbIgnoreItem = { key, value ->
-            onIntent(
-                BackupConfigIntent.ToggleBackupDbIgnoreItem(
-                    key,
-                    value
-                )
-            )
+            onIntent(BackupConfigIntent.ToggleBackupDbIgnoreItem(key, value))
         },
         onConfirm = { onIntent(BackupConfigIntent.SaveBackupIgnoreItems) },
         onDismissRequest = { onIntent(BackupConfigIntent.SaveBackupIgnoreItems) },
