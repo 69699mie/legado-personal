@@ -147,6 +147,21 @@ fun BackupConfigScreen(
 ) {
     val settings = state.settings
     val scrollBehavior = GlassTopAppBarDefaults.defaultScrollBehavior()
+
+    // 🌟 备份间隔的文案和值映射，使用 arrayOf 确保类型匹配
+    val intervalEntries = arrayOf(
+        stringResource(R.string.backup_interval_launch),
+        stringResource(R.string.backup_interval_1h),
+        stringResource(R.string.backup_interval_6h),
+        stringResource(R.string.backup_interval_12h),
+        stringResource(R.string.backup_interval_24h),
+        stringResource(R.string.backup_interval_48h),
+        stringResource(R.string.backup_interval_72h),
+        stringResource(R.string.backup_interval_168h),
+        stringResource(R.string.backup_interval_never)
+    )
+    val intervalValues = arrayOf("-1", "1", "6", "12", "24", "48", "72", "168", "0")
+
     AppScaffold(
         modifier = Modifier.nestedScroll(scrollBehavior.nestedScrollConnection),
         snackbarHost = { SnackbarHost(hostState = snackbarHostState) },
@@ -229,6 +244,7 @@ fun BackupConfigScreen(
                         onValueChange = { onIntent(BackupConfigIntent.SetBackupSyncMode(it)) },
                     )
                 }
+                
                 SplicedColumnGroup(title = stringResource(R.string.backup_restore)) {
                     ClickableSettingItem(
                         title = stringResource(R.string.backup_path),
@@ -236,6 +252,14 @@ fun BackupConfigScreen(
                         onClick = {
                             onIntent(BackupConfigIntent.OpenSheet(BackupConfigSheet.ChooseBackupPath))
                         },
+                    )
+                    // 🌟 新增：备份间隔选择框
+                    DropdownListSettingItem(
+                        title = stringResource(R.string.backup_interval_title),
+                        selectedValue = state.backupInterval.toString(),
+                        displayEntries = intervalEntries,
+                        entryValues = intervalValues,
+                        onValueChange = { onIntent(BackupConfigIntent.SetBackupInterval(it.toInt())) },
                     )
                     ClickableSettingItem(
                         title = stringResource(R.string.backup),
