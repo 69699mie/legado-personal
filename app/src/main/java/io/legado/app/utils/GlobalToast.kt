@@ -6,17 +6,19 @@ import android.graphics.PixelFormat
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
+import android.provider.Settings
 import android.view.Gravity
 import android.view.WindowManager
+import android.widget.Toast
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.background
-import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
 import androidx.compose.runtime.*
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.ComposeView
@@ -51,6 +53,11 @@ object GlobalToast {
     fun show(message: String, durationMs: Long = 2000L) {
         if (message.isBlank()) return
         handler.post {
+            if (!Settings.canDrawOverlays(appCtx)) {
+                // 未授予悬浮窗权限，降级为系统原生 Toast，保证文字至少可见
+                Toast.makeText(appCtx, message, Toast.LENGTH_SHORT).show()
+                return@post
+            }
             dismissImmediately()
             val owner = ToastLifecycleOwner()
             val composeView = ComposeView(appCtx).apply {
@@ -87,7 +94,8 @@ object GlobalToast {
                 WindowManager.LayoutParams.WRAP_CONTENT,
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O)
                     WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
-                else WindowManager.LayoutParams.TYPE_PHONE,
+                else
+                    WindowManager.LayoutParams.TYPE_PHONE,
                 WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
                         or WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
                         or WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN
@@ -106,7 +114,6 @@ object GlobalToast {
                 currentView = composeView
                 currentOwner = owner
                 owner.onResume()
-
                 val runnable = Runnable {
                     visible = false
                     handler.postDelayed({ dismissImmediately() }, 300L)
@@ -116,6 +123,7 @@ object GlobalToast {
             } catch (e: Exception) {
                 e.printStackTrace()
                 dismissImmediately()
+                Toast.makeText(appCtx, message, Toast.LENGTH_SHORT).show()
             }
         }
     }
