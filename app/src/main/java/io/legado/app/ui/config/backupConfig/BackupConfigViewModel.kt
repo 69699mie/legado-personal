@@ -11,6 +11,7 @@ import io.legado.app.domain.usecase.WebDavBackupUseCase
 import io.legado.app.utils.getPrefInt
 import io.legado.app.utils.isContentScheme
 import io.legado.app.utils.putPrefInt
+import io.legado.app.utils.toastOnUi
 import kotlinx.collections.immutable.toImmutableList
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableSharedFlow
@@ -285,8 +286,8 @@ class BackupConfigViewModel(
                 .onSuccess {
                     withContext(Dispatchers.Main) {
                         _uiState.update { it.copy(activeDialog = null) }
-                        // 🌟 修复：去掉黑色背景 Snackbar 提示，仅保留系统 Toast
-                        // _effects.tryEmit(BackupConfigEffect.ShowMessage(R.string.backup_success))
+                        // 🌟 修复：补上手动备份成功后的 Toast 弹窗
+                        appCtx.toastOnUi("备份成功")
                     }
                 }
                 .onFailure { error ->
@@ -362,7 +363,8 @@ class BackupConfigViewModel(
 
     private suspend fun finishRestoreSuccess() = withContext(Dispatchers.Main) {
         _uiState.update { it.copy(activeDialog = null) }
-        _effects.tryEmit(BackupConfigEffect.ShowMessage(R.string.restore_success))
+        // 🌟 修复：补上手动恢复成功后的 Toast 弹窗
+        appCtx.toastOnUi("恢复成功")
     }
 
     private suspend fun finishRestoreFailure(message: String?, webDav: Boolean = false) =
