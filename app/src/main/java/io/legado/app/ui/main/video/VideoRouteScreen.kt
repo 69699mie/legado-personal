@@ -1046,7 +1046,7 @@ fun InternalVideoPlayer(url: String, title: String, cookie: String, series: Medi
     val exoPlayer = remember {
         val renderersFactory = DefaultRenderersFactory(context).setEnableAudioFloatOutput(true)
 
-        // 🌟 核心：升级为 96MB 缓冲 + 时间优先策略
+        // 🌟 修复 OOM：强制限制缓冲区上限为 96MB，防止高码率视频撑爆内存（时间优先）
         val loadControl = DefaultLoadControl.Builder()
             .setBufferDurationsMs(
                 5_000,   // minBufferMs: 5秒
@@ -1114,7 +1114,6 @@ fun InternalVideoPlayer(url: String, title: String, cookie: String, series: Medi
         val savedPos = viewModel.getVideoProgress(currentFile.fid)
         val startPositionMs = if (savedPos > 0L) savedPos else 0L
 
-        // 直接使用元数据中的 size，避免不可靠的网络 HEAD 请求
         val totalLength = currentFile.size
         if (totalLength <= 0L) {
             errorDialogMsg = "无法获取视频文件大小，请重试"
@@ -1143,7 +1142,7 @@ fun InternalVideoPlayer(url: String, title: String, cookie: String, series: Medi
             headers = headers,
             file = cacheFile,
             totalLength = totalLength,
-            downloadThreads = downloadThreads, // 🌟 核心修复：传入多线程数量
+            downloadThreads = downloadThreads,
             refreshUrl = refreshUrl
         )
 
@@ -1295,12 +1294,14 @@ fun InternalVideoPlayer(url: String, title: String, cookie: String, series: Medi
                                 gestureMode = "brightness"; gestureType = "brightness";
                                 gestureValue = startBrightness
                                 brightnessDisplayValue = startBrightness
+                                showControls = false // 🌟 修复：左侧滑动亮度时，强制隐藏主控制面板，避免重叠
                                 change.consume()
                             } else if (startX > size.width * 2f / 3f) {
                                 gestureMode = "volume"; gestureType = "volume";
                                 val maxVol = audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC);
                                 gestureValue = startVolume.toFloat() / maxVol
                                 volumeDisplayValue = gestureValue
+                                showControls = false // 🌟 修复：右侧滑动音量时，强制隐藏主控制面板，避免重叠
                                 change.consume()
                             } else {
                                 gestureMode = "none"; change.consume()
