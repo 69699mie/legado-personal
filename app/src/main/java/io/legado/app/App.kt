@@ -65,6 +65,7 @@ import io.legado.app.help.http.okHttpClient
 import io.legado.app.help.rhino.NativeBaseSource
 import io.legado.app.help.source.SourceHelp
 import io.legado.app.help.storage.Backup
+import io.legado.app.help.storage.WebDavSyncManager
 import io.legado.app.lib.theme.primaryColor
 import io.legado.app.model.BookCover
 import io.legado.app.ui.main.video.proxy.LocalProxyServer
@@ -74,7 +75,8 @@ import io.legado.app.utils.LogUtils
 import io.legado.app.utils.getPrefBoolean
 import io.legado.app.utils.getPrefString
 import io.legado.app.utils.isDebuggable
-import kotlinx.coroutines.Dispatchers.Main
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
@@ -201,6 +203,16 @@ class App : Application(), SingletonImageLoader.Factory {
             LogUtils.e("App", "LocalProxyServer start failed: ${it.message}")
         }
         
+        // 🌟 新增：启动延迟 10 秒触发多设备自动同步
+        Coroutine.async {
+            delay(10_000L)
+            try {
+                WebDavSyncManager.sync(this@App)
+            } catch (e: Exception) {
+                LogUtils.e("App", "Auto sync failed: ${e.localizedMessage}")
+            }
+        }
+
         Coroutine.async {
             get<BackupSettingsGateway>().settings
                 .map {
@@ -214,7 +226,7 @@ class App : Application(), SingletonImageLoader.Factory {
                 .map { it.themeMode }
                 .distinctUntilChanged()
                 .collect {
-                    withContext(Main) { ThemeConfigStore.initNightMode() }
+                    withContext(Dispatchers.Main) { ThemeConfigStore.initNightMode() }
                 }
         }
         Coroutine.async {
