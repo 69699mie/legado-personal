@@ -26,6 +26,7 @@ import io.legado.app.utils.compress.ZipUtils
 import io.legado.app.utils.createFolderIfNotExist
 import io.legado.app.utils.externalFiles
 import io.legado.app.utils.getFile
+import io.legado.app.utils.getPrefInt
 import io.legado.app.utils.isContentScheme
 import io.legado.app.utils.normalizeFileName
 import io.legado.app.utils.openOutputStream
@@ -112,13 +113,10 @@ object Backup {
     }
 
     private fun shouldBackup(): Boolean {
-        // 🌟 读取用户设置的间隔（单位：小时），默认 24 小时
-        val intervalHours = AppConfigStore.preferences.getInt("backup_interval_hours", 24)
+        // 🌟 核心修复：使用 getPrefInt 扩展属性
+        val intervalHours = appCtx.getPrefInt("backup_interval_hours", 24)
         
-        // 0 表示永不自动备份
         if (intervalHours == 0) return false 
-        
-        // -1 表示启动即备份
         if (intervalHours == -1) return true 
 
         val lastBackup = LocalConfig.lastBackup
@@ -269,7 +267,6 @@ object Backup {
             }
         }
         
-        // 打包 VideoSettingsRepository 独立配置 (包含 Cookie, 影视库刮削等)
         val videoPrefs = appCtx.getSharedPreferences("video_settings", Context.MODE_PRIVATE)
         val videoMap = videoPrefs.all
         if (videoMap.isNotEmpty()) {
@@ -277,7 +274,6 @@ object Backup {
                 .writeText(GSON.toJson(videoMap))
         }
 
-        // 打包影视模块 Room 数据库 (刮削海报、简介、集数等)
         if (BackupConfig.dbIsNotIgnored("videoScraped", true)) {
             val scrapedList = appDb.videoScrapedDao.getAll()
             if (scrapedList.isNotEmpty()) {
