@@ -3841,4 +3841,15 @@
     <string name="manga_reader_prefetch_adaptive_summary">移动网络下减半预加载数量</string>
     <string name="manga_reader_prefetch_prioritize_current">优先预加载当前页附近</string>
     <string name="manga_reader_prefetch_prioritize_current_summary">按距离当前页远近顺序预加载，而非从前到后</string>
+    <!-- 备份间隔 -->
+<string name="backup_interval_title">备份文件间隔</string>
+<string name="backup_interval_launch">启动即备份</string>
+<string name="backup_interval_1h">1小时内不重复备份</string>
+<string name="backup_interval_6h">6小时内不重复备份</string>
+<string name="backup_interval_12h">12小时内不重复备份</string>
+<string name="backup_interval_24h">24小时内不重复备份</string>
+<string name="backup_interval_48h">两天内不重复备份</string>
+<string name="backup_interval_72h">三天内不重复备份</string>
+<string name="backup_interval_168h">一周内不重复备份</string>
+<string name="backup_interval_never">永不自动备份</string>
 </resources>
