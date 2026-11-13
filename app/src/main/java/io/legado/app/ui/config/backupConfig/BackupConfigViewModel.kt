@@ -34,7 +34,6 @@ class BackupConfigViewModel(
             backupIgnoreItems = loadBackupIgnoreItems(),
             dbIgnoreItems = loadDbIgnoreItems(),
             backupDbIgnoreItems = loadBackupDbIgnoreItems(),
-            // 🌟 修复：使用 appCtx.getPrefInt
             backupInterval = appCtx.getPrefInt("backup_interval_hours", 24)
         )
     )
@@ -66,7 +65,6 @@ class BackupConfigViewModel(
                 update { it.copy(onlyLatestBackup = intent.value) }
             is BackupConfigIntent.SetBackupSyncMode ->
                 update { it.copy(backupSyncMode = intent.value) }
-            // 🌟 修复：使用 appCtx.putPrefInt
             is BackupConfigIntent.SetBackupInterval -> {
                 appCtx.putPrefInt("backup_interval_hours", intent.hours)
                 _uiState.update { it.copy(backupInterval = intent.hours) }
@@ -287,7 +285,8 @@ class BackupConfigViewModel(
                 .onSuccess {
                     withContext(Dispatchers.Main) {
                         _uiState.update { it.copy(activeDialog = null) }
-                        _effects.tryEmit(BackupConfigEffect.ShowMessage(R.string.backup_success))
+                        // 🌟 修复：去掉黑色背景 Snackbar 提示，仅保留系统 Toast
+                        // _effects.tryEmit(BackupConfigEffect.ShowMessage(R.string.backup_success))
                     }
                 }
                 .onFailure { error ->
