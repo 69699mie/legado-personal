@@ -32,6 +32,7 @@ import io.legado.app.data.entities.SearchKeyword
 import io.legado.app.data.entities.Server
 import io.legado.app.data.entities.TagGroupRule
 import io.legado.app.data.entities.TxtTocRule
+import io.legado.app.data.entities.VideoScrapedEntity
 import io.legado.app.data.entities.readRecord.ReadRecord
 import io.legado.app.data.entities.readRecord.ReadRecordDetail
 import io.legado.app.data.entities.readRecord.ReadRecordIdentity
@@ -81,8 +82,6 @@ import java.io.FileInputStream
 object Restore : KoinComponent {
 
     private const val TAG = "Restore"
-    // 阅读器当前只使用本地记录分区。旧版备份可能保留设备 Android ID，
-    // 恢复时须归一化，否则同一本书会因 deviceId 不同而显示为两条记录。
     private const val LOCAL_READ_RECORD_DEVICE_ID = ""
 
     suspend fun restore(context: Context, uri: Uri) {
@@ -149,19 +148,16 @@ object Restore : KoinComponent {
                 }
             }
         }
-        // 书签与划线/想法笔记（book_marks）视为一体，统一受既有 bookmark 忽略项控制
         if (BackupConfig.dbIsNotIgnored("bookmark")) {
             fileToListT<Bookmark>(path, "bookmark.json")?.let {
                 try {
                     appDb.bookmarkDao.insert(*it.toTypedArray())
-                } catch (_: SQLiteConstraintException) {
-                }
+                } catch (_: SQLiteConstraintException) {}
             }
             fileToListT<BookMarking>(path, "bookMarking.json")?.let {
                 try {
                     appDb.bookMarkingDao.insert(*it.toTypedArray())
-                } catch (_: SQLiteConstraintException) {
-                }
+                } catch (_: SQLiteConstraintException) {}
             }
         }
         if (BackupConfig.dbIsNotIgnored("bookGroup")) {
@@ -173,8 +169,7 @@ object Restore : KoinComponent {
             fileToListT<BookSource>(path, "bookSource.json")?.let {
                 try {
                     appDb.bookSourceDao.insert(*it.toTypedArray())
-                } catch (_: SQLiteConstraintException) {
-                }
+                } catch (_: SQLiteConstraintException) {}
             } ?: run {
                 val bookSourceFile = File(path, "bookSource.json")
                 if (bookSourceFile.exists()) {
@@ -187,72 +182,63 @@ object Restore : KoinComponent {
             fileToListT<RssSource>(path, "rssSources.json")?.let {
                 try {
                     appDb.rssSourceDao.insert(*it.toTypedArray())
-                } catch (_: SQLiteConstraintException) {
-                }
+                } catch (_: SQLiteConstraintException) {}
             }
         }
         if (BackupConfig.dbIsNotIgnored("rssStar")) {
             fileToListT<RssStar>(path, "rssStar.json")?.let {
                 try {
                     appDb.rssStarDao.insert(*it.toTypedArray())
-                } catch (_: SQLiteConstraintException) {
-                }
+                } catch (_: SQLiteConstraintException) {}
             }
         }
         if (BackupConfig.dbIsNotIgnored("replaceRule")) {
             fileToListT<ReplaceRule>(path, "replaceRule.json")?.let {
                 try {
                     appDb.replaceRuleDao.insert(*it.toTypedArray())
-                } catch (_: SQLiteConstraintException) {
-                }
+                } catch (_: SQLiteConstraintException) {}
             }
         }
         if (BackupConfig.dbIsNotIgnored("searchHistory")) {
             fileToListT<SearchKeyword>(path, "searchHistory.json")?.let {
                 try {
                     appDb.searchKeywordDao.insert(*it.toTypedArray())
-                } catch (_: SQLiteConstraintException) {
-                }
+                } catch (_: SQLiteConstraintException) {}
             }
         }
         if (BackupConfig.dbIsNotIgnored("sourceSub")) {
             fileToListT<RuleSub>(path, "sourceSub.json")?.let {
                 try {
                     appDb.ruleSubDao.insert(*it.toTypedArray())
-                } catch (_: SQLiteConstraintException) {
-                }
+                } catch (_: SQLiteConstraintException) {}
             }
         }
         if (BackupConfig.dbIsNotIgnored("txtTocRule")) {
             fileToListT<TxtTocRule>(path, "txtTocRule.json")?.let {
                 try {
                     appDb.txtTocRuleDao.insert(*it.toTypedArray())
-                } catch (_: SQLiteConstraintException) {
-                }
+                } catch (_: SQLiteConstraintException) {}
             }
         }
         if (BackupConfig.dbIsNotIgnored("httpTTS")) {
             fileToListT<HttpTTS>(path, "httpTTS.json")?.let {
                 try {
                     appDb.httpTTSDao.insert(*it.toTypedArray())
-                } catch (_: SQLiteConstraintException) {
-                }
+                } catch (_: SQLiteConstraintException) {}
             }
         }
         if (BackupConfig.dbIsNotIgnored("dictRule")) {
             fileToListT<DictRule>(path, "dictRule.json")?.let {
                 try {
                     appDb.dictRuleDao.insert(*it.toTypedArray())
-                } catch (_: SQLiteConstraintException) {
-                }
+                } catch (_: SQLiteConstraintException) {}
             }
         }
         if (BackupConfig.dbIsNotIgnored("keyboardAssists")) {
             fileToListT<KeyboardAssist>(path, "keyboardAssists.json")?.let {
                 try {
                     appDb.keyboardAssistsDao.insert(*it.toTypedArray())
-                } catch (_: SQLiteConstraintException) {
-                }
+                } catch (_: SQLiteConstraintException) {}
             }
         }
         if (BackupConfig.dbIsNotIgnored("homepageModules")) {
@@ -293,8 +279,6 @@ object Restore : KoinComponent {
                 }
             }
             reconcileReadRecordAliases()
-            // 会话导入按身份去重（幂等），汇总/明细取较大值后按会话重算，
-            // 避免同一备份重复导入导致阅读时长翻倍。
             get<ReadRecordRepository>().reconcileRestoredReadRecordTotals()
         }
         if (BackupConfig.dbIsNotIgnored("server")) {
@@ -308,8 +292,7 @@ object Restore : KoinComponent {
                 GSON.fromJsonArray<Server>(json).getOrNull()?.let {
                     try {
                         appDb.serverDao.insert(*it.toTypedArray())
-                    } catch (_: SQLiteConstraintException) {
-                    }
+                    } catch (_: SQLiteConstraintException) {}
                 }
             }?.onFailure {
                 AppLog.put("恢复服务器配置出错\n${it.localizedMessage}", it)
@@ -323,7 +306,6 @@ object Restore : KoinComponent {
         }?.onFailure {
             AppLog.put("恢复直链上传出错\n${it.localizedMessage}", it)
         }
-        //恢复主题配置
         if (!BackupConfig.ignoreThemeConfig) {
             File(path, ThemeConfigStore.configFileName).takeIf {
                 it.exists()
@@ -343,7 +325,6 @@ object Restore : KoinComponent {
             AppLog.put("恢复封面规则出错\n${it.localizedMessage}", it)
         }
         if (!BackupConfig.ignoreReadConfig) {
-            //恢复阅读界面配置
             File(path, ReadBookConfig.configFileName).takeIf {
                 it.exists()
             }?.runCatching {
@@ -358,12 +339,7 @@ object Restore : KoinComponent {
             }?.onFailure {
                 AppLog.put("恢复阅读界面出错\n${it.localizedMessage}", it)
             }
-            // 两个文件都落地后再整体重读：分开重读会让 shareConfig 的兜底
-            // （configList[5]）取到还没被覆盖的旧列表。refresh 顺带发布 state。
             get<ReadStyleGateway>().refresh()
-            // refresh 只重建 Compose 侧 state；阅读器开着时渲染层的两份快照（RenderStyle/
-            // TipStyle）与已排版内容不会跟着刷新，得走配置总线让 controller 重建并重排。
-            // 阅读器没开时无人消费，重开后由 Compose 阅读路由的分页重建入口兜底。
             ReadConfigUpdateBus.post(
                 setOf(
                     ConfigUpdateAction.UpdateBackground,
@@ -373,7 +349,6 @@ object Restore : KoinComponent {
                 )
             )
         }
-        // 恢复配置文件 (手动解析 XML，替代反射逻辑)
         val configFile = File(path, "config.xml")
         if (configFile.exists()) {
             try {
@@ -386,23 +361,20 @@ object Restore : KoinComponent {
             }
         }
 
-        // 🌟 核心新增：恢复 VideoSettingsRepository (包含影视库、Cookie、进度等)
+        // 1. 恢复 VideoSettingsRepository (SharedPreferences)
         val videoConfigFile = File(path, "video_settings.json")
         if (videoConfigFile.exists()) {
             try {
                 val json = videoConfigFile.readText()
-                // 使用 GSON 将 JSON 解析回 Map
                 val mapType = object : com.google.gson.reflect.TypeToken<Map<String, Any>>() {}.type
                 val videoMap: Map<String, Any> = GSON.fromJson(json, mapType)
                 val editor = appCtx.getSharedPreferences("video_settings", Context.MODE_PRIVATE).edit()
-                // 全量覆盖，与备份保持一致
                 editor.clear() 
                 videoMap.forEach { (key, value) ->
                     when (value) {
                         is String -> editor.putString(key, value)
                         is Boolean -> editor.putBoolean(key, value)
                         is Number -> {
-                            // GSON 解析出来的数字默认是 Double，这里需要判断原本的数值类型
                             val num = value.toDouble()
                             if (num % 1.0 == 0.0) {
                                 if (num >= Int.MIN_VALUE && num <= Int.MAX_VALUE) {
@@ -422,6 +394,19 @@ object Restore : KoinComponent {
             }
         }
 
+        // 🌟 2. 恢复 VideoScrapedEntity (Room 数据库刮削数据)
+        if (BackupConfig.dbIsNotIgnored("videoScraped")) {
+            fileToListT<VideoScrapedEntity>(path, "videoScraped.json")?.let { scrapedList ->
+                try {
+                    if (scrapedList.isNotEmpty()) {
+                        appDb.videoScrapedDao.replaceAll(scrapedList)
+                    }
+                } catch (e: Exception) {
+                    AppLog.put("恢复影视刮削数据出错\n${e.localizedMessage}", e)
+                }
+            }
+        }
+
         appCtx.toastOnUi(R.string.restore_success)
         withContext(Main) {
             delay(100)
@@ -433,10 +418,10 @@ object Restore : KoinComponent {
         }
     }
 
+    // ... 中间的其他私有方法保持不变（localBookLocationStatus、restoreReadRecord 等）...
     private fun localBookLocationStatus(bookUrl: String): LocalBookLocationStatus {
         val uri = bookUrl.takeIf { it.isUri() }?.toUri()
         if (uri?.isContentScheme() == true) {
-            // Provider 离线、临时权限问题与文件确实删除无法可靠区分，失败时保守保留记录。
             return kotlin.runCatching {
                 if (appCtx.contentResolver.openInputStream(uri)?.use { true } == true) {
                     LocalBookLocationStatus.Available
@@ -445,20 +430,17 @@ object Restore : KoinComponent {
                 }
             }.getOrDefault(LocalBookLocationStatus.Unknown)
         }
-
         val file = File(uri?.path ?: bookUrl)
         if (file.isFile) return LocalBookLocationStatus.Available
         return when (runCatching { Environment.getExternalStorageState(file) }.getOrNull()) {
             Environment.MEDIA_MOUNTED,
             Environment.MEDIA_MOUNTED_READ_ONLY -> LocalBookLocationStatus.Missing
-
             Environment.MEDIA_UNKNOWN -> LocalBookLocationStatus.Unknown
             null -> LocalBookLocationStatus.Unknown
             else -> LocalBookLocationStatus.Unknown
         }
     }
 
-    /** 导入汇总记录时统一到本地分区，取已有与导入两者中的较大时长，保证重复导入幂等。 */
     private suspend fun restoreReadRecord(readRecord: ReadRecord) {
         val localRecord = readRecord.copy(
             deviceId = LOCAL_READ_RECORD_DEVICE_ID,
@@ -466,9 +448,7 @@ object Restore : KoinComponent {
             bookAuthor = ReadRecordIdentity.author(readRecord.bookAuthor)
         )
         val existing = appDb.readRecordDao.getReadRecord(
-            localRecord.deviceId,
-            localRecord.bookName,
-            localRecord.bookAuthor
+            localRecord.deviceId, localRecord.bookName, localRecord.bookAuthor
         )
         appDb.readRecordDao.insert(
             existing?.copy(
@@ -478,7 +458,6 @@ object Restore : KoinComponent {
         )
     }
 
-    /** 导入每日详情时统一到本地分区，取已有与导入两者中的较大统计值，保证重复导入幂等。 */
     private suspend fun restoreReadRecordDetail(detail: ReadRecordDetail) {
         val localDetail = detail.copy(
             deviceId = LOCAL_READ_RECORD_DEVICE_ID,
@@ -486,10 +465,7 @@ object Restore : KoinComponent {
             bookAuthor = ReadRecordIdentity.author(detail.bookAuthor)
         )
         val existing = appDb.readRecordDao.getDetail(
-            localDetail.deviceId,
-            localDetail.bookName,
-            localDetail.bookAuthor,
-            localDetail.date
+            localDetail.deviceId, localDetail.bookName, localDetail.bookAuthor, localDetail.date
         )
         appDb.readRecordDao.insertDetail(
             existing?.copy(
@@ -501,7 +477,6 @@ object Restore : KoinComponent {
         )
     }
 
-    /** 导入会话时统一到本地分区，并按完整会话身份跳过已有副本。 */
     private suspend fun restoreReadRecordSession(session: ReadRecordSession) {
         val localSession = session.copy(
             deviceId = LOCAL_READ_RECORD_DEVICE_ID,
@@ -509,31 +484,21 @@ object Restore : KoinComponent {
             bookAuthor = ReadRecordIdentity.author(session.bookAuthor)
         )
         val existing = appDb.readRecordDao.getSession(
-            localSession.deviceId,
-            localSession.bookName,
-            localSession.bookAuthor,
-            localSession.bookUrl,
-            localSession.startTime,
-            localSession.endTime,
-            localSession.words
+            localSession.deviceId, localSession.bookName, localSession.bookAuthor,
+            localSession.bookUrl, localSession.startTime, localSession.endTime, localSession.words
         )
         if (existing == null) {
             appDb.readRecordDao.insertSession(localSession)
         }
     }
 
-    /** 导入完成后，将能唯一匹配书架作者的旧空作者记录迁移到规范作者。 */
     private suspend fun reconcileReadRecordAliases() {
         val repository = get<ReadRecordRepository>()
         appDb.readRecordDao.all
             .filter { it.bookAuthor.isBlank() }
             .forEach { source ->
                 val authors = appDb.bookDao.findByName(source.bookName)
-                    .asSequence()
-                    .map { it.author.trim() }
-                    .filter { it.isNotBlank() }
-                    .distinct()
-                    .toList()
+                    .asSequence().map { it.author.trim() }.filter { it.isNotBlank() }.distinct().toList()
                 val author = authors.singleOrNull() ?: return@forEach
                 repository.mergeIndependentReadRecordsInto(
                     targetRecord = ReadRecord(
@@ -559,12 +524,9 @@ object Restore : KoinComponent {
             map = map,
             keyIsNotIgnore = { BackupConfig.keyIsNotIgnore(it) },
             decryptWebDavPassword = { runCatching { aes.decryptStr(it) }.getOrNull() },
-            hasLocalWebDavPassword = !appCtx.getPrefString(PreferKey.webDavPassword)
-                .isNullOrBlank(),
+            hasLocalWebDavPassword = !appCtx.getPrefString(PreferKey.webDavPassword).isNullOrBlank(),
         )
-        // 经快照层批量恢复：立即对读侧生效（onRestoreFinish 的读取不再依赖回灌时机），单次原子 edit 落盘
         AppConfigStore.putAll(finalMap)
-        // 恢复完成提示前等待落盘，dataStore.edit 返回即持久化完成
         SettingsWriter.awaitPendingWrites()
     }
 
@@ -603,18 +565,13 @@ object Restore : KoinComponent {
         try {
             val file = File(path, fileName)
             if (file.exists()) {
-                LogUtils.d(TAG, "阅读恢复备份 $fileName 文件大小 ${file.length()}")
                 FileInputStream(file).use {
-                    return GSON.fromJsonArray<T>(it).getOrThrow().also { list ->
-                        LogUtils.d(TAG, "阅读恢复备份 $fileName 列表大小 ${list.size}")
-                    }
+                    return GSON.fromJsonArray<T>(it).getOrThrow().also { list -> }
                 }
-            } else {
-                LogUtils.d(TAG, "阅读恢复备份 $fileName 文件不存在")
             }
         } catch (e: Exception) {
             AppLog.put("$fileName\n读取解析出错\n${e.localizedMessage}", e)
-            appCtx.toastOnUi("$fileName\n读取文件出错\n${e.localizedMessage}")
+            appCtx.toastToUi("$fileName\n读取文件出错\n${e.localizedMessage}")
         }
         return null
     }
