@@ -950,11 +950,12 @@ fun InternalVideoPlayer(url: String, title: String, cookie: String, series: Medi
     var hasRequestedLandscape = remember { false }
 
     var isLongPressing by remember { mutableStateOf(false) }
+    var showLongPressText by remember { mutableStateOf(true) } // 🌟 新增：控制 6 秒后隐藏长按提示
     var playerToastMessage by remember { mutableStateOf<String?>(null) }
 
     var lastCenterMessage by remember { mutableStateOf<String?>(null) }
     val currentCenterMessage = when {
-        isLongPressing -> "2.0x快进中"
+        isLongPressing && showLongPressText -> "2.0x快进中"
         playerToastMessage != null -> playerToastMessage
         else -> null
     }
@@ -962,6 +963,13 @@ fun InternalVideoPlayer(url: String, title: String, cookie: String, series: Medi
     LaunchedEffect(currentCenterMessage) {
         if (currentCenterMessage != null) {
             lastCenterMessage = currentCenterMessage
+        }
+    }
+
+    LaunchedEffect(isLongPressing, showLongPressText) {
+        if (isLongPressing && showLongPressText) {
+            delay(6000)
+            showLongPressText = false
         }
     }
 
@@ -1362,7 +1370,9 @@ fun InternalVideoPlayer(url: String, title: String, cookie: String, series: Medi
             },
             onLongPress = {
                 haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                isLongPressing = true; exoPlayer.setPlaybackSpeed(2.0f)
+                isLongPressing = true
+                showLongPressText = true // 🌟 重置长按文本显示状态
+                exoPlayer.setPlaybackSpeed(2.0f)
             },
             onPress = {
                 try {
