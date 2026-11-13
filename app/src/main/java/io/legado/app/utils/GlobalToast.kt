@@ -1,6 +1,5 @@
 package io.legado.app.utils
 
-import android.annotation.SuppressLint
 import android.content.Context
 import android.graphics.PixelFormat
 import android.os.Build
@@ -49,8 +48,8 @@ object GlobalToast {
     private var currentOwner: ToastLifecycleOwner? = null
     private var dismissRunnable: Runnable? = null
 
-    @SuppressLint("StaticFieldLeak")
-    private val windowManager by lazy {
+    // 🌟 修复：移除 @SuppressLint 注解，显式指定类型，解决编译报错
+    private val windowManager: WindowManager by lazy {
         appCtx.getSystemService(Context.WINDOW_SERVICE) as WindowManager
     }
 
@@ -58,7 +57,7 @@ object GlobalToast {
         if (message.isBlank()) return
         handler.post {
             if (!Settings.canDrawOverlays(appCtx)) {
-                // 未授予悬浮窗权限，降级为系统原生 Toast，保证文字至少可见
+                // 未授予悬浮窗权限，降级为系统原生 Toast
                 Toast.makeText(appCtx, message, Toast.LENGTH_SHORT).show()
                 return@post
             }
@@ -118,6 +117,7 @@ object GlobalToast {
                 currentView = composeView
                 currentOwner = owner
                 owner.onResume()
+
                 val runnable = Runnable {
                     visible = false
                     handler.postDelayed({ dismissImmediately() }, 300L)
