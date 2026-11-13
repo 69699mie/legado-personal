@@ -259,7 +259,7 @@ fun BackupConfigScreen(
                         selectedValue = state.backupInterval.toString(),
                         displayEntries = intervalEntries,
                         entryValues = intervalValues,
-                        onValueChange = { onIntent(BackupConfigIntent.SetBackupInterval(it.toInt())) },
+                        onValueChange = { onIntent(BackupConfigIntent.SetBackupInterval(it.toIntOrNull() ?: 24)) },
                     )
                     ClickableSettingItem(
                         title = stringResource(R.string.backup),
