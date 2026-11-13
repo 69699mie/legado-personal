@@ -2,8 +2,6 @@ package io.legado.app.help.storage
 
 import android.content.Context
 import android.net.Uri
-import android.os.Handler
-import android.os.Looper
 import androidx.core.net.toUri
 import androidx.documentfile.provider.DocumentFile
 import io.legado.app.constant.AppLog
@@ -35,7 +33,8 @@ import io.legado.app.utils.openOutputStream
 import io.legado.app.utils.outputStream
 import io.legado.app.utils.toastOnUi
 import io.legado.app.utils.writeToOutputStream
-import kotlinx.coroutines.Dispatchers.IO
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.IO
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
@@ -134,17 +133,18 @@ object Backup {
             Coroutine.async {
                 BackupRestoreLock.withLock {
                     if (shouldBackup()) {
-                        // 🌟 核心修改：移除 hasBackUp 拦截，完全尊崇用户设定的时间/启动间隔，强制覆盖同名备份
-                        runCatching {
+                        try {
+                            // 执行备份（包含上传到 WebDAV）
                             backup(context, backupSettingsGateway.currentSettings.backupPath)
-                            Handler(Looper.getMainLooper()).postDelayed({
+                            // 备份成功后，切换到主线程弹 Toast（确保一定会提示）
+                            withContext(Dispatchers.Main) {
                                 appCtx.toastOnUi("自动备份成功")
-                            }, 2000)
-                        }.onFailure {
-                            AppLog.put("自动备份失败\n${it.localizedMessage}")
-                            Handler(Looper.getMainLooper()).postDelayed({
-                                appCtx.toastOnUi("自动备份失败\n${it.localizedMessage}")
-                            }, 2000)
+                            }
+                        } catch (e: Exception) {
+                            AppLog.put("自动备份失败\n${e.localizedMessage}")
+                            withContext(Dispatchers.Main) {
+                                appCtx.toastOnUi("自动备份失败\n${e.localizedMessage}")
+                            }
                         }
                     }
                 }
@@ -154,7 +154,7 @@ object Backup {
 
     suspend fun backupLocked(context: Context, path: String?, mode: String = "both") {
         BackupRestoreLock.withLock {
-            withContext(IO) {
+            withContext(Dispatchers.IO) {
                 backup(context, path, mode)
             }
         }
@@ -387,7 +387,7 @@ object Backup {
 
     private suspend fun writeListToJson(list: List<Any>, fileName: String, path: String) {
         currentCoroutineContext().ensureActive()
-        withContext(IO) {
+        withContext(Dispatchers.IO) {
             if (list.isNotEmpty()) {
                 LogUtils.d(TAG, "阅读备份 $fileName 列表大小 ${list.size}")
                 val file = FileUtils.createFileIfNotExist(path + File.separator + fileName)
