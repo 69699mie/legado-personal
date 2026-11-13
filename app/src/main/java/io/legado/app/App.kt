@@ -9,6 +9,11 @@ import android.content.pm.ApplicationInfo
 import android.graphics.BitmapFactory
 import android.os.Build
 import androidx.core.graphics.scale
+import androidx.work.Constraints
+import androidx.work.ExistingWorkPolicy
+import androidx.work.NetworkType
+import androidx.work.OneTimeWorkRequestBuilder
+import androidx.work.WorkManager
 import coil3.ImageLoader
 import coil3.SingletonImageLoader
 import com.github.liuyueyi.quick.transfer.constants.TransType
@@ -65,7 +70,7 @@ import io.legado.app.help.http.okHttpClient
 import io.legado.app.help.rhino.NativeBaseSource
 import io.legado.app.help.source.SourceHelp
 import io.legado.app.help.storage.Backup
-import io.legado.app.help.storage.WebDavSyncManager
+import io.legado.app.help.storage.SyncWorker
 import io.legado.app.lib.theme.primaryColor
 import io.legado.app.model.BookCover
 import io.legado.app.ui.main.video.proxy.LocalProxyServer
@@ -75,8 +80,7 @@ import io.legado.app.utils.LogUtils
 import io.legado.app.utils.getPrefBoolean
 import io.legado.app.utils.getPrefString
 import io.legado.app.utils.isDebuggable
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.delay
+import kotlinx.coroutines.Dispatchers.Main
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
@@ -84,6 +88,7 @@ import kotlinx.coroutines.withContext
 import org.chromium.base.ThreadUtils
 import org.koin.android.ext.android.get
 import org.koin.android.ext.koin.androidContext
+import org.koin.androidx.workmanager.koin.workManagerFactory
 import org.koin.core.context.GlobalContext.startKoin
 import splitties.init.appCtx
 import splitties.systemservices.notificationManager
@@ -111,6 +116,7 @@ class App : Application(), SingletonImageLoader.Factory {
         } else null
         startKoin {
             androidContext(this@App)
+            workManagerFactory()
             modules(appDatabaseModule, appModule)
         }
         @Suppress("DEPRECATION")
@@ -203,15 +209,20 @@ class App : Application(), SingletonImageLoader.Factory {
             LogUtils.e("App", "LocalProxyServer start failed: ${it.message}")
         }
         
-        // 🌟 新增：启动延迟 10 秒触发多设备自动同步
-        Coroutine.async {
-            delay(10_000L)
-            try {
-                WebDavSyncManager.sync(this@App)
-            } catch (e: Exception) {
-                LogUtils.e("App", "Auto sync failed: ${e.localizedMessage}")
-            }
-        }
+        // 🌟 新增：启动延迟 10 秒触发多设备自动同步 (由 WorkManager 托管)
+        val syncRequest = OneTimeWorkRequestBuilder<SyncWorker>()
+            .setInitialDelay(10, TimeUnit.SECONDS)
+            .setConstraints(
+                Constraints.Builder()
+                    .setRequiredNetworkType(NetworkType.CONNECTED)
+                    .build()
+            )
+            .build()
+        WorkManager.getInstance(this).enqueueUniqueWork(
+            "webdav_sync",
+            ExistingWorkPolicy.REPLACE,
+            syncRequest
+        )
 
         Coroutine.async {
             get<BackupSettingsGateway>().settings
@@ -226,7 +237,7 @@ class App : Application(), SingletonImageLoader.Factory {
                 .map { it.themeMode }
                 .distinctUntilChanged()
                 .collect {
-                    withContext(Dispatchers.Main) { ThemeConfigStore.initNightMode() }
+                    withContext(Main) { ThemeConfigStore.initNightMode() }
                 }
         }
         Coroutine.async {
