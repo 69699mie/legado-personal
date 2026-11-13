@@ -8,12 +8,10 @@ import io.legado.app.data.entities.Bookmark
 import io.legado.app.domain.gateway.BackupSettingsGateway
 import io.legado.app.lib.webdav.Authorization
 import io.legado.app.lib.webdav.WebDav
-import io.legado.app.lib.webdav.WebDavFile
 import io.legado.app.utils.GSON
 import io.legado.app.utils.GlobalToast
-import io.legado.app.utils.getPrefLong
+import io.legado.app.utils.fromJsonArray
 import io.legado.app.utils.getPrefString
-import io.legado.app.utils.putPrefLong
 import io.legado.app.utils.putPrefString
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -21,9 +19,6 @@ import org.json.JSONObject
 import org.koin.core.context.GlobalContext
 import splitties.init.appCtx
 import java.io.File
-import java.text.SimpleDateFormat
-import java.util.Date
-import java.util.Locale
 
 object WebDavSyncManager {
 
@@ -35,8 +30,9 @@ object WebDavSyncManager {
 
     private val SYNC_FILES = listOf("video_settings.json", "bookmark.json", "bookMarking.json")
     private const val SYNC_META_FILE = "sync_meta.json"
-    private const val ROLE_MASTER = "master"
-    private const val ROLE_SLAVE = "slave"
+    // 🌟 修复 1：移除 private 修饰符，允许外部 ViewModel 和 UI 访问
+    const val ROLE_MASTER = "master"
+    const val ROLE_SLAVE = "slave"
     private const val PREF_ROLE = "sync_device_role"
 
     fun getDeviceRole(): String = appCtx.getPrefString(PREF_ROLE, ROLE_MASTER)
@@ -44,7 +40,8 @@ object WebDavSyncManager {
 
     private fun getSyncUrl(): String {
         val settings = backupGateway.currentSettings
-        var url = settings.webDavUrl.trim()
+        // 🌟 修复 2：处理 webDavUrl 可能为 null 的情况，解决 Return type mismatch 报错
+        var url = (settings.webDavUrl ?: "").trim()
         if (url.isEmpty()) url = "https://dav.jianguoyun.com/dav/"
         if (!url.endsWith("/")) url = "$url/"
         if (settings.webDavDir.isNotBlank()) url = "${url}${settings.webDavDir.trim()}/"
@@ -108,16 +105,13 @@ object WebDavSyncManager {
                     val localVersion = getLocalVersion(meta, fileName)
                     val localFile = File(syncTempDir, fileName)
                     val localExists = localFile.exists()
-                    // 如果云端存在且云端版本号更高，或者本地文件存在且本地版本号更高
                     val cloudNewer = cloudFile != null && cloudVersion > localVersion
                     val localNewer = localExists && localVersion > cloudVersion
 
                     if (cloudNewer) {
-                        // 云端较新，下载并覆盖本地
                         downloadAndApply(syncUrl, fileName, auth, meta)
                         hasDownloaded = true
                     } else if (localNewer && role == ROLE_MASTER) {
-                        // 本地较新且是主设备，上传并递增云端版本号
                         uploadFile(syncUrl, fileName, auth, meta)
                     }
                 }
@@ -140,7 +134,6 @@ object WebDavSyncManager {
                 val syncUrl = getSyncUrl()
                 WebDav(syncUrl, auth).makeAsDir()
 
-                // 先备份云端旧版本，留后悔药
                 val backupDir = File(syncTempDir, "cloud_backup_before_upload").apply { mkdirs() }
                 for (fileName in SYNC_FILES) {
                     try {
@@ -155,7 +148,6 @@ object WebDavSyncManager {
                 for (fileName in SYNC_FILES) {
                     val localFile = File(syncTempDir, fileName)
                     if (localFile.exists()) {
-                        // 手动上传：以本地为准，强制覆盖云端，版本号直接取本地版本号 + 1
                         val currentLocalVersion = getLocalVersion(meta, fileName)
                         val newVersion = currentLocalVersion + 1
                         WebDav("$syncUrl$fileName", auth).upload(localFile.readBytes(), "application/json")
@@ -172,7 +164,8 @@ object WebDavSyncManager {
         }
     }
 
-    private fun downloadAndApply(syncUrl: String, fileName: String, auth: Authorization, meta: JSONObject) {
+    // 🌟 修复 3：加上 suspend 关键字
+    private suspend fun downloadAndApply(syncUrl: String, fileName: String, auth: Authorization, meta: JSONObject) {
         val bytes = WebDav("$syncUrl$fileName", auth).download() ?: return
         val localFile = File(syncTempDir, fileName)
         localFile.writeBytes(bytes)
@@ -182,7 +175,8 @@ object WebDavSyncManager {
         applySyncedFile(fileName, localFile)
     }
 
-    private fun uploadFile(syncUrl: String, fileName: String, auth: Authorization, meta: JSONObject) {
+    // 🌟 修复 3：加上 suspend 关键字
+    private suspend fun uploadFile(syncUrl: String, fileName: String, auth: Authorization, meta: JSONObject) {
         val localFile = File(syncTempDir, fileName)
         if (!localFile.exists()) return
         WebDav("$syncUrl$fileName", auth).upload(localFile.readBytes(), "application/json")
@@ -235,11 +229,17 @@ object WebDavSyncManager {
             }
             "bookmark.json" -> {
                 val list = GSON.fromJsonArray<Bookmark>(file.readText()).getOrNull()
-                if (list != null) appDb.bookmarkDao.insert(*list.toTypedArray())
+                // 🌟 修复 5：防止 list 为 null 导致 Spread operator 报错
+                if (!list.isNullOrEmpty()) {
+                    appDb.bookmarkDao.insert(*list.toTypedArray())
+                }
             }
             "bookMarking.json" -> {
                 val list = GSON.fromJsonArray<BookMarking>(file.readText()).getOrNull()
-                if (list != null) appDb.bookMarkingDao.insert(*list.toTypedArray())
+                // 🌟 修复 5：防止 list 为 null 导致 Spread operator 报错
+                if (!list.isNullOrEmpty()) {
+                    appDb.bookMarkingDao.insert(*list.toTypedArray())
+                }
             }
         }
     }
