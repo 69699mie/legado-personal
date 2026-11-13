@@ -217,6 +217,13 @@ dependencies {
     // 🌟 核心新增：本地代理服务器依赖
     implementation("org.nanohttpd:nanohttpd:2.3.1")
 
+    // ===================== 🌟 多设备同步新增依赖 =====================
+    // WorkManager 基础库
+    implementation("androidx.work:work-runtime-ktx:2.9.0")
+    // Koin 对 WorkManager 的扩展支持（版本由上方 Koin BOM 统一管理，无需写版本号）
+    implementation("io.insert-koin:koin-androidx-workmanager")
+    // =================================================================
+
     implementation(libs.splitties.appctx)
     implementation(libs.splitties.systemservices)
     implementation(libs.splitties.views)
