@@ -130,6 +130,8 @@ object Backup {
                     if (shouldBackup()) {
                         try {
                             backup(context, backupSettingsGateway.currentSettings.backupPath)
+                            // 🌟 核心修复：把 lastBackup 移到成功之后，防止失败后跳过重试
+                            LocalConfig.lastBackup = System.currentTimeMillis()
                             GlobalToast.show("自动备份成功")
                         } catch (e: Exception) {
                             AppLog.put("自动备份失败\n${e.localizedMessage}")
@@ -151,7 +153,6 @@ object Backup {
 
     private suspend fun backup(context: Context, path: String?, mode: String = "both") {
         LogUtils.d(TAG, "开始备份 path:$path")
-        LocalConfig.lastBackup = System.currentTimeMillis()
         val aes = BackupAES()
         FileUtils.delete(backupPath)
         
@@ -356,6 +357,7 @@ object Backup {
                 try {
                     AppWebDav.backUpWebDav(zipFileName)
                 } catch (e: Exception) {
+                    AppLog.put("上传备份至webdav失败\n$e", e)
                 }
             }
         }
