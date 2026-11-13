@@ -88,7 +88,8 @@ object Backup {
             "highlightTagRule.json",
             "tagGroupRule.json",
             "servers.json",
-            "video_settings.json", // 🌟 新增：影视库与 Cookie 备份文件
+            "video_settings.json",
+            "videoScraped.json",
             DirectLinkUpload.ruleFileName,
             ReadBookConfig.configFileName,
             ReadBookConfig.shareConfigFileName,
@@ -110,8 +111,15 @@ object Backup {
     }
 
     private fun shouldBackup(): Boolean {
+        // 🌟 核心修改：读取用户设置的间隔（单位：小时）
+        val intervalHours = AppConfigStore.preferences.getInt("backup_interval_hours", 24)
+        
+        if (intervalHours == 0) return false 
+        if (intervalHours == -1) return true 
+
         val lastBackup = LocalConfig.lastBackup
-        return lastBackup + TimeUnit.DAYS.toMillis(1) < System.currentTimeMillis()
+        val intervalMillis = TimeUnit.HOURS.toMillis(intervalHours.toLong())
+        return lastBackup + intervalMillis < System.currentTimeMillis()
     }
 
     fun autoBack(context: Context) {
@@ -152,7 +160,7 @@ object Backup {
             "bookshelf.json",
             backupPath,
         )
-        // 书签与划线/想法笔记（book_marks）视为一体，统一受既有 bookmark 忽略项控制
+        
         if (BackupConfig.dbIsNotIgnored("bookmark", true)) {
             writeListToJson(appDb.bookmarkDao.all, "bookmark.json", backupPath)
             writeListToJson(appDb.bookMarkingDao.all, "bookMarking.json", backupPath)
@@ -224,6 +232,7 @@ object Backup {
                 }
             }
         }
+        
         currentCoroutineContext().ensureActive()
         if (!BackupConfig.backupIgnoreReadConfig) {
             readStyleGateway.exportConfigsJson().let {
@@ -251,6 +260,21 @@ object Backup {
                     .writeText(GSON.toJson(it))
             }
         }
+        
+        val videoPrefs = appCtx.getSharedPreferences("video_settings", Context.MODE_PRIVATE)
+        val videoMap = videoPrefs.all
+        if (videoMap.isNotEmpty()) {
+            FileUtils.createFileIfNotExist(backupPath + File.separator + "video_settings.json")
+                .writeText(GSON.toJson(videoMap))
+        }
+
+        if (BackupConfig.dbIsNotIgnored("videoScraped", true)) {
+            val scrapedList = appDb.videoScrapedDao.getAll()
+            if (scrapedList.isNotEmpty()) {
+                writeListToJson(scrapedList, "videoScraped.json", backupPath)
+            }
+        }
+
         currentCoroutineContext().ensureActive()
         val configMap = AppConfigStore.preferences.asMap()
             .mapKeys { it.key.name }
@@ -277,7 +301,6 @@ object Backup {
         xmlBuilder.append("<?xml version='1.0' encoding='utf-8' standalone='yes' ?>\n")
         xmlBuilder.append("<map>\n")
         configMap.forEach { (key, value) ->
-            // 这些旧键在其他 Legado 变体中有不同类型或含义，备份只导出独立键。
             if (key !in setOf(
                     PreferKey.saveTabPosition,
                     PreferKey.showBrightnessView,
@@ -301,14 +324,6 @@ object Backup {
         xmlBuilder.append("</map>")
         FileUtils.createFileIfNotExist(backupPath + File.separator + "config.xml")
             .writeText(xmlBuilder.toString())
-
-        // 🌟 核心新增：打包 VideoSettingsRepository 独立配置 (包含 Cookie, 影视库刮削等)
-        val videoPrefs = appCtx.getSharedPreferences("video_settings", Context.MODE_PRIVATE)
-        val videoMap = videoPrefs.all
-        if (videoMap.isNotEmpty()) {
-            FileUtils.createFileIfNotExist(backupPath + File.separator + "video_settings.json")
-                .writeText(GSON.toJson(videoMap))
-        }
 
         currentCoroutineContext().ensureActive()
         val zipFileName = getNowZipFileName()
