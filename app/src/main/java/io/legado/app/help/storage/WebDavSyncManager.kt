@@ -30,17 +30,18 @@ object WebDavSyncManager {
 
     private val SYNC_FILES = listOf("video_settings.json", "bookmark.json", "bookMarking.json")
     private const val SYNC_META_FILE = "sync_meta.json"
-    // 🌟 修复 1：移除 private 修饰符，允许外部 ViewModel 和 UI 访问
+    
     const val ROLE_MASTER = "master"
     const val ROLE_SLAVE = "slave"
     private const val PREF_ROLE = "sync_device_role"
 
-    fun getDeviceRole(): String = appCtx.getPrefString(PREF_ROLE, ROLE_MASTER)
+    // 🌟 修复 1：加上 ?: ROLE_MASTER 兜底，解决 Return type mismatch 报错
+    fun getDeviceRole(): String = appCtx.getPrefString(PREF_ROLE, ROLE_MASTER) ?: ROLE_MASTER
+    
     fun setDeviceRole(role: String) = appCtx.putPrefString(PREF_ROLE, role)
 
     private fun getSyncUrl(): String {
         val settings = backupGateway.currentSettings
-        // 🌟 修复 2：处理 webDavUrl 可能为 null 的情况，解决 Return type mismatch 报错
         var url = (settings.webDavUrl ?: "").trim()
         if (url.isEmpty()) url = "https://dav.jianguoyun.com/dav/"
         if (!url.endsWith("/")) url = "$url/"
@@ -164,7 +165,6 @@ object WebDavSyncManager {
         }
     }
 
-    // 🌟 修复 3：加上 suspend 关键字
     private suspend fun downloadAndApply(syncUrl: String, fileName: String, auth: Authorization, meta: JSONObject) {
         val bytes = WebDav("$syncUrl$fileName", auth).download() ?: return
         val localFile = File(syncTempDir, fileName)
@@ -175,7 +175,6 @@ object WebDavSyncManager {
         applySyncedFile(fileName, localFile)
     }
 
-    // 🌟 修复 3：加上 suspend 关键字
     private suspend fun uploadFile(syncUrl: String, fileName: String, auth: Authorization, meta: JSONObject) {
         val localFile = File(syncTempDir, fileName)
         if (!localFile.exists()) return
@@ -196,7 +195,8 @@ object WebDavSyncManager {
         }
     }
 
-    private fun applySyncedFile(fileName: String, file: File) {
+    // 🌟 修复 2：加上 suspend 关键字，解决 'can only be called from a coroutine' 报错
+    private suspend fun applySyncedFile(fileName: String, file: File) {
         val LONG_KEYS = setOf(
             "total_video_watch_time", "total_reading_time", "last_backup_time",
             "book_shelf_last_update_time", "version_code", "read_record_total_time",
@@ -229,14 +229,12 @@ object WebDavSyncManager {
             }
             "bookmark.json" -> {
                 val list = GSON.fromJsonArray<Bookmark>(file.readText()).getOrNull()
-                // 🌟 修复 5：防止 list 为 null 导致 Spread operator 报错
                 if (!list.isNullOrEmpty()) {
                     appDb.bookmarkDao.insert(*list.toTypedArray())
                 }
             }
             "bookMarking.json" -> {
                 val list = GSON.fromJsonArray<BookMarking>(file.readText()).getOrNull()
-                // 🌟 修复 5：防止 list 为 null 导致 Spread operator 报错
                 if (!list.isNullOrEmpty()) {
                     appDb.bookMarkingDao.insert(*list.toTypedArray())
                 }
