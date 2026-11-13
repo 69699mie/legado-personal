@@ -3,6 +3,7 @@ package io.legado.app.ui.config.backupConfig
 import androidx.annotation.StringRes
 import androidx.compose.runtime.Stable
 import io.legado.app.domain.model.settings.BackupSettings
+import io.legado.app.help.storage.WebDavSyncManager
 import kotlinx.collections.immutable.ImmutableList
 import kotlinx.collections.immutable.persistentListOf
 
@@ -16,8 +17,11 @@ data class BackupConfigUiState(
     val backupIgnoreItems: ImmutableList<BackupIgnoreItem> = persistentListOf(),
     val dbIgnoreItems: ImmutableList<BackupIgnoreItem> = persistentListOf(),
     val backupDbIgnoreItems: ImmutableList<BackupIgnoreItem> = persistentListOf(),
-    // 🌟 新增：备份间隔
     val backupInterval: Int = 24,
+    
+    // 多设备同步字段
+    val deviceRole: String = WebDavSyncManager.ROLE_MASTER,
+    val showSlaveUploadConfirm: Boolean = false,
 )
 
 @Stable
@@ -57,8 +61,14 @@ sealed interface BackupConfigIntent {
     data class SetAutoCheckNewBackup(val value: Boolean) : BackupConfigIntent
     data class SetOnlyLatestBackup(val value: Boolean) : BackupConfigIntent
     data class SetBackupSyncMode(val value: String) : BackupConfigIntent
-    // 🌟 新增：备份间隔的 Intent
     data class SetBackupInterval(val hours: Int) : BackupConfigIntent
+    
+    // 多设备同步事件
+    data class SetDeviceRole(val role: String) : BackupConfigIntent
+    data object RequestSlaveUpload : BackupConfigIntent
+    data object ConfirmSlaveUpload : BackupConfigIntent
+    data object DismissSlaveUploadConfirm : BackupConfigIntent
+    
     data class OpenSheet(val sheet: BackupConfigSheet) : BackupConfigIntent
     data object DismissSheet : BackupConfigIntent
     data object OpenWebDavAuth : BackupConfigIntent
