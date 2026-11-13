@@ -8,10 +8,11 @@ import io.legado.app.domain.gateway.BackupSettingsGateway
 import io.legado.app.domain.model.settings.BackupSettings
 import io.legado.app.domain.usecase.BackupRestoreUseCase
 import io.legado.app.domain.usecase.WebDavBackupUseCase
+import io.legado.app.help.storage.WebDavSyncManager
+import io.legado.app.utils.GlobalToast
 import io.legado.app.utils.getPrefInt
 import io.legado.app.utils.isContentScheme
 import io.legado.app.utils.putPrefInt
-import io.legado.app.utils.toastOnUi
 import kotlinx.collections.immutable.toImmutableList
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableSharedFlow
@@ -35,7 +36,8 @@ class BackupConfigViewModel(
             backupIgnoreItems = loadBackupIgnoreItems(),
             dbIgnoreItems = loadDbIgnoreItems(),
             backupDbIgnoreItems = loadBackupDbIgnoreItems(),
-            backupInterval = appCtx.getPrefInt("backup_interval_hours", 24)
+            backupInterval = appCtx.getPrefInt("backup_interval_hours", 24),
+            deviceRole = WebDavSyncManager.getDeviceRole()
         )
     )
     val uiState = _uiState.asStateFlow()
@@ -70,6 +72,24 @@ class BackupConfigViewModel(
                 appCtx.putPrefInt("backup_interval_hours", intent.hours)
                 _uiState.update { it.copy(backupInterval = intent.hours) }
             }
+            is BackupConfigIntent.SetDeviceRole -> {
+                WebDavSyncManager.setDeviceRole(intent.role)
+                _uiState.update { it.copy(deviceRole = intent.role) }
+                val roleName = if (intent.role == WebDavSyncManager.ROLE_MASTER) "主设备" else "备用设备"
+                GlobalToast.show("已切换为 $roleName")
+            }
+            BackupConfigIntent.RequestSlaveUpload -> {
+                _uiState.update { it.copy(showSlaveUploadConfirm = true) }
+            }
+            BackupConfigIntent.ConfirmSlaveUpload -> {
+                _uiState.update { it.copy(showSlaveUploadConfirm = false) }
+                viewModelScope.launch(Dispatchers.IO) {
+                    WebDavSyncManager.manualUpload(appCtx)
+                }
+            }
+            BackupConfigIntent.DismissSlaveUploadConfirm -> {
+                _uiState.update { it.copy(showSlaveUploadConfirm = false) }
+            }
             is BackupConfigIntent.OpenSheet -> _uiState.update { it.copy(activeSheet = intent.sheet) }
             BackupConfigIntent.DismissSheet -> _uiState.update { it.copy(activeSheet = null) }
             BackupConfigIntent.OpenWebDavAuth -> openWebDavAuth()
@@ -85,20 +105,11 @@ class BackupConfigViewModel(
             BackupConfigIntent.SaveIgnoreItems -> saveIgnoreItems()
             BackupConfigIntent.OpenBackupIgnoreDialog ->
                 _uiState.update { it.copy(activeSheet = BackupConfigSheet.IgnoreBackupItems) }
-
-            is BackupConfigIntent.ToggleBackupIgnoreItem -> toggleBackupIgnoreItem(
-                intent.key,
-                intent.value
-            )
-
+            is BackupConfigIntent.ToggleBackupIgnoreItem -> toggleBackupIgnoreItem(intent.key, intent.value)
             BackupConfigIntent.SaveBackupIgnoreItems -> saveBackupIgnoreItems()
             is BackupConfigIntent.ToggleDbIgnoreItem -> toggleDbIgnoreItem(intent.key, intent.value)
             BackupConfigIntent.SaveDbIgnoreItems -> saveDbIgnoreItems()
-            is BackupConfigIntent.ToggleBackupDbIgnoreItem -> toggleBackupDbIgnoreItem(
-                intent.key,
-                intent.value
-            )
-
+            is BackupConfigIntent.ToggleBackupDbIgnoreItem -> toggleBackupDbIgnoreItem(intent.key, intent.value)
             BackupConfigIntent.SaveBackupDbIgnoreItems -> saveBackupDbIgnoreItems()
             BackupConfigIntent.DismissDialog -> _uiState.update { it.copy(activeDialog = null) }
             BackupConfigIntent.SelectBackupDirectory -> launchDirectoryPicker(runBackup = false)
@@ -286,16 +297,13 @@ class BackupConfigViewModel(
                 .onSuccess {
                     withContext(Dispatchers.Main) {
                         _uiState.update { it.copy(activeDialog = null) }
-                        // 🌟 修复：补上手动备份成功后的 Toast 弹窗
-                        appCtx.toastOnUi("备份成功")
+                        GlobalToast.show("备份成功")
                     }
                 }
                 .onFailure { error ->
                     withContext(Dispatchers.Main) {
                         _uiState.update { it.copy(activeDialog = null) }
-                        _effects.tryEmit(
-                            BackupConfigEffect.ShowMessage(R.string.backup_fail, error.localizedMessage)
-                        )
+                        GlobalToast.show("备份失败：${error.localizedMessage}")
                     }
                 }
         }
@@ -363,19 +371,13 @@ class BackupConfigViewModel(
 
     private suspend fun finishRestoreSuccess() = withContext(Dispatchers.Main) {
         _uiState.update { it.copy(activeDialog = null) }
-        // 🌟 修复：补上手动恢复成功后的 Toast 弹窗
-        appCtx.toastOnUi("恢复成功")
+        GlobalToast.show("恢复成功")
     }
 
     private suspend fun finishRestoreFailure(message: String?, webDav: Boolean = false) =
         withContext(Dispatchers.Main) {
             _uiState.update { it.copy(activeDialog = null) }
-            _effects.tryEmit(
-                BackupConfigEffect.ShowMessage(
-                    if (webDav) R.string.webdav_restore_fail else R.string.restore_fail_with_error,
-                    message,
-                )
-            )
+            GlobalToast.show("恢复失败：$message")
         }
 
     private companion object {
@@ -394,8 +396,7 @@ class BackupConfigViewModel(
                 BackupIgnoreItem(
                     key = key,
                     title = io.legado.app.help.storage.BackupConfig.backupIgnoreTitle[index],
-                    checked = io.legado.app.help.storage.BackupConfig.backupIgnoreConfig[key]
-                        ?: false,
+                    checked = io.legado.app.help.storage.BackupConfig.backupIgnoreConfig[key] ?: false,
                 )
             }
             .toImmutableList()
@@ -415,8 +416,7 @@ class BackupConfigViewModel(
                 BackupIgnoreItem(
                     key = key,
                     title = io.legado.app.help.storage.BackupConfig.backupDbIgnoreTitle[index],
-                    checked = io.legado.app.help.storage.BackupConfig.backupDbIgnoreConfig[key]
-                        ?: false,
+                    checked = io.legado.app.help.storage.BackupConfig.backupDbIgnoreConfig[key] ?: false,
                 )
             }
             .toImmutableList()
