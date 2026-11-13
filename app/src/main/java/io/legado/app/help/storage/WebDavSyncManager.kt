@@ -2,77 +2,101 @@ package io.legado.app.help.storage
 
 import android.content.Context
 import io.legado.app.constant.AppLog
-import io.legado.app.help.AppWebDav
-import io.legado.app.help.config.AppConfigStore
+import io.legado.app.data.appDb
+import io.legado.app.data.entities.BookMarking
+import io.legado.app.data.entities.Bookmark
+import io.legado.app.domain.gateway.BackupSettingsGateway
+import io.legado.app.lib.webdav.Authorization
+import io.legado.app.lib.webdav.WebDav
 import io.legado.app.utils.GSON
 import io.legado.app.utils.GlobalToast
+import io.legado.app.utils.fromJsonArray
 import io.legado.app.utils.getPrefLong
 import io.legado.app.utils.getPrefString
 import io.legado.app.utils.putPrefLong
 import io.legado.app.utils.putPrefString
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
-import okhttp3.OkHttpClient
-import okhttp3.Request
-import okhttp3.RequestBody.Companion.toRequestBody
-import org.json.JSONObject
+import org.koin.core.context.GlobalContext
 import splitties.init.appCtx
 import java.io.File
-import java.text.SimpleDateFormat
-import java.util.Date
-import java.util.Locale
 
 object WebDavSyncManager {
 
-    private const val TAG = "WebDavSyncManager"
-    private const val SYNC_FILE_VIDEO = "video_settings.json"
-    private const val SYNC_FILE_BOOKMARK = "bookmark.json"
-    private const val SYNC_FILE_MARKING = "bookMarking.json"
+    private val backupGateway by lazy { GlobalContext.get().get<BackupSettingsGateway>() }
 
-    private const val PREF_ROLE = "sync_device_role" // "master" or "slave"
-    private const val PREF_LAST_SYNC_TIME = "sync_last_sync_time"
-    private const val PREF_LAST_CLOUD_MODIFIED = "sync_last_cloud_modified"
+    private val syncTempDir get() = appCtx.filesDir.resolve("sync_temp").apply { mkdirs() }
+    
+    // 纳入同步的核心小文件
+    private val SYNC_FILES = listOf("video_settings.json", "bookmark.json", "bookMarking.json")
 
+    // 设备角色
     const val ROLE_MASTER = "master"
     const val ROLE_SLAVE = "slave"
+    private const val PREF_ROLE = "sync_device_role"
+    private const val PREF_LAST_SYNC_TIME = "sync_last_sync_time"
 
-    private val syncFiles = listOf(SYNC_FILE_VIDEO, SYNC_FILE_BOOKMARK, SYNC_FILE_MARKING)
-
+    // 专门用于存放同步文件的目录（与原有备份包隔离）
     fun getDeviceRole(): String = appCtx.getPrefString(PREF_ROLE, ROLE_MASTER)
+    fun setDeviceRole(role: String) = appCtx.putPrefString(PREF_ROLE, role)
 
-    fun setDeviceRole(role: String) {
-        appCtx.putPrefString(PREF_ROLE, role)
+    private fun getSyncUrl(): String {
+        val settings = backupGateway.currentSettings
+        var url = settings.webDavUrl.trim()
+        if (url.isEmpty()) url = "https://dav.jianguoyun.com/dav/"
+        if (!url.endsWith("/")) url = "$url/"
+        if (settings.webDavDir.isNotBlank()) {
+            url = "${url}${settings.webDavDir.trim()}/"
+        }
+        return "${url}sync/"
+    }
+
+    private fun getAuth(): Authorization? {
+        val settings = backupGateway.currentSettings
+        if (settings.webDavAccount.isBlank() || settings.webDavPassword.isBlank()) return null
+        return Authorization(settings.webDavAccount, settings.webDavPassword)
     }
 
     suspend fun sync(context: Context) {
         withContext(Dispatchers.IO) {
             try {
+                val auth = getAuth() ?: return@withContext
+                val syncUrl = getSyncUrl()
+                WebDav(syncUrl, auth).makeAsDir()
+
                 val role = getDeviceRole()
                 val lastSyncTime = appCtx.getPrefLong(PREF_LAST_SYNC_TIME, 0L)
+                var hasDownloaded = false
 
-                for (fileName in syncFiles) {
-                    val cloudModified = getCloudLastModified(fileName) ?: continue
-                    val localModified = getLocalLastModified(fileName)
+                val cloudFiles = WebDav(syncUrl, auth).listFiles().associateBy { it.displayName }
+
+                for (fileName in SYNC_FILES) {
+                    val cloudFile = cloudFiles[fileName]
+                    val cloudModified = cloudFile?.lastModify ?: 0L
+                    val localFile = File(syncTempDir, fileName)
+                    val localModified = if (localFile.exists()) localFile.lastModified() else 0L
 
                     if (cloudModified <= lastSyncTime && localModified <= lastSyncTime) continue
 
-                    when {
-                        cloudModified > lastSyncTime && role == ROLE_SLAVE -> {
-                            downloadFile(fileName)
-                            GlobalToast.show("自动同步成功：已拉取主设备数据")
+                    if (cloudModified > localModified && cloudModified > lastSyncTime) {
+                        // 云端较新，下载
+                        val bytes = WebDav(syncUrl + fileName, auth).download()
+                        if (bytes != null) {
+                            localFile.writeBytes(bytes)
+                            applySyncedFile(fileName, localFile)
+                            hasDownloaded = true
                         }
-                        cloudModified > lastSyncTime && role == ROLE_MASTER -> {
-                            // 主设备发现云端更新（可能来自备用机手动上传）
-                            // 由调用方（设置页或启动流程）弹出确认框
-                        }
-                        localModified > lastSyncTime && role == ROLE_MASTER -> {
-                            uploadFile(fileName)
-                            GlobalToast.show("自动同步成功：已备份至云端")
-                        }
+                    } else if (localModified > cloudModified && role == ROLE_MASTER) {
+                        // 本地较新且是主设备，上传
+                        WebDav(syncUrl + fileName, auth).upload(localFile.readBytes(), "application/json")
                     }
                 }
 
                 appCtx.putPrefLong(PREF_LAST_SYNC_TIME, System.currentTimeMillis())
+                
+                if (hasDownloaded) {
+                    GlobalToast.show("自动同步成功：已拉取最新数据")
+                }
             } catch (e: Exception) {
                 AppLog.put("自动同步失败: ${e.localizedMessage}")
                 GlobalToast.show("同步失败，请检查网络")
@@ -83,9 +107,14 @@ object WebDavSyncManager {
     suspend fun manualUpload(context: Context) {
         withContext(Dispatchers.IO) {
             try {
-                for (fileName in syncFiles) {
-                    if (File(backupTempPath(fileName)).exists()) {
-                        uploadFile(fileName)
+                val auth = getAuth() ?: return@withContext
+                val syncUrl = getSyncUrl()
+                WebDav(syncUrl, auth).makeAsDir()
+                
+                for (fileName in SYNC_FILES) {
+                    val localFile = File(syncTempDir, fileName)
+                    if (localFile.exists()) {
+                        WebDav(syncUrl + fileName, auth).upload(localFile.readBytes(), "application/json")
                     }
                 }
                 appCtx.putPrefLong(PREF_LAST_SYNC_TIME, System.currentTimeMillis())
@@ -97,71 +126,54 @@ object WebDavSyncManager {
         }
     }
 
-    private fun backupTempPath(fileName: String): String =
-        appCtx.filesDir.resolve("backup_temp/$fileName").absolutePath
-
-    private fun getLocalLastModified(fileName: String): Long {
-        val f = File(backupTempPath(fileName))
-        return if (f.exists()) f.lastModified() else 0L
+    // 备份完成后，把生成的小文件拷到 sync_temp
+    fun prepareLocalSyncFiles(backupDir: String) {
+        SYNC_FILES.forEach { fileName ->
+            val src = File(backupDir, fileName)
+            if (src.exists()) {
+                val dest = File(syncTempDir, fileName)
+                src.copyTo(dest, overwrite = true)
+                dest.setLastModified(System.currentTimeMillis())
+            }
+        }
     }
 
-    private fun getCloudLastModified(fileName: String): Long? {
-        return try {
-            val baseUrl = AppWebDav.getWebDavUrl() ?: return null
-            val dir = AppWebDav.getWebDavDir() ?: return null
-            val url = "$baseUrl/$dir/$fileName"
-            val client = OkHttpClient()
-            val request = Request.Builder()
-                .url(url)
-                .method("PROPFIND", """<?xml version="1.0" encoding="utf-8" ?>
-                    <D:propfind xmlns:D="DAV:"><D:prop><D:getlastmodified/></D:prop></D:propfind>"""
-                    .toRequestBody("application/xml".toMediaType()))
-                .header("Depth", "0")
-                .apply { AppWebDav.addAuthHeaders(this) }
-                .build()
-            client.newCall(request).execute().use { response ->
-                if (!response.isSuccessful) return null
-                val body = response.body?.string() ?: return null
-                val match = Regex("<D:getlastmodified>(.*?)</D:getlastmodified>").find(body)
-                match?.let {
-                    val dateStr = it.groupValues[1]
-                    SimpleDateFormat("EEE, dd MMM yyyy HH:mm:ss zzz", Locale.US).parse(dateStr)?.time
+    // 将下载到的文件应用到本地 (复用 Restore 的类型安全逻辑)
+    private fun applySyncedFile(fileName: String, file: File) {
+        val LONG_KEYS = setOf("total_video_watch_time", "total_reading_time", "last_backup_time", "book_shelf_last_update_time", "version_code", "read_record_total_time", "backup_interval_hours")
+        when (fileName) {
+            "video_settings.json" -> {
+                val json = file.readText()
+                val mapType = object : com.google.gson.reflect.TypeToken<Map<String, Any>>() {}.type
+                val videoMap: Map<String, Any> = GSON.fromJson(json, mapType)
+                val editor = appCtx.getSharedPreferences("video_settings", Context.MODE_PRIVATE).edit()
+                videoMap.forEach { (key, value) ->
+                    if (key in LONG_KEYS) {
+                        editor.putLong(key, (value as? Number)?.toLong() ?: 0L)
+                    } else {
+                        when (value) {
+                            is String -> editor.putString(key, value)
+                            is Boolean -> editor.putBoolean(key, value)
+                            is Number -> {
+                                val num = value.toDouble()
+                                if (num % 1.0 == 0.0) {
+                                    if (num >= Int.MIN_VALUE && num <= Int.MAX_VALUE) editor.putInt(key, num.toInt())
+                                    else editor.putLong(key, num.toLong())
+                                } else editor.putFloat(key, num.toFloat())
+                            }
+                        }
+                    }
                 }
+                editor.apply()
             }
-        } catch (e: Exception) {
-            null
-        }
-    }
-
-    private fun downloadFile(fileName: String) {
-        val baseUrl = AppWebDav.getWebDavUrl() ?: return
-        val dir = AppWebDav.getWebDavDir() ?: return
-        val url = "$baseUrl/$dir/$fileName"
-        val client = OkHttpClient()
-        val request = Request.Builder().url(url)
-            .apply { AppWebDav.addAuthHeaders(this) }
-            .build()
-        client.newCall(request).execute().use { response ->
-            if (response.isSuccessful) {
-                val content = response.body?.string() ?: return
-                val file = File(backupTempPath(fileName))
-                file.parentFile?.mkdirs()
-                file.writeText(content)
+            "bookmark.json" -> {
+                val list = GSON.fromJsonArray<Bookmark>(file.readText()).getOrNull()
+                if (list != null) appDb.bookmarkDao.insert(*list.toTypedArray())
+            }
+            "bookMarking.json" -> {
+                val list = GSON.fromJsonArray<BookMarking>(file.readText()).getOrNull()
+                if (list != null) appDb.bookMarkingDao.insert(*list.toTypedArray())
             }
         }
-    }
-
-    private fun uploadFile(fileName: String) {
-        val baseUrl = AppWebDav.getWebDavUrl() ?: return
-        val dir = AppWebDav.getWebDavDir() ?: return
-        val url = "$baseUrl/$dir/$fileName"
-        val file = File(backupTempPath(fileName))
-        if (!file.exists()) return
-        val client = OkHttpClient()
-        val request = Request.Builder().url(url)
-            .put(file.readText().toRequestBody("application/json".toMediaType()))
-            .apply { AppWebDav.addAuthHeaders(this) }
-            .build()
-        client.newCall(request).execute().use { it }
     }
 }
