@@ -84,6 +84,17 @@ object Restore : KoinComponent {
     private const val TAG = "Restore"
     private const val LOCAL_READ_RECORD_DEVICE_ID = ""
 
+    // 🌟 新增：所有 Long 类型的 Key，恢复时强制使用 putLong
+    private val LONG_KEYS = setOf(
+        "total_video_watch_time",
+        "total_reading_time",
+        "last_backup_time",
+        "book_shelf_last_update_time",
+        "version_code",
+        "read_record_total_time",
+        "backup_interval_hours"
+    )
+
     suspend fun restore(context: Context, uri: Uri) {
         BackupRestoreLock.withLock {
             LogUtils.d(TAG, "开始恢复备份 uri:$uri")
@@ -371,19 +382,25 @@ object Restore : KoinComponent {
                 val editor = appCtx.getSharedPreferences("video_settings", Context.MODE_PRIVATE).edit()
                 editor.clear() 
                 videoMap.forEach { (key, value) ->
-                    when (value) {
-                        is String -> editor.putString(key, value)
-                        is Boolean -> editor.putBoolean(key, value)
-                        is Number -> {
-                            val num = value.toDouble()
-                            if (num % 1.0 == 0.0) {
-                                if (num >= Int.MIN_VALUE && num <= Int.MAX_VALUE) {
-                                    editor.putInt(key, num.toInt())
+                    // 🌟 核心修复：所有 Long 类型的 Key 强制使用 putLong，彻底杜绝 ClassCastException
+                    if (key in LONG_KEYS) {
+                        editor.putLong(key, (value as? Number)?.toLong() ?: 0L)
+                    } else {
+                        when (value) {
+                            is String -> editor.putString(key, value)
+                            is Boolean -> editor.putBoolean(key, value)
+                            is Number -> {
+                                val num = value.toDouble()
+                                if (num % 1.0 == 0.0) {
+                                    // 如果是整数且范围在 Int 内，存为 Int
+                                    if (num >= Int.MIN_VALUE && num <= Int.MAX_VALUE) {
+                                        editor.putInt(key, num.toInt())
+                                    } else {
+                                        editor.putLong(key, num.toLong())
+                                    }
                                 } else {
-                                    editor.putLong(key, num.toLong())
+                                    editor.putFloat(key, num.toFloat())
                                 }
-                            } else {
-                                editor.putFloat(key, num.toFloat())
                             }
                         }
                     }
@@ -407,7 +424,9 @@ object Restore : KoinComponent {
             }
         }
 
-        appCtx.toastOnUi(R.string.restore_success)
+        // 🌟 3. 去掉这里多余的 Toast，统一由 ViewModel 的 Snackbar 或外层逻辑处理
+        // appCtx.toastOnUi(R.string.restore_success) 
+
         withContext(Main) {
             delay(100)
             get<AppLocaleGateway>().apply { setLanguage(currentLanguage) }
@@ -570,7 +589,6 @@ object Restore : KoinComponent {
             }
         } catch (e: Exception) {
             AppLog.put("$fileName\n读取解析出错\n${e.localizedMessage}", e)
-            // 🌟 修复：修正拼写错误 toastOnUi
             appCtx.toastOnUi("$fileName\n读取文件出错\n${e.localizedMessage}")
         }
         return null
