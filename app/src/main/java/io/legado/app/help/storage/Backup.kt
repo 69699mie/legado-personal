@@ -115,7 +115,7 @@ object Backup {
     }
 
     private fun shouldBackup(): Boolean {
-        // 🌟 核心修改：读取用户设置的间隔（单位：小时），默认 24 小时
+        // 读取用户设置的间隔（单位：小时），默认 24 小时
         val intervalHours = appCtx.getPrefInt("backup_interval_hours", 24)
         
         // 0 表示永不自动备份
@@ -134,27 +134,20 @@ object Backup {
             Coroutine.async {
                 BackupRestoreLock.withLock {
                     if (shouldBackup()) {
-                        val backupZipFileName = getNowZipFileName()
-                        if (!AppWebDav.hasBackUp(backupZipFileName)) {
+                        // 🌟 核心修改：移除 hasBackUp 拦截，完全尊崇用户设定的时间/启动间隔，强制覆盖同名备份
+                        runCatching {
                             backup(context, backupSettingsGateway.currentSettings.backupPath)
-                            // 🌟 延迟 2 秒弹出，确保 Activity 已经就绪
                             Handler(Looper.getMainLooper()).postDelayed({
                                 appCtx.toastOnUi("自动备份成功")
                             }, 2000)
-                        } else {
-                            LocalConfig.lastBackup = System.currentTimeMillis()
-                            // 🌟 提示云端已有备份，跳过执行
+                        }.onFailure {
+                            AppLog.put("自动备份失败\n${it.localizedMessage}")
                             Handler(Looper.getMainLooper()).postDelayed({
-                                appCtx.toastOnUi("云端已有今日备份，跳过自动备份")
+                                appCtx.toastOnUi("自动备份失败\n${it.localizedMessage}")
                             }, 2000)
                         }
                     }
                 }
-            }.onError {
-                AppLog.put("自动备份失败\n${it.localizedMessage}")
-                Handler(Looper.getMainLooper()).postDelayed({
-                    appCtx.toastOnUi("自动备份失败\n${it.localizedMessage}")
-                }, 2000)
             }
         }
     }
