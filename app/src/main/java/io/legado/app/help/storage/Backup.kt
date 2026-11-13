@@ -21,6 +21,7 @@ import io.legado.app.help.coroutine.Coroutine
 import io.legado.app.model.BookCover
 import io.legado.app.utils.FileUtils
 import io.legado.app.utils.GSON
+import io.legado.app.utils.GlobalToast
 import io.legado.app.utils.LogUtils
 import io.legado.app.utils.compress.ZipUtils
 import io.legado.app.utils.createFolderIfNotExist
@@ -31,7 +32,6 @@ import io.legado.app.utils.isContentScheme
 import io.legado.app.utils.normalizeFileName
 import io.legado.app.utils.openOutputStream
 import io.legado.app.utils.outputStream
-import io.legado.app.utils.toastOnUi
 import io.legado.app.utils.writeToOutputStream
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.IO
@@ -114,13 +114,8 @@ object Backup {
     }
 
     private fun shouldBackup(): Boolean {
-        // 读取用户设置的间隔（单位：小时），默认 24 小时
         val intervalHours = appCtx.getPrefInt("backup_interval_hours", 24)
-        
-        // 0 表示永不自动备份
         if (intervalHours == 0) return false 
-        
-        // -1 表示启动即备份
         if (intervalHours == -1) return true 
 
         val lastBackup = LocalConfig.lastBackup
@@ -134,17 +129,11 @@ object Backup {
                 BackupRestoreLock.withLock {
                     if (shouldBackup()) {
                         try {
-                            // 执行备份（包含上传到 WebDAV）
                             backup(context, backupSettingsGateway.currentSettings.backupPath)
-                            // 备份成功后，切换到主线程弹 Toast（确保一定会提示）
-                            withContext(Dispatchers.Main) {
-                                appCtx.toastOnUi("自动备份成功")
-                            }
+                            GlobalToast.show("自动备份成功")
                         } catch (e: Exception) {
                             AppLog.put("自动备份失败\n${e.localizedMessage}")
-                            withContext(Dispatchers.Main) {
-                                appCtx.toastOnUi("自动备份失败\n${e.localizedMessage}")
-                            }
+                            GlobalToast.show("自动备份失败\n${e.localizedMessage}")
                         }
                     }
                 }
@@ -367,10 +356,13 @@ object Backup {
                 try {
                     AppWebDav.backUpWebDav(zipFileName)
                 } catch (e: Exception) {
-                    AppLog.put("上传备份至webdav失败\n$e", e)
                 }
             }
         }
+        
+        // 🌟 新增：提取核心文件供多设备同步使用
+        WebDavSyncManager.prepareLocalSyncFiles(backupPath)
+
         FileUtils.delete(backupPath)
         FileUtils.delete(zipFilePath)
         currentCoroutineContext().ensureActive()
