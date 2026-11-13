@@ -2,6 +2,8 @@ package io.legado.app.help.storage
 
 import android.content.Context
 import android.net.Uri
+import android.os.Handler
+import android.os.Looper
 import androidx.core.net.toUri
 import androidx.documentfile.provider.DocumentFile
 import io.legado.app.constant.AppLog
@@ -113,10 +115,13 @@ object Backup {
     }
 
     private fun shouldBackup(): Boolean {
-        // 🌟 核心修复：使用 getPrefInt 扩展属性
+        // 🌟 核心修改：读取用户设置的间隔（单位：小时），默认 24 小时
         val intervalHours = appCtx.getPrefInt("backup_interval_hours", 24)
         
+        // 0 表示永不自动备份
         if (intervalHours == 0) return false 
+        
+        // -1 表示启动即备份
         if (intervalHours == -1) return true 
 
         val lastBackup = LocalConfig.lastBackup
@@ -132,17 +137,24 @@ object Backup {
                         val backupZipFileName = getNowZipFileName()
                         if (!AppWebDav.hasBackUp(backupZipFileName)) {
                             backup(context, backupSettingsGateway.currentSettings.backupPath)
-                            // 🌟 方案A：自动备份成功后的 Toast 提示
-                            appCtx.toastOnUi("自动备份成功")
+                            // 🌟 延迟 2 秒弹出，确保 Activity 已经就绪
+                            Handler(Looper.getMainLooper()).postDelayed({
+                                appCtx.toastOnUi("自动备份成功")
+                            }, 2000)
                         } else {
                             LocalConfig.lastBackup = System.currentTimeMillis()
+                            // 🌟 提示云端已有备份，跳过执行
+                            Handler(Looper.getMainLooper()).postDelayed({
+                                appCtx.toastOnUi("云端已有今日备份，跳过自动备份")
+                            }, 2000)
                         }
                     }
                 }
             }.onError {
                 AppLog.put("自动备份失败\n${it.localizedMessage}")
-                // 🌟 方案A：自动备份失败后的 Toast 提示
-                appCtx.toastOnUi("自动备份失败\n${it.localizedMessage}")
+                Handler(Looper.getMainLooper()).postDelayed({
+                    appCtx.toastOnUi("自动备份失败\n${it.localizedMessage}")
+                }, 2000)
             }
         }
     }
