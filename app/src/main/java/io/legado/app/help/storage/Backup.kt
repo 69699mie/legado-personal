@@ -30,6 +30,7 @@ import io.legado.app.utils.isContentScheme
 import io.legado.app.utils.normalizeFileName
 import io.legado.app.utils.openOutputStream
 import io.legado.app.utils.outputStream
+import io.legado.app.utils.toastOnUi
 import io.legado.app.utils.writeToOutputStream
 import kotlinx.coroutines.Dispatchers.IO
 import kotlinx.coroutines.currentCoroutineContext
@@ -111,10 +112,13 @@ object Backup {
     }
 
     private fun shouldBackup(): Boolean {
-        // 🌟 核心修改：读取用户设置的间隔（单位：小时）
+        // 🌟 读取用户设置的间隔（单位：小时），默认 24 小时
         val intervalHours = AppConfigStore.preferences.getInt("backup_interval_hours", 24)
         
+        // 0 表示永不自动备份
         if (intervalHours == 0) return false 
+        
+        // -1 表示启动即备份
         if (intervalHours == -1) return true 
 
         val lastBackup = LocalConfig.lastBackup
@@ -130,6 +134,8 @@ object Backup {
                         val backupZipFileName = getNowZipFileName()
                         if (!AppWebDav.hasBackUp(backupZipFileName)) {
                             backup(context, backupSettingsGateway.currentSettings.backupPath)
+                            // 🌟 方案A：自动备份成功后的 Toast 提示
+                            appCtx.toastOnUi("自动备份成功")
                         } else {
                             LocalConfig.lastBackup = System.currentTimeMillis()
                         }
@@ -137,6 +143,8 @@ object Backup {
                 }
             }.onError {
                 AppLog.put("自动备份失败\n${it.localizedMessage}")
+                // 🌟 方案A：自动备份失败后的 Toast 提示
+                appCtx.toastOnUi("自动备份失败\n${it.localizedMessage}")
             }
         }
     }
@@ -261,6 +269,7 @@ object Backup {
             }
         }
         
+        // 打包 VideoSettingsRepository 独立配置 (包含 Cookie, 影视库刮削等)
         val videoPrefs = appCtx.getSharedPreferences("video_settings", Context.MODE_PRIVATE)
         val videoMap = videoPrefs.all
         if (videoMap.isNotEmpty()) {
@@ -268,6 +277,7 @@ object Backup {
                 .writeText(GSON.toJson(videoMap))
         }
 
+        // 打包影视模块 Room 数据库 (刮削海报、简介、集数等)
         if (BackupConfig.dbIsNotIgnored("videoScraped", true)) {
             val scrapedList = appDb.videoScrapedDao.getAll()
             if (scrapedList.isNotEmpty()) {
