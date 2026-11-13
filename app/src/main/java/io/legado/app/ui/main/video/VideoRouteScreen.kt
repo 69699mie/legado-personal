@@ -968,7 +968,7 @@ fun InternalVideoPlayer(url: String, title: String, cookie: String, series: Medi
 
     LaunchedEffect(isLongPressing, showLongPressText) {
         if (isLongPressing && showLongPressText) {
-            delay(6000)
+            delay(2000)
             showLongPressText = false
         }
     }
