@@ -8,8 +8,9 @@ import io.legado.app.domain.gateway.BackupSettingsGateway
 import io.legado.app.domain.model.settings.BackupSettings
 import io.legado.app.domain.usecase.BackupRestoreUseCase
 import io.legado.app.domain.usecase.WebDavBackupUseCase
-import io.legado.app.help.config.AppConfigStore
+import io.legado.app.utils.getPrefInt
 import io.legado.app.utils.isContentScheme
+import io.legado.app.utils.putPrefInt
 import kotlinx.collections.immutable.toImmutableList
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableSharedFlow
@@ -19,6 +20,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import splitties.init.appCtx
 
 class BackupConfigViewModel(
     private val settingsGateway: BackupSettingsGateway,
@@ -32,8 +34,8 @@ class BackupConfigViewModel(
             backupIgnoreItems = loadBackupIgnoreItems(),
             dbIgnoreItems = loadDbIgnoreItems(),
             backupDbIgnoreItems = loadBackupDbIgnoreItems(),
-            // 🌟 初始化读取备份间隔
-            backupInterval = AppConfigStore.preferences.getInt("backup_interval_hours", 24)
+            // 🌟 修复：使用 appCtx.getPrefInt
+            backupInterval = appCtx.getPrefInt("backup_interval_hours", 24)
         )
     )
     val uiState = _uiState.asStateFlow()
@@ -64,11 +66,9 @@ class BackupConfigViewModel(
                 update { it.copy(onlyLatestBackup = intent.value) }
             is BackupConfigIntent.SetBackupSyncMode ->
                 update { it.copy(backupSyncMode = intent.value) }
-            // 🌟 新增：处理备份间隔的修改
+            // 🌟 修复：使用 appCtx.putPrefInt
             is BackupConfigIntent.SetBackupInterval -> {
-                viewModelScope.launch(Dispatchers.IO) {
-                    AppConfigStore.preferences.edit().putInt("backup_interval_hours", intent.hours).apply()
-                }
+                appCtx.putPrefInt("backup_interval_hours", intent.hours)
                 _uiState.update { it.copy(backupInterval = intent.hours) }
             }
             is BackupConfigIntent.OpenSheet -> _uiState.update { it.copy(activeSheet = intent.sheet) }
