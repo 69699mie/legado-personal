@@ -62,4 +62,19 @@ class VideoSettingsRepository(context: Context) {
     var categoryOrder: String
         get() = prefs.getString("category_order", "最近观看,剧集,电影,动漫") ?: "最近观看,剧集,电影,动漫"
         set(value) { prefs.edit().putString("category_order", value).apply() }
+
+    // 🌟 新增：记住用户上次选择的播放倍速（切集/重进播放页不再回到 1.0x）
+    var playbackSpeed: Float
+        get() = prefs.getFloat("playback_speed", 1.0f).coerceIn(0.5f, 3.0f)
+        set(value) { prefs.edit().putFloat("playback_speed", value.coerceIn(0.5f, 3.0f)).apply() }
+
+    // 🌟 新增：刮削缓存的"连续缺失次数"，用于软删除（避免网盘列表抖动导致重刮）
+    var scrapeMissData: String
+        get() = prefs.getString("scrape_miss_data", "{}") ?: "{}"
+        set(value) { prefs.edit().putString("scrape_miss_data", value).apply() }
+
+    // 🌟 新增：空海报重试的退避记录（id -> "次数:下次时间"）
+    var scrapeRetryData: String
+        get() = prefs.getString("scrape_retry_data", "{}") ?: "{}"
+        set(value) { prefs.edit().putString("scrape_retry_data", value).apply() }
 }

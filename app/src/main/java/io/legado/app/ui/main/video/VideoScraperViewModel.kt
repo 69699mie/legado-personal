@@ -100,7 +100,21 @@ data class ScrapeCacheItem(
     val groupName: String? = null,
     val isManuallyEdited: Boolean = false,
     val fileListSignature: String = "",
-    val cachedVideos: List<QuarkFile> = emptyList()
+    val cachedVideos: List<QuarkFile> = emptyList(),
+    // ===== 新增字段（全部有默认值，旧数据反序列化时为默认值，完全兼容）=====
+    /** 剧目录相对路径，作为稳定身份主键；旧条目为空，靠 cachedVideos 反推迁移 */
+    val seriesPath: String = "",
+    /** 手动季号：fid -> 季。fid 变了也能靠文件名兜底 */
+    val seasonOverrideByFid: Map<String, Int> = emptyMap(),
+    /** 手动季号：规范化文件名 -> 季 */
+    val seasonOverrideByName: Map<String, Int> = emptyMap()
+)
+
+/** 刮削任务：全量 or 只补新增集 */
+private data class ScrapeTask(
+    val series: MediaSeries,
+    val full: Boolean,
+    val newEpisodeKeys: Set<String> = emptySet()
 )
 
 class VideoScraperViewModel(
@@ -206,6 +220,181 @@ class VideoScraperViewModel(
         }
     }
 
+    // ================= 身份 / 集指纹 / 手改保护 / 删除清理（V3.6）=================
+    // 设计原则：
+    // 1) 身份 = 剧目录相对路径 + 原分组名（默认值兜底，旧数据可迁移）
+    // 2) 变化判定只看"集键集合"（季_集）+ 文件大小，fid 只做快速命中，fid 单独变化不触发刮削
+    // 3) 只补新增集，已刮过的集标题一律不重写
+    // 4) 手动修改（含季号）永不被覆盖
+
+    /** 规范化文件名：去扩展名/清晰度/编码/字幕组噪声，用于跨 fid 稳定识别 */
+    private fun normalizeVideoName(name: String): String {
+        var n = name.substringBeforeLast('.')
+        n = n.replace(Regex("(?i)\\[[^\\]]*]"), " ")
+        n = n.replace(Regex("(?i)\\([^)]*\\)"), " ")
+        n = n.replace(
+            Regex(
+                "(?i)\\b(2160p|1080p|720p|480p|4k|8k|hdr|hdr10|dolby|dv|web-?dl|webrip|blu-?ray|bdrip|remux|hevc|h\\.?265|x265|h\\.?264|x264|aac|ac3|eac3|dts|flac|truehd|atmos|10bit|8bit|chs|cht|gb|big5)\\b"
+            ), " "
+        )
+        n = n.replace(Regex("(?i)\\b(s\\d{1,2}e\\d{1,3}|ep?\\d{1,4}|第\\s*\\d+\\s*[集话期])\\b"), " ")
+        n = n.replace(Regex("[\\s._\\-]+"), " ").trim()
+        return n.ifBlank { name.substringBeforeLast('.') }
+    }
+
+    private fun seasonOf(file: QuarkFile): Int = file.parsedInfo?.season ?: 1
+
+    private fun episodeOf(file: QuarkFile): Int =
+        extractEpisodeNumber(file.name, file.parsedInfo?.episode)
+
+    /** 集键：季_集；集号识别不出来时用规范化文件名兜底，避免多集塌成一个键 */
+    private fun episodeKeyOf(file: QuarkFile): String {
+        val s = seasonOf(file)
+        val e = episodeOf(file)
+        return if (e > 0) "${s}_${e}" else "${s}_n:${normalizeVideoName(file.name)}"
+    }
+
+    /** 剧目录路径键：取该剧所有文件 folderPath 的最长公共目录 */
+    private fun seriesPathKeyOf(videos: List<QuarkFile>): String {
+        val paths = videos.map { it.folderPath.filter { p -> p.isNotBlank() } }.filter { it.isNotEmpty() }
+        if (paths.isEmpty()) return ""
+        var common = paths.first().toList()
+        for (p in paths) {
+            var i = 0
+            while (i < common.size && i < p.size && common[i] == p[i]) i++
+            common = common.take(i)
+        }
+        return common.joinToString("/")
+    }
+
+    /** 缓存主键：路径 + 原分组名，二者都稳定；路径为空时退回原分组名（兼容旧数据） */
+    private fun cacheKeyOf(seriesPath: String, groupTitle: String): String =
+        if (seriesPath.isBlank()) groupTitle else "$seriesPath#$groupTitle"
+
+    /** 集指纹（用于"搬家/改名"识别）：季_集 | 规范化名 | 大小 */
+    private fun buildSeriesFingerprint(videos: List<QuarkFile>): String {
+        if (videos.isEmpty()) return "fp:0"
+        val raw = videos.map { "${episodeKeyOf(it)}|${normalizeVideoName(it.name)}|${it.size}" }
+            .sorted().joinToString("\n")
+        val digest = java.security.MessageDigest.getInstance("SHA-1").digest(raw.toByteArray())
+        return "fp:" + digest.joinToString("") { String.format("%02x", it) }
+    }
+
+    private fun cachedEpisodeKeys(item: ScrapeCacheItem): Map<String, Long> =
+        item.cachedVideos.associate { episodeKeyOf(it) to it.size }
+
+    private fun newEpisodeKeys(videos: List<QuarkFile>): Map<String, Long> =
+        videos.associate { episodeKeyOf(it) to it.size }
+
+    /** 判定结果：不做 / 只补这些集 / 整部重刮 / 只删这些集缓存 */
+    private data class ScrapeDecision(
+        val mode: Int,               // 0=不刮 1=增量 2=全量
+        val addedKeys: Set<String> = emptySet(),
+        val removedKeys: Set<String> = emptySet()
+    )
+
+    private fun decideScrape(cached: ScrapeCacheItem?, videos: List<QuarkFile>): ScrapeDecision {
+        if (cached == null) return ScrapeDecision(2)
+        val oldMap = cachedEpisodeKeys(cached)
+        val newMap = newEpisodeKeys(videos)
+        if (oldMap.isEmpty() || newMap.isEmpty()) return ScrapeDecision(2)
+
+        val oldKeys = oldMap.keys
+        val newKeys = newMap.keys
+        val removed = oldKeys - newKeys
+        // 同集号但文件被替换（大小变）也算"这集需要重新刮"，但只补这些集
+        val added = newKeys.filter { k ->
+            val oldSize = oldMap[k]
+            oldSize == null || (oldSize > 0L && newMap[k]!! > 0L && oldSize != newMap[k])
+        }.toSet()
+
+        // 大面积变化（重合度 < 50%）才视为换了片源，整部重刮
+        val overlap = (oldKeys intersect newKeys).size.toDouble() / maxOf(oldKeys.size, newKeys.size)
+        if (overlap < 0.5) return ScrapeDecision(2, added, removed)
+
+        return when {
+            added.isNotEmpty() -> ScrapeDecision(1, added, removed)
+            removed.isNotEmpty() -> ScrapeDecision(0, emptySet(), removed)
+            else -> ScrapeDecision(0)
+        }
+    }
+
+    /** 应用手动季号（fid 与文件名双键，任一命中即用），旧缓存无此映射时原样返回 */
+    private fun applySeasonOverrides(videos: List<QuarkFile>, cached: ScrapeCacheItem?): List<QuarkFile> {
+        if (cached == null) return videos
+        if (cached.seasonOverrideByFid.isEmpty() && cached.seasonOverrideByName.isEmpty()) return videos
+        return videos.map { v ->
+            val byName = cached.seasonOverrideByName[normalizeVideoName(v.name)]
+            val byFid = cached.seasonOverrideByFid[v.fid]
+            val target = byFid ?: byName
+            if (target == null) v
+            else v.copy(parsedInfo = (v.parsedInfo ?: ParsedVideoName(v.name)).copy(season = target))
+        }
+    }
+
+    /**
+     * 剧集标题解析（唯一入口，所有界面都走这里）：
+     * 1) "季_集" 有值就用 —— 各季完全独立；
+     * 2) 仅当整部剧只有一个季时，才回退到按集号存的旧表（兼容旧缓存）；
+     * 3) 多季且没有该季标题 → 返回 null，界面显示"第N集"，绝不跨季借标题。
+     */
+    fun resolveEpisodeTitle(series: MediaSeries, season: Int, ep: Int): String? =
+        resolveEpisodeTitleOf(series, season, ep)
+
+    fun resolveEpisodeStill(series: MediaSeries, season: Int, ep: Int): String? =
+        resolveEpisodeStillOf(series, season, ep)
+
+    /** 删除该剧的全部本地数据：进度（按 fid）、片头片尾（按标题+季）、最近观看（按标题） */
+    private fun purgeSeriesData(seriesTitle: String, fids: Collection<String>) {
+        // 观看进度
+        runCatching {
+            val json = JSONObject(videoSettingsRepository.videoProgressData)
+            fids.forEach { if (json.has(it)) json.remove(it) }
+            videoSettingsRepository.videoProgressData = json.toString()
+        }
+        // 片头片尾：key 形如 "标题_S季"
+        runCatching {
+            val json = JSONObject(videoSettingsRepository.introOutroData)
+            val removeKeys = json.keys().asSequence().filter { it.startsWith("${seriesTitle}_S") }.toList()
+            removeKeys.forEach { json.remove(it) }
+            videoSettingsRepository.introOutroData = json.toString()
+        }
+        // 最近观看
+        runCatching {
+            val arr = JSONArray(videoSettingsRepository.recentWatchedVideos)
+            val keep = JSONArray()
+            for (i in 0 until arr.length()) {
+                val obj = arr.getJSONObject(i)
+                if (obj.optString("seriesTitle") != seriesTitle) keep.put(obj)
+            }
+            videoSettingsRepository.recentWatchedVideos = keep.toString()
+        }
+    }
+
+    /** 缺失计数（连续 2 次才判删，避免网盘抖动误删） */
+    private fun readMissMap(): MutableMap<String, Int> {
+        val map = mutableMapOf<String, Int>()
+        runCatching {
+            val obj = JSONObject(videoSettingsRepository.scrapeMissData)
+            obj.keys().forEach { k -> map[k] = obj.optInt(k, 0) }
+        }
+        return map
+    }
+
+    private fun writeMissMap(map: Map<String, Int>) {
+        runCatching {
+            val obj = JSONObject()
+            map.forEach { (k, v) -> obj.put(k, v) }
+            videoSettingsRepository.scrapeMissData = obj.toString()
+        }
+    }
+
+    fun getPlaybackSpeed(): Float = videoSettingsRepository.playbackSpeed
+
+    fun savePlaybackSpeed(speed: Float) {
+        videoSettingsRepository.playbackSpeed = speed
+    }
+
     private fun ScrapeCacheItem.toMediaSeries(id: String): MediaSeries {
         val year = cachedVideos.firstOrNull()?.parsedInfo?.year
         return MediaSeries(
@@ -309,6 +498,27 @@ class VideoScraperViewModel(
             }
         } catch (e: Exception) { e.printStackTrace() }
 
+        // 新增字段（旧数据没有则为默认值，不报错、不丢旧字段）
+        var seriesPath = ""
+        var seasonByFid = mapOf<String, Int>()
+        var seasonByName = mapOf<String, Int>()
+        try {
+            if (extraData.isNotBlank()) {
+                val json = JSONObject(extraData)
+                seriesPath = json.optString("seriesPath", "")
+                json.optJSONObject("seasonOverrideByFid")?.let { obj ->
+                    val map = mutableMapOf<String, Int>()
+                    obj.keys().forEach { k -> map[k] = obj.optInt(k, 0) }
+                    seasonByFid = map
+                }
+                json.optJSONObject("seasonOverrideByName")?.let { obj ->
+                    val map = mutableMapOf<String, Int>()
+                    obj.keys().forEach { k -> map[k] = obj.optInt(k, 0) }
+                    seasonByName = map
+                }
+            }
+        } catch (e: Exception) { e.printStackTrace() }
+
         return ScrapeCacheItem(
             title = title,
             category = category,
@@ -324,7 +534,10 @@ class VideoScraperViewModel(
             groupName = groupName,
             isManuallyEdited = isManuallyEdited,
             fileListSignature = fileListSignature,
-            cachedVideos = videos
+            cachedVideos = videos,
+            seriesPath = seriesPath,
+            seasonOverrideByFid = seasonByFid,
+            seasonOverrideByName = seasonByName
         )
     }
 
@@ -377,6 +590,15 @@ class VideoScraperViewModel(
                 videosArr.put(fileObj)
             }
             extraObj.put("cachedVideos", videosArr)
+
+            // 新增字段（与旧字段并存，旧的读取方仍可用）
+            extraObj.put("seriesPath", seriesPath)
+            val byFidObj = JSONObject()
+            seasonOverrideByFid.forEach { (k, v) -> byFidObj.put(k, v) }
+            extraObj.put("seasonOverrideByFid", byFidObj)
+            val byNameObj = JSONObject()
+            seasonOverrideByName.forEach { (k, v) -> byNameObj.put(k, v) }
+            extraObj.put("seasonOverrideByName", byNameObj)
         } catch (e: Exception) { e.printStackTrace() }
 
         return VideoScrapedEntity(
@@ -487,11 +709,17 @@ class VideoScraperViewModel(
         viewModelScope.launch {
             try {
                 val allVideos = mutableListOf<QuarkFile>()
+                val loadedOkFids = mutableSetOf<String>()
                 withContext(Dispatchers.IO) {
                     for (fid in libs) {
                         val folderName = libraryNames[fid] ?: ""
                         val initialPath = if (folderName.isNotBlank()) folderName.split("/") else emptyList()
-                        fetchVideosRecursively(cookie, fid, initialPath, allVideos)
+                        val sizeBefore = allVideos.size
+                        val ok = fetchVideosRecursively(cookie, fid, initialPath, allVideos)
+                        if (ok) loadedOkFids.add(fid)
+                        else if (allVideos.size > sizeBefore) {
+                            // 部分成功：仍算不可信，本轮不做删除判定
+                        }
                     }
                 }
                 val uniqueVideos = allVideos.distinctBy { it.fid }
@@ -504,81 +732,144 @@ class VideoScraperViewModel(
 
                 val groupedSeries = aggregateToSeries(uniqueVideos)
 
-                val validIds = groupedSeries.map { it.id }.toSet()
-                
-                val invalidIds = scrapedCache.keys.filter { it !in validIds }
-                if (invalidIds.isNotEmpty()) {
-                    invalidIds.forEach { scrapedCache.remove(it) }
-                    saveScrapedCache()
+                // ===== 旧缓存迁移：旧条目没有 seriesPath 时，用 cachedVideos 反推路径或按标题认领，
+                // 认领后只补 seriesPath 字段，已刮的标题/海报/简介/手改标记全部保留，不触发重刮 =====
+                if (scrapedCache.isNotEmpty()) {
+                    val newIdSet = groupedSeries.map { it.id }.toSet()
+                    scrapedCache.keys.filter { it !in newIdSet }.forEach { oldKey ->
+                        val item = scrapedCache[oldKey] ?: return@forEach
+                        val oldPath = if (item.seriesPath.isNotBlank()) item.seriesPath else seriesPathKeyOf(item.cachedVideos)
+                        val target = groupedSeries.firstOrNull { s ->
+                            val p = seriesPathKeyOf(s.videos)
+                            (oldPath.isNotBlank() && p == oldPath) || s.title == item.title || s.title == oldKey
+                        }
+                        if (target != null && scrapedCache[target.id] == null) {
+                            scrapedCache.remove(oldKey)
+                            scrapedCache[target.id] = item.copy(
+                                seriesPath = oldPath.ifBlank { seriesPathKeyOf(target.videos) }
+                            )
+                        }
+                    }
                 }
 
-                val needScrapeList = mutableListOf<MediaSeries>()
-                var emptyPosterRetryCount = 0
-                val maxEmptyPosterRetry = 10
+                val validIds = groupedSeries.map { it.id }.toSet()
 
-                val finalSeriesList = groupedSeries.map { series ->
-                    val newSignature = series.videos.map { it.fid }.sorted().joinToString("|")
-                    
-                    var cached = scrapedCache[series.id]
-                    
-                    if (cached == null || cached.fileListSignature != newSignature) {
-                        val migratedCache = scrapedCache.values.find { it.fileListSignature == newSignature }
-                        if (migratedCache != null) {
-                            val oldId = scrapedCache.entries.find { it.value == migratedCache }?.key
-                            if (oldId != null) {
-                                scrapedCache.remove(oldId)
-                            }
-                            cached = migratedCache
-                            scrapedCache[series.id] = migratedCache 
+                // ===== 删除判定：目录读取失败时整轮跳过（宁可晚删，不可误删）=====
+                val anyLibFailed = libs.any { it !in loadedOkFids }
+                if (!anyLibFailed) {
+                    val missMap = readMissMap()
+                    var missChanged = false
+                    var cacheChanged = false
+                    val invalidIds = scrapedCache.keys.filter { it !in validIds }
+                    invalidIds.forEach { id ->
+                        val item = scrapedCache[id]
+                        val miss = (missMap[id] ?: 0) + 1
+                        missChanged = true
+                        if (miss >= 2) {
+                            missMap.remove(id)
+                            item?.let { purgeSeriesData(it.title, it.cachedVideos.map { v -> v.fid }) }
+                            scrapedCache.remove(id)
+                            cacheChanged = true
+                        } else {
+                            missMap[id] = miss
+                        }
+                    }
+                    validIds.forEach { id -> if (missMap.remove(id) != null) missChanged = true }
+                    if (missChanged) writeMissMap(missMap)
+                    if (cacheChanged) saveScrapedCache()
+                }
+
+                val tasks = mutableListOf<ScrapeTask>()
+
+                val finalSeriesList = groupedSeries.map { baseSeries ->
+                    val pathKey = if (baseSeries.videos.isEmpty()) "" else seriesPathKeyOf(baseSeries.videos)
+                    var cached = scrapedCache[baseSeries.id]
+
+                    // 兼容老键：迁移后仍可能残留旧键，用路径/标题兜底认领
+                    if (cached == null) {
+                        val legacy = scrapedCache.entries.firstOrNull { (k, v) ->
+                            val p = if (v.seriesPath.isNotBlank()) v.seriesPath else seriesPathKeyOf(v.cachedVideos)
+                            (p.isNotBlank() && p == pathKey) || k == baseSeries.title || v.title == baseSeries.title
+                        }
+                        if (legacy != null) {
+                            cached = legacy.value
+                            scrapedCache.remove(legacy.key)
+                            scrapedCache[baseSeries.id] = legacy.value
                         }
                     }
 
-                    val isSignatureChanged = cached == null || newSignature != cached.fileListSignature
-                    val isEmptyPoster = cached?.posterUrl.isNullOrBlank()
-                    val shouldRetryEmptyPoster = isEmptyPoster && emptyPosterRetryCount < maxEmptyPosterRetry
-                    
-                    val needScrape = isSignatureChanged || shouldRetryEmptyPoster
+                    // 手动季号在扫描结果之上生效，且缓存里的 cachedVideos 也用它 → 不会被下次扫描覆盖
+                    val videosFixed = applySeasonOverrides(baseSeries.videos, cached)
+                    val series = baseSeries.copy(videos = videosFixed)
 
-                    val resultSeries = if (needScrape) {
-                        needScrapeList.add(series)
-                        if (isEmptyPoster) emptyPosterRetryCount++
-                        if (cached != null) {
-                            series.copy(
-                                title = cached.title, category = cached.category, posterUrl = cached.posterUrl,
-                                backdropUrl = cached.backdropUrl, overview = cached.overview, rating = cached.rating,
-                                seasonDetails = cached.seasonDetails, episodeTitles = cached.episodeTitles,
-                                episodeStills = cached.episodeStills, seasonEpisodeTitles = cached.seasonEpisodeTitles,
-                                seasonEpisodeStills = cached.seasonEpisodeStills, groupName = cached.groupName,
-                                isManuallyEdited = cached.isManuallyEdited
-                            )
-                        } else series
-                    } else {
-                        if (cached != null) {
-                            series.copy(
-                                title = cached.title, category = cached.category, posterUrl = cached.posterUrl,
-                                backdropUrl = cached.backdropUrl, overview = cached.overview, rating = cached.rating,
-                                seasonDetails = cached.seasonDetails, episodeTitles = cached.episodeTitles,
-                                episodeStills = cached.episodeStills, seasonEpisodeTitles = cached.seasonEpisodeTitles,
-                                seasonEpisodeStills = cached.seasonEpisodeStills, groupName = cached.groupName,
-                                isManuallyEdited = cached.isManuallyEdited
-                            )
-                        } else series
+                    val decision = decideScrape(cached, videosFixed)
+
+                    // 集被删掉时，同步清掉对应的标题/剧照键，避免残留脏数据
+                    var merged = cached
+                    if (cached != null && decision.removedKeys.isNotEmpty()) {
+                        val seasonTitles = cached.seasonEpisodeTitles.toMutableMap()
+                        val seasonStills = cached.seasonEpisodeStills.toMutableMap()
+                        val epTitles = cached.episodeTitles.toMutableMap()
+                        val epStills = cached.episodeStills.toMutableMap()
+                        decision.removedKeys.forEach { key ->
+                            seasonTitles.remove(key)
+                            seasonStills.remove(key)
+                            val epNum = key.substringAfter("_").toIntOrNull()
+                            if (epNum != null) {
+                                epTitles.remove(epNum)
+                                epStills.remove(epNum)
+                            }
+                        }
+                        merged = cached.copy(
+                            seasonEpisodeTitles = seasonTitles,
+                            seasonEpisodeStills = seasonStills,
+                            episodeTitles = epTitles,
+                            episodeStills = epStills
+                        )
                     }
-                    
-                    scrapedCache[series.id] = (cached ?: ScrapeCacheItem(
-                        title = resultSeries.title, category = resultSeries.category, posterUrl = null, backdropUrl = null,
-                        overview = null, rating = null, groupName = resultSeries.groupName,
-                        isManuallyEdited = false, fileListSignature = newSignature
-                    )).copy(cachedVideos = resultSeries.videos)
-                    
+
+                    val resultSeries = if (merged != null) {
+                        series.copy(
+                            title = merged.title, category = merged.category, posterUrl = merged.posterUrl,
+                            backdropUrl = merged.backdropUrl, overview = merged.overview, rating = merged.rating,
+                            seasonDetails = merged.seasonDetails, episodeTitles = merged.episodeTitles,
+                            episodeStills = merged.episodeStills, seasonEpisodeTitles = merged.seasonEpisodeTitles,
+                            seasonEpisodeStills = merged.seasonEpisodeStills, groupName = merged.groupName,
+                            isManuallyEdited = merged.isManuallyEdited
+                        )
+                    } else series
+
+                    when (decision.mode) {
+                        2 -> tasks.add(ScrapeTask(series, true))
+                        1 -> tasks.add(ScrapeTask(series, false, decision.addedKeys))
+                        else -> Unit
+                    }
+
+                    if (decision.mode == 0) {
+                        // 本轮不需要刮削：直接把当前文件集落盘（下次只按增量判断，不再全量比对）
+                        val carry = merged ?: ScrapeCacheItem(
+                            title = resultSeries.title, category = resultSeries.category,
+                            posterUrl = null, backdropUrl = null, overview = null, rating = null,
+                            groupName = resultSeries.groupName, isManuallyEdited = false
+                        )
+                        scrapedCache[baseSeries.id] = carry.copy(
+                            seriesPath = pathKey,
+                            fileListSignature = buildSeriesFingerprint(videosFixed),
+                            cachedVideos = videosFixed
+                        )
+                    } else if (merged != null) {
+                        // 有刮削任务在跑：只先更新路径，集列表等刮削成功后再落盘，失败则下一轮重试
+                        scrapedCache[baseSeries.id] = merged.copy(seriesPath = pathKey)
+                    }
+
                     resultSeries
                 }.sortedWith(compareBy(pinyinCollator) { it.title })
 
                 _uiState.update { it.copy(seriesList = finalSeriesList) }
                 
-                if (apiKey.isNotBlank() && needScrapeList.isNotEmpty()) {
+                if (apiKey.isNotBlank() && tasks.isNotEmpty()) {
                     _uiState.update { it.copy(isScraping = true) }
-                    scrapeSeriesPosters(needScrapeList, apiKey, _uiState.value.tmdbBaseUrl)
+                    scrapeSeriesPosters(tasks, apiKey, _uiState.value.tmdbBaseUrl)
                 } else {
                     hasLoadedLibrary = true
                     _uiState.update { it.copy(isLoading = false, isScraping = false) }
@@ -664,7 +955,11 @@ class VideoScraperViewModel(
                 )
             }
         }
-        return seriesMap.values.toList().sortedWith(compareBy(pinyinCollator) { it.title })
+        // 身份主键：剧目录相对路径 + 原分组名（路径稳定、不受网盘命名随意影响；改分组逻辑与以前完全一致）
+        return seriesMap.values.map { s ->
+            val path = seriesPathKeyOf(s.videos)
+            s.copy(id = cacheKeyOf(path, s.title))
+        }.sortedWith(compareBy(pinyinCollator) { it.title })
     }
 
     private fun parseSeasonFromFolder(folderName: String): Int? {
@@ -681,69 +976,75 @@ class VideoScraperViewModel(
         return enMatch?.groupValues?.get(1)?.toIntOrNull()
     }
 
+    /** 返回是否"完整读取成功"；失败会被上层用来跳过本轮删除判定，避免网盘抖动误删 */
     private suspend fun fetchVideosRecursively(
         cookie: String, parentFid: String, currentPath: List<String>, resultList: MutableList<QuarkFile>
-    ) {
-        withContext(Dispatchers.IO) {
-            var page = 1
-            var hasMore = true
-            while (hasMore) {
-                val url = "https://drive-pc.quark.cn/1/clouddrive/file/sort?pr=ucpro&fr=pc&uc_param_str=&pdir_fid=$parentFid&_page=$page&_size=100&_sort=file_type:asc,updated_at:desc"
-                val request = Request.Builder().url(url).header("Cookie", cookie).header("User-Agent", "Mozilla/5.0").build()
-                try {
-                    client.newCall(request).execute().use { response ->
-                        updateCookieFromResponse(response.headers)
-                        
-                        val body = response.body?.string()
-                        if (!body.isNullOrBlank()) {
-                            val json = JSONObject(body)
-                            if (json.optInt("code", -1) == 0) {
-                                val list = json.optJSONObject("data")?.optJSONArray("list")
-                                if (list != null) {
-                                    for (i in 0 until list.length()) {
-                                        val item = list.getJSONObject(i)
-                                        val fileName = item.optString("file_name")
-                                        val fileFid = item.optString("fid")
-                                        val isFolder = item.optBoolean("dir", false)
-                                        val size = item.optLong("size", 0L)
-                                        if (isFolder) {
-                                            if (!excludedFids.contains(fileFid)) {
-                                                fetchVideosRecursively(cookie, fileFid, currentPath + fileName, resultList)
-                                            }
-                                        } else {
-                                            val parsed = VideoFileNameParser.parse(fileName, currentPath.lastOrNull())
-                                            if (parsed.isVideo) {
-                                                resultList.add(QuarkFile(fileFid, fileName, false, "未分类", currentPath, parsed, size))
-                                            }
+    ): Boolean = withContext(Dispatchers.IO) {
+        var allOk = true
+        var page = 1
+        var hasMore = true
+        while (hasMore) {
+            val url = "https://drive-pc.quark.cn/1/clouddrive/file/sort?pr=ucpro&fr=pc&uc_param_str=&pdir_fid=$parentFid&_page=$page&_size=100&_sort=file_type:asc,updated_at:desc"
+            val request = Request.Builder().url(url).header("Cookie", cookie).header("User-Agent", "Mozilla/5.0").build()
+            try {
+                client.newCall(request).execute().use { response ->
+                    updateCookieFromResponse(response.headers)
+
+                    val body = response.body?.string()
+                    if (!body.isNullOrBlank()) {
+                        val json = JSONObject(body)
+                        if (json.optInt("code", -1) == 0) {
+                            val list = json.optJSONObject("data")?.optJSONArray("list")
+                            if (list != null) {
+                                for (i in 0 until list.length()) {
+                                    val item = list.getJSONObject(i)
+                                    val fileName = item.optString("file_name")
+                                    val fileFid = item.optString("fid")
+                                    val isFolder = item.optBoolean("dir", false)
+                                    val size = item.optLong("size", 0L)
+                                    if (isFolder) {
+                                        if (!excludedFids.contains(fileFid)) {
+                                            val childOk = fetchVideosRecursively(cookie, fileFid, currentPath + fileName, resultList)
+                                            if (!childOk) allOk = false
+                                        }
+                                    } else {
+                                        val parsed = VideoFileNameParser.parse(fileName, currentPath.lastOrNull())
+                                        if (parsed.isVideo) {
+                                            resultList.add(QuarkFile(fileFid, fileName, false, "未分类", currentPath, parsed, size))
                                         }
                                     }
-                                    if (list.length() < 100) {
-                                        hasMore = false
-                                    } else {
-                                        page++
-                                    }
-                                } else {
+                                }
+                                if (list.length() < 100) {
                                     hasMore = false
+                                } else {
+                                    page++
                                 }
                             } else {
                                 hasMore = false
                             }
                         } else {
+                            allOk = false
                             hasMore = false
                         }
+                    } else {
+                        allOk = false
+                        hasMore = false
                     }
-                } catch (e: Exception) {
-                    e.printStackTrace()
-                    hasMore = false
                 }
+            } catch (e: Exception) {
+                e.printStackTrace()
+                allOk = false
+                hasMore = false
             }
         }
+        allOk
     }
 
-    private fun scrapeSeriesPosters(needScrapeList: List<MediaSeries>, apiKey: String, baseUrl: String) {
+    private fun scrapeSeriesPosters(tasks: List<ScrapeTask>, apiKey: String, baseUrl: String) {
         viewModelScope.launch(Dispatchers.IO) {
-            val scrapedList = needScrapeList.map { series ->
+            val scrapedList = tasks.map { task ->
                 tmdbSemaphore.withPermit {
+                    val series = task.series
                     var searchTitle = series.originalParsedTitle
                     if (series.groupName != null) searchTitle = series.groupName
 
@@ -766,11 +1067,11 @@ class VideoScraperViewModel(
                             }
                         }
                         
-                        var epTitles = mutableMapOf<Int, String>()
-                        var epStills = mutableMapOf<Int, String>()
-                        var seasonDetails = mutableMapOf<Int, SeasonDetail>()
-                        var sEpTitles = mutableMapOf<String, String>()
-                        var sEpStills = mutableMapOf<String, String>()
+                        val epTitles = mutableMapOf<Int, String>()
+                        val epStills = mutableMapOf<Int, String>()
+                        val seasonDetails = mutableMapOf<Int, SeasonDetail>()
+                        val sEpTitles = mutableMapOf<String, String>()
+                        val sEpStills = mutableMapOf<String, String>()
 
                         val oldCached = scrapedCache[series.id]
                         if (oldCached != null) {
@@ -782,22 +1083,34 @@ class VideoScraperViewModel(
                         }
 
                         if (match.mediaType != "movie") {
-                            val allSeasons = series.videos.mapNotNull { it.parsedInfo?.season }.distinct().sorted()
-                            val targetSeasons = if (allSeasons.isEmpty()) listOf(1) else allSeasons
+                            val allSeasons = series.videos.map { seasonOf(it) }.distinct().sorted()
+                            val targetSeasons = if (task.full) {
+                                if (allSeasons.isEmpty()) listOf(1) else allSeasons
+                            } else {
+                                task.newEpisodeKeys.mapNotNull { it.substringBefore("_").toIntOrNull() }
+                                    .distinct().sorted().ifEmpty { allSeasons }
+                            }
                             for (season in targetSeasons) {
                                 val detail = fetchSeasonDetail(match.id, season, apiKey, baseUrl)
                                 if (detail != null) {
                                     seasonDetails[season] = detail.first
-                                    sEpTitles.putAll(detail.second)
-                                    sEpStills.putAll(detail.third)
-                                    if (season == targetSeasons.first()) {
+                                    if (task.full) {
+                                        sEpTitles.putAll(detail.second)
+                                        sEpStills.putAll(detail.third)
+                                    } else {
+                                        // 增量：只补新增集，已刮过的集标题一个都不重写
+                                        detail.second.forEach { (k, v) -> if (task.newEpisodeKeys.contains(k)) sEpTitles[k] = v }
+                                        detail.third.forEach { (k, v) -> if (task.newEpisodeKeys.contains(k)) sEpStills[k] = v }
+                                    }
+                                    // 旧字段（按集号）只在"整部剧只有一个季"时才写，避免多季串标题
+                                    if (allSeasons.size <= 1) {
                                         detail.second.forEach { (k, v) ->
                                             val epNum = k.substringAfter("_").toIntOrNull()
-                                            if (epNum != null) epTitles[epNum] = v
+                                            if (epNum != null && (task.full || task.newEpisodeKeys.contains(k))) epTitles[epNum] = v
                                         }
                                         detail.third.forEach { (k, v) ->
                                             val epNum = k.substringAfter("_").toIntOrNull()
-                                            if (epNum != null) epStills[epNum] = v
+                                            if (epNum != null && (task.full || task.newEpisodeKeys.contains(k))) epStills[epNum] = v
                                         }
                                     }
                                 }
@@ -806,38 +1119,55 @@ class VideoScraperViewModel(
 
                         val isEdited = oldCached?.isManuallyEdited ?: false
 
-                        val newSeries = series.copy(
-                            title = if (isEdited) oldCached!!.title else finalTitle, 
-                            category = if (isEdited) oldCached!!.category else finalCategory, 
-                            posterUrl = if (isEdited) oldCached!!.posterUrl else match.posterUrl, 
-                            backdropUrl = if (isEdited) oldCached!!.backdropUrl else match.backdropUrl,
-                            overview = if (isEdited) oldCached!!.overview else match.overview, 
-                            rating = if (isEdited) oldCached!!.rating else match.rating, 
-                            seasonDetails = seasonDetails, episodeTitles = epTitles, episodeStills = epStills,
-                            seasonEpisodeTitles = sEpTitles, seasonEpisodeStills = sEpStills
-                        )
+                        val newSeries = if (task.full) {
+                            series.copy(
+                                title = if (isEdited) oldCached!!.title else finalTitle,
+                                category = if (isEdited) oldCached!!.category else finalCategory,
+                                posterUrl = if (isEdited) oldCached!!.posterUrl else match.posterUrl,
+                                backdropUrl = if (isEdited) oldCached!!.backdropUrl else match.backdropUrl,
+                                overview = if (isEdited) oldCached!!.overview else match.overview,
+                                rating = if (isEdited) oldCached!!.rating else match.rating,
+                                seasonDetails = seasonDetails, episodeTitles = epTitles, episodeStills = epStills,
+                                seasonEpisodeTitles = sEpTitles, seasonEpisodeStills = sEpStills
+                            )
+                        } else {
+                            // 增量：剧级字段（标题/分类/海报/背景/简介/评分）一律不动，只把新集补上
+                            series.copy(
+                                title = oldCached?.title ?: series.title,
+                                category = oldCached?.category ?: series.category,
+                                posterUrl = oldCached?.posterUrl ?: series.posterUrl,
+                                backdropUrl = oldCached?.backdropUrl ?: series.backdropUrl,
+                                overview = oldCached?.overview ?: series.overview,
+                                rating = oldCached?.rating ?: series.rating,
+                                seasonDetails = seasonDetails, episodeTitles = epTitles, episodeStills = epStills,
+                                seasonEpisodeTitles = sEpTitles, seasonEpisodeStills = sEpStills
+                            )
+                        }
 
-                        val newSignature = newSeries.videos.map { it.fid }.sorted().joinToString("|")
-
-                        scrapedCache[newSeries.id] = ScrapeCacheItem(
+                        scrapedCache[series.id] = ScrapeCacheItem(
                             title = newSeries.title, category = newSeries.category, posterUrl = newSeries.posterUrl,
                             backdropUrl = newSeries.backdropUrl, overview = newSeries.overview, rating = newSeries.rating,
                             seasonDetails = newSeries.seasonDetails, episodeTitles = newSeries.episodeTitles,
                             episodeStills = newSeries.episodeStills, seasonEpisodeTitles = newSeries.seasonEpisodeTitles,
                             seasonEpisodeStills = newSeries.seasonEpisodeStills, groupName = newSeries.groupName,
-                            isManuallyEdited = isEdited, fileListSignature = newSignature,
-                            cachedVideos = newSeries.videos
+                            isManuallyEdited = isEdited,
+                            fileListSignature = buildSeriesFingerprint(newSeries.videos),
+                            cachedVideos = newSeries.videos,
+                            seriesPath = oldCached?.seriesPath ?: series.id.substringBeforeLast("#", ""),
+                            seasonOverrideByFid = oldCached?.seasonOverrideByFid ?: emptyMap(),
+                            seasonOverrideByName = oldCached?.seasonOverrideByName ?: emptyMap()
                         )
                         newSeries
                     } else {
-                        val newSignature = series.videos.map { it.fid }.sorted().joinToString("|")
                         val oldCached = scrapedCache[series.id]
                         if (oldCached == null) {
                             scrapedCache[series.id] = ScrapeCacheItem(
                                 title = series.title, category = series.category, posterUrl = null, backdropUrl = null,
                                 overview = null, rating = null, groupName = series.groupName,
-                                isManuallyEdited = false, fileListSignature = newSignature,
-                                cachedVideos = series.videos
+                                isManuallyEdited = false,
+                                fileListSignature = buildSeriesFingerprint(series.videos),
+                                cachedVideos = series.videos,
+                                seriesPath = series.id.substringBeforeLast("#", "")
                             )
                         }
                         series
@@ -1197,35 +1527,57 @@ class VideoScraperViewModel(
 
         if (result != null && apiKey.isNotBlank()) {
             viewModelScope.launch(Dispatchers.IO) {
-                val seasonTitles = mutableMapOf<String, String>()
-                val episodeTitles = mutableMapOf<Int, String>()
-                val seasonEpisodeStills = mutableMapOf<String, String>()
-                val episodeStills = mutableMapOf<Int, String>()
+                val cachedBefore = scrapedCache[seriesId]
+                // 先继承旧表，再只覆盖本次操作的那一季 → 各季独立、互不影响
+                val seasonTitles = cachedBefore?.seasonEpisodeTitles?.toMutableMap() ?: mutableMapOf()
+                val seasonEpisodeStills = cachedBefore?.seasonEpisodeStills?.toMutableMap() ?: mutableMapOf()
+                val episodeTitles = cachedBefore?.episodeTitles?.toMutableMap() ?: mutableMapOf()
+                val episodeStills = cachedBefore?.episodeStills?.toMutableMap() ?: mutableMapOf()
+                val seasonDetails = cachedBefore?.seasonDetails?.toMutableMap() ?: mutableMapOf()
 
-                val allSeasons = updatedSeries.videos.mapNotNull { it.parsedInfo?.season }.distinct().sorted()
-                val targetSeasons = if (targetSeason != null) listOf(targetSeason) else if (allSeasons.isEmpty()) listOf(1) else allSeasons
+                val allSeasons = updatedSeries.videos.map { seasonOf(it) }.distinct().sorted()
+                val targetSeasons = when {
+                    targetSeason != null -> listOf(targetSeason)
+                    allSeasons.isEmpty() -> listOf(1)
+                    else -> allSeasons
+                }
+
+                // 本季要覆盖的键集合（只覆盖本季，其它季一个都不碰）
+                val seasonKeys = mutableSetOf<String>()
+                val seasonEpNums = mutableSetOf<Int>()
 
                 for (season in targetSeasons) {
                     val detail = tmdbSemaphore.withPermit {
                         fetchSeasonDetail(result.id, season, apiKey, baseUrl)
                     }
                     if (detail != null) {
-                        seasonTitles.putAll(detail.second)
-                        seasonEpisodeStills.putAll(detail.third)
-                        if (targetSeasons.size == 1) {
-                            detail.second.forEach { (k, v) ->
-                                val epNum = k.substringAfter("_").toIntOrNull()
-                                if (epNum != null) episodeTitles[epNum] = v
+                        seasonDetails[season] = detail.first
+                        detail.second.forEach { (k, v) ->
+                            if (k.substringBefore("_").toIntOrNull() == season) {
+                                seasonTitles[k] = v
+                                seasonKeys.add(k)
+                                k.substringAfter("_").toIntOrNull()?.let { seasonEpNums.add(it) }
                             }
-                            detail.third.forEach { (k, v) ->
-                                val epNum = k.substringAfter("_").toIntOrNull()
-                                if (epNum != null) episodeStills[epNum] = v
-                            }
+                        }
+                        detail.third.forEach { (k, v) ->
+                            if (k.substringBefore("_").toIntOrNull() == season) seasonEpisodeStills[k] = v
                         }
                     }
                 }
 
+                // 旧字段（按集号）只在"整部剧只有一个季"时写，避免多季串标题
+                if (allSeasons.size <= 1) {
+                    seasonKeys.forEach { k ->
+                        val epNum = k.substringAfter("_").toIntOrNull()
+                        val title = seasonTitles[k]
+                        if (epNum != null && title != null) episodeTitles[epNum] = title
+                        val still = seasonEpisodeStills[k]
+                        if (epNum != null && still != null) episodeStills[epNum] = still
+                    }
+                }
+
                 val finalSeries = updatedSeries.copy(
+                    seasonDetails = seasonDetails,
                     seasonEpisodeTitles = seasonTitles,
                     episodeTitles = episodeTitles,
                     seasonEpisodeStills = seasonEpisodeStills,
@@ -1242,14 +1594,28 @@ class VideoScraperViewModel(
                     }
                 }
 
-                saveManualScrapeComplete(finalSeries)
+                saveManualScrapeComplete(finalSeries, targetSeason)
             }
+        } else {
+            saveManualScrapeBasic(updatedSeries, targetSeason)
         }
     }
 
-    private fun saveManualScrapeBasic(series: MediaSeries) {
-        val newSignature = series.videos.map { it.fid }.sorted().joinToString("|")
-        scrapedCache[series.id] = ScrapeCacheItem(
+    /** 手动刮削落盘：保留旧的全表数据，写入手改季号双键（fid + 文件名），供后续扫描时套用 */
+    private fun buildManualCacheItem(
+        series: MediaSeries,
+        targetSeason: Int?
+    ): ScrapeCacheItem {
+        val old = scrapedCache[series.id]
+        val byFid = (old?.seasonOverrideByFid ?: emptyMap()).toMutableMap()
+        val byName = (old?.seasonOverrideByName ?: emptyMap()).toMutableMap()
+        if (targetSeason != null) {
+            series.videos.forEach { v ->
+                byFid[v.fid] = targetSeason
+                byName[normalizeVideoName(v.name)] = targetSeason
+            }
+        }
+        return ScrapeCacheItem(
             title = series.title,
             category = series.category,
             posterUrl = series.posterUrl,
@@ -1263,31 +1629,21 @@ class VideoScraperViewModel(
             seasonEpisodeStills = series.seasonEpisodeStills,
             groupName = series.groupName,
             isManuallyEdited = true,
-            fileListSignature = newSignature,
-            cachedVideos = series.videos
+            fileListSignature = buildSeriesFingerprint(series.videos),
+            cachedVideos = series.videos,
+            seriesPath = old?.seriesPath ?: series.id.substringBeforeLast("#", ""),
+            seasonOverrideByFid = byFid,
+            seasonOverrideByName = byName
         )
+    }
+
+    private fun saveManualScrapeBasic(series: MediaSeries, targetSeason: Int? = null) {
+        scrapedCache[series.id] = buildManualCacheItem(series, targetSeason)
         saveScrapedCache()
     }
 
-    private fun saveManualScrapeComplete(series: MediaSeries) {
-        val newSignature = series.videos.map { it.fid }.sorted().joinToString("|")
-        scrapedCache[series.id] = ScrapeCacheItem(
-            title = series.title,
-            category = series.category,
-            posterUrl = series.posterUrl,
-            backdropUrl = series.backdropUrl,
-            overview = series.overview,
-            rating = series.rating,
-            seasonDetails = series.seasonDetails,
-            episodeTitles = series.episodeTitles,
-            episodeStills = series.episodeStills,
-            seasonEpisodeTitles = series.seasonEpisodeTitles,
-            seasonEpisodeStills = series.seasonEpisodeStills,
-            groupName = series.groupName,
-            isManuallyEdited = true,
-            fileListSignature = newSignature,
-            cachedVideos = series.videos
-        )
+    private fun saveManualScrapeComplete(series: MediaSeries, targetSeason: Int? = null) {
+        scrapedCache[series.id] = buildManualCacheItem(series, targetSeason)
         saveScrapedCache()
     }
 
@@ -1307,7 +1663,7 @@ class VideoScraperViewModel(
         var titleText = realSeries.title
         if (realSeries.category != "电影") {
             if (epNum != null) {
-                val tmdbEpTitle = realSeries.seasonEpisodeTitles["${season}_${epNum}"] ?: realSeries.episodeTitles[epNum]
+                val tmdbEpTitle = resolveEpisodeTitle(realSeries, season, epNum)
                 titleText = if (!tmdbEpTitle.isNullOrBlank()) "${realSeries.title} 第${epNum}集 $tmdbEpTitle"
                 else "${realSeries.title} 第${epNum}集"
             } else if (file.name.contains("第") && file.name.contains("集")) {
@@ -1385,7 +1741,7 @@ class VideoScraperViewModel(
             var titleText = series.title
             if (series.category != "电影") {
                 if (epNum != null) {
-                    val tmdbEpTitle = series.seasonEpisodeTitles["${season}_${epNum}"] ?: series.episodeTitles[epNum]
+                    val tmdbEpTitle = resolveEpisodeTitle(series, season, epNum)
                     titleText = if (!tmdbEpTitle.isNullOrBlank()) "${series.title} 第${epNum}集 $tmdbEpTitle"
                     else "${series.title} 第${epNum}集"
                 } else if (file.name.contains("第") && file.name.contains("集")) {
