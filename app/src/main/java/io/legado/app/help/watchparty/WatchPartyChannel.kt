@@ -48,7 +48,6 @@ class WatchPartyChannel(
         fun onConnected()
         fun onDisconnected(reason: String?)
         fun onRemoteSync(state: PartySyncState)
-        fun onChat(message: PartyChatMessage)
         fun onMembersChanged(members: List<PartyMember>)
         /** 有人敲门（房主专用） */
         fun onKnock(userId: String, userName: String)
@@ -151,17 +150,6 @@ class WatchPartyChannel(
             addProperty("sentAt", System.currentTimeMillis())
         }
         socket?.send(buildBroadcastJson("sync", payload))
-    }
-
-    fun sendChat(text: String) {
-        if (!approved) return
-        val payload = JsonObject().apply {
-            addProperty("userId", userId)
-            addProperty("userName", userName)
-            addProperty("text", text)
-            addProperty("sentAt", System.currentTimeMillis())
-        }
-        socket?.send(buildBroadcastJson("chat", payload))
     }
 
     // ---------------- 连接与消息 ----------------
@@ -275,11 +263,6 @@ class WatchPartyChannel(
                         handleSync(data)
                     }
 
-                    "chat" -> {
-                        if (!approved) return
-                        handleChat(data)
-                    }
-
                     "hello", "beat" -> {
                         if (!approved) return
                         handlePresence(data)
@@ -330,18 +313,6 @@ class WatchPartyChannel(
         )
         if (state.userId.isBlank() || state.userId == userId) return
         callbacks.onRemoteSync(state)
-    }
-
-    private fun handleChat(data: JsonObject) {
-        val msg = PartyChatMessage(
-            userId = data.get("userId")?.asString ?: "",
-            userName = data.get("userName")?.asString ?: "",
-            text = data.get("text")?.asString ?: "",
-            sentAt = data.get("sentAt")?.asLong ?: System.currentTimeMillis(),
-            mine = (data.get("userId")?.asString ?: "") == userId,
-        )
-        if (msg.userId.isBlank()) return
-        callbacks.onChat(msg)
     }
 
     private fun handlePresence(data: JsonObject) {

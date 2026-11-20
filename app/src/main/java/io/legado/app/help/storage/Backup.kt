@@ -11,7 +11,6 @@ import io.legado.app.domain.gateway.BackupSettingsGateway
 import io.legado.app.domain.gateway.ReadStyleGateway
 import io.legado.app.exception.NoStackTraceException
 import io.legado.app.help.AppWebDav
-import io.legado.app.help.BackupToastGate
 import io.legado.app.help.DirectLinkUpload
 import io.legado.app.help.book.isLocal
 import io.legado.app.help.config.AppConfigStore
@@ -22,7 +21,6 @@ import io.legado.app.help.coroutine.Coroutine
 import io.legado.app.model.BookCover
 import io.legado.app.utils.FileUtils
 import io.legado.app.utils.GSON
-import io.legado.app.utils.GlobalToast
 import io.legado.app.utils.LogUtils
 import io.legado.app.utils.compress.ZipUtils
 import io.legado.app.utils.createFolderIfNotExist
@@ -136,15 +134,15 @@ object Backup {
      */
     fun autoBack(context: Context) {
         if (!shouldBackup()) return
-        Coroutine.async { runAutoBackup(context, ignoreInterval = false, force = true) }
+        Coroutine.async { runAutoBackup(context, ignoreInterval = false) }
     }
 
     /**
-     * 立即备份：忽略间隔与节流，仅比对数据指纹
+     * 立即备份：忽略备份间隔，但仍受 30 分钟上传节流与数据指纹约束
      * 用于切后台/退出/离开阅读播放界面时的收尾
      */
     fun backupNow(context: Context) {
-        Coroutine.async { runAutoBackup(context, ignoreInterval = true, force = true) }
+        Coroutine.async { runAutoBackup(context, ignoreInterval = true) }
     }
 
     /** 指纹有变化才备份（前台定时调度用，受 30 分钟上传节流约束） */
@@ -152,7 +150,7 @@ object Backup {
         Coroutine.async {
             val fingerprint = buildDataFingerprint()
             if (fingerprint == LocalConfig.lastBackupFingerprint) return@async
-            runAutoBackup(context, ignoreInterval = true, force = false)
+            runAutoBackup(context, ignoreInterval = true)
         }
     }
 
@@ -180,7 +178,7 @@ object Backup {
         suppressUntil = 0L
     }
 
-    private suspend fun runAutoBackup(context: Context, ignoreInterval: Boolean, force: Boolean = false) {
+    private suspend fun runAutoBackup(context: Context, ignoreInterval: Boolean) {
         BackupRestoreLock.withLock {
             if (System.currentTimeMillis() < suppressUntil) {
                 LogUtils.d(TAG, "云端有更新待处理，暂停自动上传")
@@ -191,7 +189,8 @@ object Backup {
                 LogUtils.d(TAG, "上次备份失败，退避中")
                 return@withLock
             }
-            if (!force && System.currentTimeMillis() - lastUploadTime < UPLOAD_THROTTLE_MS) {
+            // 前台/退出触发的备份同样受 30 分钟上传节流约束，避免切书、反复退出时每趟都传整包
+            if (System.currentTimeMillis() - lastUploadTime < UPLOAD_THROTTLE_MS) {
                 LogUtils.d(TAG, "距上次上传不足 30 分钟，等下一次")
                 return@withLock
             }
@@ -317,12 +316,10 @@ object Backup {
     }
 
     /**
-     * 备份提示：阅读页/播放页期间静音，避免打断
+     * 自动备份结果不再弹 toast：状态写进设置页状态行即可，避免切书、退出阅读/播放时打断用户。
+     * 保留方法签名是为了调用处不动，失败原因仍会经 saveBackupStatus 落到设置页。
      */
     private fun showBackupToast(message: String) {
-        if (!BackupToastGate.isQuiet) {
-            GlobalToast.show(message)
-        }
     }
 
     /**

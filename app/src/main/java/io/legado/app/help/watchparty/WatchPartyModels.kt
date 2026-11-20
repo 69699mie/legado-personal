@@ -12,15 +12,6 @@ data class PartySyncState(
     val sentAt: Long = 0L,
 )
 
-/** 聊天消息 */
-data class PartyChatMessage(
-    val userId: String = "",
-    val userName: String = "",
-    val text: String = "",
-    val sentAt: Long = 0L,
-    val mine: Boolean = false,
-)
-
 /** 房间成员 */
 data class PartyMember(
     val userId: String,
@@ -46,6 +37,5 @@ data class WatchPartyState(
     val members: List<PartyMember> = emptyList(),
     /** 房主视角：等待批准的申请者 */
     val pending: List<PartyMember> = emptyList(),
-    val messages: List<PartyChatMessage> = emptyList(),
     val remoteSync: PartySyncState? = null,
 )

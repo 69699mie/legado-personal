@@ -1054,7 +1054,6 @@ fun InternalVideoPlayer(url: String, title: String, cookie: String, series: Medi
     // 一起看
     val partyState by WatchPartySession.state.collectAsState()
     var showPartyDialog by remember { mutableStateOf(false) }
-    var showPartyChat by remember { mutableStateOf(false) }
     var partySwitchFid by remember { mutableStateOf("") }
     var currentPosition by remember { mutableLongStateOf(0L) }
     var bufferedPosition by remember { mutableLongStateOf(0L) }
@@ -1387,8 +1386,7 @@ fun InternalVideoPlayer(url: String, title: String, cookie: String, series: Medi
         )
     }
 
-    WatchPartyDialog(show = showPartyDialog, onDismiss = { showPartyDialog = false }, onOpenChat = { showPartyDialog = false; showPartyChat = true })
-    WatchPartyChatPanel(show = showPartyChat, state = partyState, onDismiss = { showPartyChat = false })
+    WatchPartyDialog(show = showPartyDialog, onDismiss = { showPartyDialog = false })
 
     Box(modifier = Modifier.fillMaxSize().background(Color.Black).pointerInput(isLocked, isInPip.value) {
         if (isLocked || isInPip.value) { if (isLocked && !isInPip.value) detectTapGestures(onTap = { showUnlockIcon = true }); return@pointerInput }

@@ -20,7 +20,6 @@ object WatchPartySession {
 
     private const val TAG = "WatchPartySession"
     private const val PREF = "watch_party"
-    private const val MAX_MESSAGES = 200
 
     private val _state = MutableStateFlow(WatchPartyState())
     val state = _state.asStateFlow()
@@ -113,13 +112,6 @@ object WatchPartySession {
                     _state.update { it.copy(remoteSync = state) }
                 }
 
-                override fun onChat(message: PartyChatMessage) {
-                    _state.update {
-                        val list = (it.messages + message).takeLast(MAX_MESSAGES)
-                        it.copy(messages = list)
-                    }
-                }
-
                 override fun onMembersChanged(members: List<PartyMember>) {
                     _state.update { current ->
                         val me = PartyMember(
@@ -207,21 +199,5 @@ object WatchPartySession {
                 sentAt = now,
             )
         )
-    }
-
-    fun sendChat(text: String) {
-        val trimmed = text.trim()
-        if (trimmed.isEmpty()) return
-        if (!_state.value.approved) return
-        val ch = channel ?: return
-        ch.sendChat(trimmed)
-        val mine = PartyChatMessage(
-            userId = _state.value.myId,
-            userName = _state.value.myName,
-            text = trimmed,
-            sentAt = System.currentTimeMillis(),
-            mine = true,
-        )
-        _state.update { it.copy(messages = (it.messages + mine).takeLast(MAX_MESSAGES)) }
     }
 }

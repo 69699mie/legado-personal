@@ -3,11 +3,8 @@ package io.legado.app.ui.main.video
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.material3.AlertDialog
@@ -26,13 +23,10 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
-import io.legado.app.help.watchparty.PartyChatMessage
+import io.legado.app.help.watchparty.PartyMember
 import io.legado.app.help.watchparty.WatchPartyConfig
 import io.legado.app.help.watchparty.WatchPartySession
 import io.legado.app.help.watchparty.WatchPartyState
-import java.text.SimpleDateFormat
-import java.util.Date
-import java.util.Locale
 
 private val partyBg = Color(0xCC111111)
 private val partyAccent = Color(0xFF4FC3F7)
@@ -43,7 +37,6 @@ fun WatchPartyHud(
     modifier: Modifier = Modifier,
     state: WatchPartyState,
     onOpenSettings: () -> Unit,
-    onOpenChat: () -> Unit,
 ) {
     if (!state.active) {
         Box(
@@ -89,14 +82,6 @@ fun WatchPartyHud(
         Box(
             modifier = Modifier
                 .background(Color.White.copy(alpha = 0.14f), RoundedCornerShape(10.dp))
-                .clickable { onOpenChat() }
-                .padding(horizontal = 8.dp, vertical = 2.dp)
-        ) {
-            Text("聊天", color = partyAccent, fontSize = 12.sp)
-        }
-        Box(
-            modifier = Modifier
-                .background(Color.White.copy(alpha = 0.14f), RoundedCornerShape(10.dp))
                 .clickable { WatchPartySession.leave() }
                 .padding(horizontal = 8.dp, vertical = 2.dp)
         ) {
@@ -110,7 +95,6 @@ fun WatchPartyHud(
 fun WatchPartyDialog(
     show: Boolean,
     onDismiss: () -> Unit,
-    onOpenChat: () -> Unit = {},
 ) {
     if (!show) return
     var name by remember { mutableStateOf(WatchPartyConfig.displayName) }
@@ -213,9 +197,6 @@ fun WatchPartyDialog(
                         WatchPartySession.leave()
                         message = "已退出房间"
                     }) { Text("退出房间") }
-                    if (state.approved) {
-                        TextButton(onClick = onOpenChat) { Text("聊天", color = partyAccent) }
-                    }
                 } else {
                     OutlinedTextField(
                         value = name,
@@ -275,94 +256,6 @@ fun WatchPartyDialog(
                 }
             }
         }
-    }
-}
-
-/** 播放页聊天浮层 */
-@Composable
-fun WatchPartyChatPanel(
-    show: Boolean,
-    state: WatchPartyState,
-    onDismiss: () -> Unit,
-) {
-    if (!show) return
-    var input by remember { mutableStateOf("") }
-    val timeFmt = remember { SimpleDateFormat("HH:mm", Locale.getDefault()) }
-
-    Box(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(Color(0x99000000))
-            .clickable { onDismiss() },
-        contentAlignment = Alignment.BottomCenter,
-    ) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .background(Color(0xF21A1A1A), RoundedCornerShape(topStart = 16.dp, topEnd = 16.dp))
-                .clickable { }
-                .padding(12.dp),
-            verticalArrangement = Arrangement.spacedBy(6.dp),
-        ) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Text(
-                    "房间 ${state.code} · ${state.members.size} 人",
-                    color = Color.White,
-                    fontSize = 13.sp,
-                    fontWeight = FontWeight.Medium,
-                )
-                Text(
-                    "关闭",
-                    color = partyAccent,
-                    fontSize = 12.sp,
-                    modifier = Modifier.clickable { onDismiss() },
-                )
-            }
-            LazyColumn(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .heightIn(max = 240.dp),
-                reverseLayout = true,
-                verticalArrangement = Arrangement.spacedBy(4.dp),
-            ) {
-                items(state.messages.asReversed()) { msg ->
-                    ChatRow(msg, timeFmt.format(Date(msg.sentAt)))
-                }
-            }
-            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
-                OutlinedTextField(
-                    value = input,
-                    onValueChange = { input = it.take(80) },
-                    placeholder = { Text("说点什么…", fontSize = 12.sp) },
-                    singleLine = true,
-                    modifier = Modifier.weight(1f),
-                    keyboardActions = KeyboardActions(onDone = {
-                        WatchPartySession.sendChat(input)
-                        input = ""
-                    }),
-                )
-                TextButton(onClick = {
-                    WatchPartySession.sendChat(input)
-                    input = ""
-                }) { Text("发送", color = partyAccent) }
-            }
-        }
-    }
-}
-
-@Composable
-private fun ChatRow(msg: PartyChatMessage, time: String) {
-    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-        Text(
-            text = "${msg.userName} $time",
-            color = if (msg.mine) partyAccent else Color(0xFF9E9E9E),
-            fontSize = 11.sp,
-        )
-        Text(msg.text, color = Color.White, fontSize = 13.sp)
     }
 }
 
