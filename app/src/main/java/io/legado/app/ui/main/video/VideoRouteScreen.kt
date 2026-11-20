@@ -88,6 +88,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.*
+import androidx.compose.material.icons.outlined.People
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -156,6 +157,10 @@ import androidx.media3.session.MediaSession
 import androidx.media3.ui.PlayerView
 import coil3.compose.AsyncImage
 import io.legado.app.data.repository.VideoSettingsRepository
+import io.legado.app.help.BackupToastGate
+import io.legado.app.help.storage.Backup
+import io.legado.app.help.watchparty.WatchPartyConfig
+import io.legado.app.help.watchparty.WatchPartySession
 import io.legado.app.ui.main.video.proxy.LocalProxyServer
 import io.legado.app.ui.widget.components.text.AppText
 import kotlinx.coroutines.Dispatchers
@@ -576,6 +581,7 @@ private fun SettingsDialog(uiState: VideoUiState, viewModel: VideoScraperViewMod
     var showThreadSelection by remember { mutableStateOf(false) }
     var showBannerLogicSelection by remember { mutableStateOf(false) }
     var showCategoryOrderDialog by remember { mutableStateOf(false) }
+    var showPartyServer by remember { mutableStateOf(false) }
 
     Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
         val view = LocalView.current
@@ -594,6 +600,18 @@ private fun SettingsDialog(uiState: VideoUiState, viewModel: VideoScraperViewMod
                 Row(modifier = Modifier.fillMaxWidth().clickable { showThreadSelection = true }.padding(vertical = 8.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) { AppText("极速播放线程数", color = Color.Black); Row(verticalAlignment = Alignment.CenterVertically) { AppText("${uiState.downloadThreads} ", color = Color.Gray); Icon(Icons.Default.KeyboardArrowRight, null, tint = Color.Gray) } }
                 Row(modifier = Modifier.fillMaxWidth().clickable { showBannerLogicSelection = true }.padding(vertical = 8.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) { AppText("首页轮播海报显示逻辑", color = Color.Black); Row(verticalAlignment = Alignment.CenterVertically) { AppText(uiState.bannerLogic, color = Color.Gray); Icon(Icons.Default.KeyboardArrowRight, null, tint = Color.Gray) } }
                 Row(modifier = Modifier.fillMaxWidth().clickable { showCategoryOrderDialog = true }.padding(vertical = 8.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) { AppText("分类排序", color = Color.Black); Row(verticalAlignment = Alignment.CenterVertically) { Icon(Icons.Default.KeyboardArrowRight, null, tint = Color.Gray) } }
+                HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
+                Row(modifier = Modifier.fillMaxWidth().clickable { showPartyServer = true }.padding(vertical = 8.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        AppText("一起看服务器", color = Color.Black)
+                        AppText(
+                            text = if (WatchPartyConfig.isReady) "已配置（默认服务器可用）" else "未配置，点此填写",
+                            fontSize = 12.sp,
+                            color = Color.Gray,
+                        )
+                    }
+                    Icon(Icons.Default.KeyboardArrowRight, null, tint = Color.Gray)
+                }
                 OutlinedButton(onClick = { viewModel.saveSettings(inputCookie, inputTmdbKey, inputTmdbUrl); onDismiss() }, shape = RoundedCornerShape(20.dp), contentPadding = PaddingValues(horizontal = 24.dp, vertical = 8.dp), modifier = Modifier.fillMaxWidth().padding(top = 24.dp), border = BorderStroke(1.dp, Color.Gray.copy(alpha = 0.5f))) { AppText("确认保存", fontWeight = FontWeight.Bold, color = Color.Black) }
             }
         }
@@ -601,6 +619,7 @@ private fun SettingsDialog(uiState: VideoUiState, viewModel: VideoScraperViewMod
     if (showThreadSelection) { AlertDialog(onDismissRequest = { showThreadSelection = false }, title = { AppText("极速播放线程数", fontWeight = FontWeight.Bold) }, text = { Column { listOf(3, 6, 10, 16, 24, 32).forEach { count -> Row(modifier = Modifier.fillMaxWidth().clickable { viewModel.saveDownloadThreads(count); showThreadSelection = false }.padding(vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) { AppText("$count", modifier = Modifier.weight(1f)); if (uiState.downloadThreads == count) Icon(Icons.Default.Check, contentDescription = null, tint = Color(0xFF333333)) } } } }, confirmButton = { TextButton(onClick = { showThreadSelection = false }) { AppText("取消") } }) }
     if (showBannerLogicSelection) { AlertDialog(onDismissRequest = { showBannerLogicSelection = false }, title = { AppText("首页轮播海报显示逻辑", fontWeight = FontWeight.Bold) }, text = { Column { listOf("智能推荐", "最近新增", "最近播放").forEach { logic -> Row(modifier = Modifier.fillMaxWidth().clickable { viewModel.saveBannerLogic(logic); showBannerLogicSelection = false }.padding(vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) { AppText(logic, modifier = Modifier.weight(1f)); if (uiState.bannerLogic == logic) Icon(Icons.Default.Check, contentDescription = null, tint = Color(0xFF333333)) } } } }, confirmButton = { TextButton(onClick = { showBannerLogicSelection = false }) { AppText("取消") } }) }
     if (showCategoryOrderDialog) CategoryOrderDialog(uiState, viewModel, onDismiss = { showCategoryOrderDialog = false })
+    WatchPartyServerDialog(show = showPartyServer, onDismiss = { showPartyServer = false })
 }
 
 @Composable
@@ -910,6 +929,16 @@ fun WebLoginView(onLoginSuccess: (String) -> Unit, onCancel: () -> Unit) {
 @Composable
 fun InternalVideoPlayer(url: String, title: String, cookie: String, series: MediaSeries, currentFile: QuarkFile, viewModel: VideoScraperViewModel, downloadThreads: Int, onBack: () -> Unit) {
     val context = LocalContext.current
+
+    // 播放界面期间不弹备份提示；离开播放页时立即推送（此刻进度已定型）
+    DisposableEffect(Unit) {
+        val appContext = context.applicationContext
+        BackupToastGate.enter()
+        onDispose {
+            BackupToastGate.exit()
+            Backup.backupNow(appContext)
+        }
+    }
     val activity = context.findActivity()
     val view = LocalView.current
     val configuration = LocalConfiguration.current
@@ -1022,6 +1051,11 @@ fun InternalVideoPlayer(url: String, title: String, cookie: String, series: Medi
 
     var isPlaying by remember { mutableStateOf(true) }
     var isBuffering by remember { mutableStateOf(true) }
+    // 一起看
+    val partyState by WatchPartySession.state.collectAsState()
+    var showPartyDialog by remember { mutableStateOf(false) }
+    var showPartyChat by remember { mutableStateOf(false) }
+    var partySwitchFid by remember { mutableStateOf("") }
     var currentPosition by remember { mutableLongStateOf(0L) }
     var bufferedPosition by remember { mutableLongStateOf(0L) }
     var duration by remember { mutableLongStateOf(0L) }
@@ -1278,6 +1312,47 @@ fun InternalVideoPlayer(url: String, title: String, cookie: String, series: Medi
     }
 
     LaunchedEffect(showEpisodeDrawer, sortedVideos) { if (showEpisodeDrawer) { val idx = sortedVideos.indexOfFirst { it.fid == currentFile.fid }; if (idx != -1) episodeListState.animateScrollToItem(idx) } }
+    // 一起看：房主每 2 秒广播一次“第几集 + 播放位置 + 是否暂停”
+    LaunchedEffect(partyState.isHost, partyState.connected, currentFile.fid) {
+        if (!partyState.isHost || !partyState.connected) return@LaunchedEffect
+        while (true) {
+            WatchPartySession.pushLocalSync(
+                fid = currentFile.fid,
+                episode = currentFile.name,
+                positionMs = exoPlayer.currentPosition,
+                paused = !exoPlayer.isPlaying,
+            )
+            delay(2_000)
+        }
+    }
+
+    // 一起看：跟随者自动切到房主所在的集数，再对齐进度
+    LaunchedEffect(partyState.remoteSync) {
+        val sync = partyState.remoteSync ?: return@LaunchedEffect
+        if (partyState.isHost) return@LaunchedEffect
+        if (sync.fid.isNotBlank() && sync.fid != currentFile.fid) {
+            if (partySwitchFid != sync.fid) {
+                partySwitchFid = sync.fid
+                val target = series.videos.find { it.fid == sync.fid }
+                if (target != null) {
+                    Toast.makeText(context, "跟随房主切换到：${target.name}", Toast.LENGTH_SHORT).show()
+                    viewModel.playVideo(context, series, target)
+                } else {
+                    Toast.makeText(
+                        context,
+                        "房主在看：${sync.episode}，本机没有这一集",
+                        Toast.LENGTH_SHORT
+                    ).show()
+                }
+            }
+            return@LaunchedEffect
+        }
+        val drift = sync.positionMs - exoPlayer.currentPosition
+        if (abs(drift) > 2_000L) exoPlayer.seekTo(sync.positionMs)
+        if (sync.paused && exoPlayer.isPlaying) exoPlayer.pause()
+        if (!sync.paused && !exoPlayer.isPlaying) exoPlayer.play()
+    }
+
     LaunchedEffect(showControls, isPlaying, gestureType, showSettingsPanel, showEpisodeDrawer) { if (showControls && isPlaying && !isLocked && gestureType.isEmpty() && !showSettingsPanel && !showEpisodeDrawer && !isInPip.value && !isDraggingSeekBar) { delay(3000); showControls = false } }
     LaunchedEffect(isLocked, showUnlockIcon) { if (isLocked && showUnlockIcon) { delay(3000); showUnlockIcon = false } }
     LaunchedEffect(seekMessage) { if (seekMessage != null) { delay(1500); seekMessage = null } }
@@ -1311,6 +1386,9 @@ fun InternalVideoPlayer(url: String, title: String, cookie: String, series: Medi
             }
         )
     }
+
+    WatchPartyDialog(show = showPartyDialog, onDismiss = { showPartyDialog = false }, onOpenChat = { showPartyDialog = false; showPartyChat = true })
+    WatchPartyChatPanel(show = showPartyChat, state = partyState, onDismiss = { showPartyChat = false })
 
     Box(modifier = Modifier.fillMaxSize().background(Color.Black).pointerInput(isLocked, isInPip.value) {
         if (isLocked || isInPip.value) { if (isLocked && !isInPip.value) detectTapGestures(onTap = { showUnlockIcon = true }); return@pointerInput }
@@ -1421,6 +1499,8 @@ fun InternalVideoPlayer(url: String, title: String, cookie: String, series: Medi
         )
     }) {
         AndroidView(factory = { ctx -> PlayerView(ctx).apply { player = exoPlayer; useController = false; layoutParams = FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT) } }, modifier = Modifier.fillMaxSize(), update = { view -> view.useController = false })
+
+        // 一起看入口已收进「播放设置」面板，不再在播放页浮层上跟播放器控件抢位置
 
         if (activity?.isInPictureInPictureMode == true || isInPip.value) { Box(modifier = Modifier.fillMaxSize()) {}; return@Box }
 
@@ -1560,7 +1640,29 @@ fun InternalVideoPlayer(url: String, title: String, cookie: String, series: Medi
             Box(modifier = Modifier.fillMaxSize()) {
                 Column(modifier = Modifier.align(Alignment.CenterStart).padding(start = 16.dp), verticalArrangement = Arrangement.spacedBy(30.dp)) {
                     Surface(color = Color.White.copy(alpha = 0.1f), shape = CircleShape, border = BorderStroke(1.dp, Color.White.copy(alpha = 0.2f))) {
-                        IconButton(onClick = { if (isLandscape) activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_PORTRAIT else activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE }) { Icon(Icons.Default.ScreenRotation, null, tint = Color.White) }
+                        IconButton(onClick = { if (isLandscape) activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_PORTRAIT else activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE }) { Icon(Icons.Default.ScreenRotation, contentDescription = "旋转屏幕", tint = Color.White) }
+                    }
+                    // 一起看：与右侧画中画/锁同一套圆形玻璃底，整列居中后自动与右列同行对齐
+                    Box(contentAlignment = Alignment.Center) {
+                        Surface(color = Color.White.copy(alpha = 0.1f), shape = CircleShape, border = BorderStroke(1.dp, Color.White.copy(alpha = 0.2f))) {
+                            IconButton(onClick = { showPartyDialog = true }) { Icon(Icons.Outlined.People, contentDescription = "一起看", tint = Color.White) }
+                        }
+                        if (partyState.active) {
+                            Box(
+                                modifier = Modifier
+                                    .align(Alignment.BottomCenter)
+                                    .offset(y = 6.dp)
+                                    .size(7.dp)
+                                    .background(
+                                        when {
+                                            partyState.isHost && partyState.pending.isNotEmpty() -> Color(0xFFFFB74D)
+                                            partyState.connected -> Color(0xFF66BB6A)
+                                            else -> Color(0xFFFFA726)
+                                        },
+                                        CircleShape,
+                                    )
+                            )
+                        }
                     }
                 }
 

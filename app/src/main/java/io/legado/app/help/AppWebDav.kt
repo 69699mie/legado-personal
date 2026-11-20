@@ -72,6 +72,9 @@ object AppWebDav {
     private val exportsWebDavUrl get() = "${rootWebDavUrl}books/"
     private val bgWebDavUrl get() = "${rootWebDavUrl}background/"
 
+    /** 历史备份目录：按日期另存，用于回滚 */
+    private val historyWebDavUrl get() = "${rootWebDavUrl}history/"
+
     private val configMutex = Mutex()
     private var appliedConfig: AppliedWebDavConfig? = null
 
@@ -209,6 +212,18 @@ object AppWebDav {
                     names.add(name)
                 }
             }
+            // 历史备份（history/ 子目录，保留最近 7 天，可回滚）
+            runCatching {
+                WebDav(historyWebDavUrl, it).listFiles()
+                    .sortedWith { o1, o2 ->
+                        AlphanumComparator.compare(o1.displayName, o2.displayName)
+                    }.reversed()
+                    .forEach { f ->
+                        if (f.displayName.startsWith("backup")) {
+                            names.add("history/${f.displayName}")
+                        }
+                    }
+            }
         } ?: throw NoStackTraceException("webDav没有配置")
         return names
     }
@@ -223,6 +238,8 @@ object AppWebDav {
                 ZipUtils.unZipToPath(File(Backup.zipFilePath), Backup.backupPath)
                 Restore.restoreUnzipped(Backup.backupPath)
                 LocalConfig.lastBackup = System.currentTimeMillis()
+                // 完成恢复后解除"云端更新"的保护，允许后续正常上传
+                Backup.clearSuppress()
             }
         }
     }
@@ -250,6 +267,28 @@ object AppWebDav {
                 }
                 lastBackupFile
             }
+        }
+    }
+
+    /**
+     * 上传云端元信息（几 KB）：备份时间 + 内容指纹。
+     * 别的设备启动时先读这个，再决定"要不要恢复"和"能不能上传"。
+     */
+    suspend fun uploadBackupMeta(json: String) {
+        authorization?.let {
+            WebDav("${rootWebDavUrl}backup_meta.json", it)
+                .upload(json.toByteArray(), "application/json")
+        }
+    }
+
+    /** 读取云端元信息，不存在时返回 null（老版本备份没有这个文件） */
+    suspend fun downloadBackupMeta(): String? {
+        val auth = authorization ?: return null
+        val webDav = WebDav("${rootWebDavUrl}backup_meta.json", auth)
+        return if (webDav.exists()) {
+            String(webDav.download(), Charsets.UTF_8)
+        } else {
+            null
         }
     }
 
@@ -281,6 +320,35 @@ object AppWebDav {
     }
 
 
+
+    /**
+     * 历史备份：按日期另存一份，供回滚使用
+     * @param fileName 备份文件名
+     */
+    @Throws(Exception::class)
+    suspend fun backUpWebDavHistory(fileName: String) {
+        if (!NetworkUtils.isAvailable()) return
+        authorization?.let {
+            WebDav(historyWebDavUrl, it).makeAsDir()
+            WebDav("$historyWebDavUrl$fileName", it).upload(Backup.zipFilePath)
+        }
+    }
+
+    /**
+     * 清理超过 keepDays 天的历史备份
+     */
+    suspend fun cleanWebDavHistory(keepDays: Int = 7) {
+        val auth = authorization ?: return
+        if (!NetworkUtils.isAvailable()) return
+        val cutoff = System.currentTimeMillis() - keepDays.toLong() * 24 * 60 * 60 * 1000
+        val files = runCatching { WebDav(historyWebDavUrl, auth).listFiles() }.getOrDefault(emptyList())
+        files.forEach { file ->
+            val name = file.displayName
+            if (name.startsWith("backup") && file.lastModify in 1 until cutoff) {
+                runCatching { WebDav("$historyWebDavUrl$name", auth).delete() }
+            }
+        }
+    }
 
     /**
      * webDav备份

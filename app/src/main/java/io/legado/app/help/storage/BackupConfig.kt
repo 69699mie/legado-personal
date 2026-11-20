@@ -14,6 +14,10 @@ internal val alwaysIgnoredPreferenceKeys = setOf(
     PreferKey.backupPath,
     PreferKey.defaultBookTreeUri,
     PreferKey.webDavDeviceName,
+    // 云同步凭证不随备份走：换设备或换账号后恢复，不能被旧账号覆盖
+    PreferKey.webDavUrl,
+    PreferKey.webDavAccount,
+    PreferKey.webDavPassword,
     PreferKey.launcherIcon,
     PreferKey.bitmapCacheSize,
     PreferKey.webServiceWakeLock,

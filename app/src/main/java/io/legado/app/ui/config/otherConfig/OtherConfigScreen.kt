@@ -4,12 +4,18 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.res.stringArrayResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import io.legado.app.R
+import io.legado.app.help.watchparty.WatchPartyConfig
+import io.legado.app.ui.main.video.WatchPartyServerDialog
 import io.legado.app.ui.theme.adaptiveContentPadding
 import io.legado.app.ui.widget.components.AppScaffold
 import io.legado.app.ui.widget.components.SplicedColumnGroup
@@ -29,6 +35,7 @@ fun OtherConfigScreen(
     onBackClick: () -> Unit,
 ) {
     val scrollBehavior = GlassTopAppBarDefaults.defaultScrollBehavior()
+    var showPartyServer by remember { mutableStateOf(false) }
 
     AppScaffold(
         modifier = Modifier.nestedScroll(scrollBehavior.nestedScrollConnection),
@@ -111,6 +118,12 @@ fun OtherConfigScreen(
 
                 SplicedColumnGroup(title = stringResource(R.string.other_setting)) {
 
+                ClickableSettingItem(
+                    title = "一起看服务器",
+                    description = if (WatchPartyConfig.isReady) "已配置（默认服务器可用）" else "未配置，点此填写",
+                    onClick = { showPartyServer = true }
+                )
+
                 SwitchSettingItem(
                     title = stringResource(R.string.web_service_wake_lock),
                     description = stringResource(R.string.web_service_wake_lock_summary),
@@ -166,5 +179,10 @@ fun OtherConfigScreen(
                 }
             }
         }
+
+        WatchPartyServerDialog(
+            show = showPartyServer,
+            onDismiss = { showPartyServer = false },
+        )
     }
 }

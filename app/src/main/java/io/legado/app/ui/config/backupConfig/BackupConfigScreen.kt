@@ -40,6 +40,7 @@ import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import io.legado.app.R
+import io.legado.app.help.storage.Backup
 import io.legado.app.help.storage.ImportOldData
 import io.legado.app.help.storage.WebDavSyncManager
 import io.legado.app.lib.permission.Permissions
@@ -163,10 +164,6 @@ fun BackupConfigScreen(
     )
     val intervalValues = arrayOf("-1", "1", "6", "12", "24", "48", "72", "168", "0")
 
-    // 设备角色文案和值映射
-    val roleEntries = arrayOf("主设备（自动上传/下载）", "备用设备（仅自动下载）")
-    val roleValues = arrayOf(WebDavSyncManager.ROLE_MASTER, WebDavSyncManager.ROLE_SLAVE)
-
     AppScaffold(
         modifier = Modifier.nestedScroll(scrollBehavior.nestedScrollConnection),
         snackbarHost = { SnackbarHost(hostState = snackbarHostState) },
@@ -266,25 +263,6 @@ fun BackupConfigScreen(
                         onValueChange = { onIntent(BackupConfigIntent.SetBackupInterval(it.toInt())) },
                     )
                     
-                    // 🌟 新增：设备同步角色
-                    DropdownListSettingItem(
-                        title = "设备同步角色",
-                        description = if (state.deviceRole == WebDavSyncManager.ROLE_MASTER) "主设备：自动上传和下载" else "备用设备：仅自动下载",
-                        selectedValue = state.deviceRole,
-                        displayEntries = roleEntries,
-                        entryValues = roleValues,
-                        onValueChange = { onIntent(BackupConfigIntent.SetDeviceRole(it)) },
-                    )
-
-                    // 🌟 新增：备用设备专属的“手动上传”按钮
-                    if (state.deviceRole == WebDavSyncManager.ROLE_SLAVE) {
-                        ClickableSettingItem(
-                            title = "手动上传本地数据到云端",
-                            description = "将本机的数据强制覆盖云端（请谨慎操作）",
-                            onClick = { onIntent(BackupConfigIntent.RequestSlaveUpload) },
-                        )
-                    }
-
                     ClickableSettingItem(
                         title = stringResource(R.string.backup),
                         description = stringResource(R.string.backup_summary),
@@ -319,6 +297,12 @@ fun BackupConfigScreen(
                         description = stringResource(R.string.only_latest_backup_s),
                         checked = settings.onlyLatestBackup,
                         onCheckedChange = { onIntent(BackupConfigIntent.SetOnlyLatestBackup(it)) },
+                    )
+                    ClickableSettingItem(
+                        title = "上次自动备份",
+                        description = Backup.backupStatusSummary(),
+                        option = "立即备份到云端",
+                        onClick = { onIntent(BackupConfigIntent.PerformBackup("", "webdav")) },
                     )
                 }
             }

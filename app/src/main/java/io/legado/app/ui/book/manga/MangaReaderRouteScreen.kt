@@ -22,6 +22,8 @@ import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import dev.chrisbanes.haze.HazeState
 import io.legado.app.constant.BookType
+import io.legado.app.help.BackupToastGate
+import io.legado.app.help.storage.Backup
 import io.legado.app.model.SourceCallBack
 import io.legado.app.receiver.NetworkChangedListener
 import io.legado.app.ui.book.read.sheet.ReaderBookSheetRoute
@@ -68,6 +70,15 @@ fun MangaReaderRouteScreen(
     val state by viewModel.uiState.collectAsStateWithLifecycle()
     val currentIsTopRoute by rememberUpdatedState(isTopRoute)
     val networkChangedListener = remember(activity) { NetworkChangedListener(activity) }
+
+    // 阅读页期间不弹备份提示；离开阅读页时立即把数据推上去（此刻数据已定型）
+    DisposableEffect(Unit) {
+        BackupToastGate.enter()
+        onDispose {
+            BackupToastGate.exit()
+            Backup.backupNow(activity.applicationContext)
+        }
+    }
 
     LaunchedEffect(viewModel, bookUrl, inBookshelf, chapterChanged, openRequestId) {
         viewModel.onIntent(

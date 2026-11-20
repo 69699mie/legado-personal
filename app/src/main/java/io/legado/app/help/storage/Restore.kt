@@ -98,6 +98,9 @@ object Restore : KoinComponent {
     suspend fun restore(context: Context, uri: Uri) {
         BackupRestoreLock.withLock {
             LogUtils.d(TAG, "开始恢复备份 uri:$uri")
+            // 恢复前先给本机数据拍个快照：误恢复了、或恢复后发现不对，还能退回来
+            runCatching { Backup.createRestoreSnapshot(context) }
+                .onFailure { LogUtils.e(TAG, "恢复前快照失败: ${it.localizedMessage}") }
             val unzipResult = kotlin.runCatching {
                 FileUtils.delete(Backup.backupPath)
                 if (uri.isContentScheme()) {
@@ -114,6 +117,8 @@ object Restore : KoinComponent {
                 kotlin.runCatching {
                     restoreUnzipped(Backup.backupPath)
                     LocalConfig.lastBackup = System.currentTimeMillis()
+                    // 恢复完成后解除"云端更新"保护，后续可以正常上传
+                    Backup.clearSuppress()
                 }.onFailure {
                     appCtx.toastOnUi("恢复备份出错\n${it.localizedMessage}")
                     AppLog.put("恢复备份出错\n${it.localizedMessage}", it)
