@@ -1,7 +1,11 @@
 name: Build Personal APK
 
 on:
-  workflow_dispatch: # 仅手动触发
+  workflow_dispatch: # 手动触发
+  push:
+    branches: [main]
+    paths:
+      - '.github/build-trigger.txt' # 只改这个标记文件才触发构建，避免每次推送都发版，也不会和版本号回写提交形成循环
 
 jobs:
   build:
