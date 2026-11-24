@@ -45,7 +45,8 @@ jobs:
           }
 
           MINOR_STR=$(format_segment "$MINOR")
-          PATCH_STR=$(format_segment "$PATCH")
+          # PATCH 只有 0-9 一位，满 10 已在算 MINOR 时进位，不能补零，否则会出现 3.06.01
+          PATCH_STR=$PATCH
           VERSION_NAME="${MAJOR}.${MINOR_STR}.${PATCH_STR}"
           echo "VERSION_NAME=$VERSION_NAME" >> $GITHUB_OUTPUT
           echo "VERSION_CODE=$V" >> $GITHUB_OUTPUT
