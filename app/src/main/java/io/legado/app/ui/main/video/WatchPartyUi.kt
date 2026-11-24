@@ -86,30 +86,7 @@ fun WatchPartyHud(
             ) {
                 Icon(Icons.Filled.People, contentDescription = "一起看（长按复制邀请码）", tint = Color.White)
             }
-            // 角标：优先显示待审批人数（红），否则显示房间在线人数（绿）
-            val pendingCount = state.pending.size
-            // members 里已经包含自己（会话层会把自己插进去），这里不能 +1
-            val onlineCount = maxOf(1, state.members.size)
-            val badgeText = when {
-                state.isHost && pendingCount > 0 -> "$pendingCount"
-                state.active -> "$onlineCount"
-                else -> null
-            }
-            if (badgeText != null) {
-                Box(
-                    modifier = Modifier
-                        .align(Alignment.TopEnd)
-                        .padding(top = 3.dp, end = 3.dp)
-                        .background(
-                            if (state.isHost && pendingCount > 0) Color(0xFFE53935)
-                            else if (state.connected) Color(0xFF43A047) else Color(0xFFFFA726),
-                            RoundedCornerShape(8.dp),
-                        )
-                        .padding(horizontal = 5.dp, vertical = 1.dp),
-                ) {
-                    Text(badgeText, color = Color.White, fontSize = 10.sp, fontWeight = FontWeight.Medium)
-                }
-            }
+            // 角标（红=待审批、绿=在线人数）按用户要求整个去掉：入口只用底色深浅表示是否在房间里
         }
     }
 }
