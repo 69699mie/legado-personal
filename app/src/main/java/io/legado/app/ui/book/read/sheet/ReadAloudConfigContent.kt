@@ -181,15 +181,6 @@ fun ReadAloudConfigContent(
                         },
                     )
                     TinySwitchSettingItem(
-                        title = stringResource(R.string.pause_read_aloud_while_phone_calls_title),
-                        description = stringResource(R.string.pause_read_aloud_while_phone_calls_summary),
-                        checked = state.readAloudPauseOnPhoneCall,
-                        enabled = state.readAloudIgnoreAudioFocus,
-                        onCheckedChange = {
-                            onIntent(ReadBookIntent.SetReadAloudPauseOnPhoneCall(it))
-                        },
-                    )
-                    TinySwitchSettingItem(
                         title = stringResource(R.string.read_aloud_wake_lock),
                         description = stringResource(R.string.read_aloud_wake_lock_summary),
                         checked = state.readAloudWakeLock,

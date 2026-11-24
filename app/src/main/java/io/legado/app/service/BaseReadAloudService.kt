@@ -1811,6 +1811,15 @@ abstract class BaseReadAloudService : BaseService(),
     }
 
     private fun initPhoneStateListener() {
+        // 本应用不申请「电话」权限（与通话无关），拿不到通话状态就跳过，
+        // 不弹权限框、也不影响朗读本身
+        if (androidx.core.content.ContextCompat.checkSelfPermission(
+                this,
+                Permissions.READ_PHONE_STATE,
+            ) != android.content.pm.PackageManager.PERMISSION_GRANTED
+        ) {
+            return
+        }
         val needRegister = ReadConfig.ignoreAudioFocus && ReadConfig.pauseReadAloudWhilePhoneCalls
         if (needRegister && registeredPhoneStateListener) {
             return
