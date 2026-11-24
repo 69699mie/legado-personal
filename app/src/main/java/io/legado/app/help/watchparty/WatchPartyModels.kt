@@ -14,6 +14,17 @@ data class PartySyncState(
     val sentAt: Long = 0L,
 )
 
+/**
+ * 房主的「当前节目」广播：换集 / 换片时比播放同步更早发出，
+ * 加入端据此提前跳转（不用等房主真正开播才收到 sync）。
+ */
+data class PartyShowState(
+    val fid: String = "",
+    val episode: String = "",
+    val title: String = "",
+    val sentAt: Long = 0L,
+)
+
 /** 房间成员 */
 data class PartyMember(
     val userId: String,
@@ -44,4 +55,8 @@ data class WatchPartyState(
     /** 最近一次发送失败的原因（中继拒收 / 网络异常），成功后自动清空 */
     val publishError: String? = null,
     val remoteSync: PartySyncState? = null,
+    /** 房主最近一次广播的「当前节目」（加入端跟随用） */
+    val show: PartyShowState? = null,
+    /** 房主已离开播放页：加入端暂停播放并等待房主继续 */
+    val hostLeft: Boolean = false,
 )

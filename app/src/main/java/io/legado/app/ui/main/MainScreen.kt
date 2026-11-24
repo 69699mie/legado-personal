@@ -203,6 +203,97 @@ fun MainScreen(
         if (pagerState.currentPage == 0) homeViewModel.refreshData()
     }
 
+    // ---------------- 一起看：全局跟随 ----------------
+    // 房主开播 / 换集 / 换片时，任何页面（影视库、我的、设置…）都能收到，并且给 3 秒倒计时可取消
+    val partyState by io.legado.app.help.watchparty.WatchPartySession.state.collectAsStateWithLifecycle()
+    var followFid by remember { mutableStateOf<String?>(null) }
+    var followTitle by remember { mutableStateOf("") }
+    var followEpisode by remember { mutableStateOf("") }
+    var followSeconds by remember { mutableIntStateOf(3) }
+    var cancelledFollowFid by remember { mutableStateOf<String?>(null) }
+
+    suspend fun enterFollowedVideo(fid: String) {
+        val targetIndex = destinations.indexOfFirst { it == MainDestination.Video }
+        if (targetIndex >= 0 && pagerState.currentPage != targetIndex) {
+            pagerState.animateScrollToPage(targetIndex)
+            delay(200)
+        }
+        videoSettingsRepository.pendingPlayFid = fid
+        videoViewModel.handlePendingPlayRequest()
+    }
+
+    LaunchedEffect(
+        partyState.show?.fid,
+        partyState.remoteSync?.fid,
+        partyState.active,
+        partyState.approved,
+    ) {
+        if (!partyState.active || partyState.isHost || !partyState.approved) return@LaunchedEffect
+        val show = partyState.show
+        val fid = show?.fid?.takeIf { it.isNotBlank() }
+            ?: partyState.remoteSync?.fid?.takeIf { it.isNotBlank() }
+            ?: return@LaunchedEffect
+        // 已经就在看的这一集：只同步进度，不用跳
+        if (videoUiState.currentPlayFile?.fid == fid) return@LaunchedEffect
+        if (fid == cancelledFollowFid || fid == followFid) return@LaunchedEffect
+        followFid = fid
+        followTitle = show?.title ?: ""
+        followEpisode = show?.episode ?: partyState.remoteSync?.episode ?: ""
+    }
+
+    LaunchedEffect(followFid) {
+        val fid = followFid ?: return@LaunchedEffect
+        followSeconds = 3
+        while (followSeconds > 0) {
+            delay(1000)
+            followSeconds--
+        }
+        val exists = videoUiState.seriesList.any { s -> s.videos.any { it.fid == fid } }
+        if (videoUiState.seriesList.isNotEmpty() && !exists) {
+            android.widget.Toast.makeText(
+                context,
+                "房主在看${if (followTitle.isNotBlank()) "《$followTitle》" else ""}${followEpisode}，本机没有这一集",
+                android.widget.Toast.LENGTH_SHORT,
+            ).show()
+        } else {
+            enterFollowedVideo(fid)
+        }
+        followFid = null
+    }
+
+    // 跟随时给一个 3 秒倒计时，可取消：换集/换片不会突兀地抢走用户当前画面
+    followFid?.let { fid ->
+        androidx.compose.material3.AlertDialog(
+            onDismissRequest = {
+                cancelledFollowFid = fid
+                followFid = null
+            },
+            title = { AppText("一起看 · 跟随房主") },
+            text = {
+                AppText(
+                    buildString {
+                        append("房主正在观看")
+                        if (followTitle.isNotBlank()) append("《$followTitle》")
+                        // 集数只显示「第几集」，电影/剧场版没有集数
+                        if (followEpisode.isNotBlank()) append(followEpisode)
+                        append("\n${followSeconds.coerceAtLeast(0)} 秒后自动进入")
+                    }
+                )
+            },
+            confirmButton = {
+                androidx.compose.material3.TextButton(onClick = { followSeconds = 0 }) {
+                    AppText("立即进入")
+                }
+            },
+            dismissButton = {
+                androidx.compose.material3.TextButton(onClick = {
+                    cancelledFollowFid = fid
+                    followFid = null
+                }) { AppText("取消") }
+            },
+        )
+    }
+
     val pagerNestedScrollConnection = rememberPagerFlingPassThroughConnection(state = pagerState, orientation = Orientation.Horizontal)
     var bookshelfScrollToTopRequest by remember { mutableLongStateOf(0L) }
     fun requestBookshelfScrollToTop() { bookshelfScrollToTopRequest++ }

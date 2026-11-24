@@ -155,7 +155,13 @@ object WatchPartySession {
                             lastSeen = System.currentTimeMillis(),
                             isHost = current.isHost,
                         )
-                        current.copy(members = (listOf(me) + members).distinctBy { it.userId })
+                        // 被同意的人真正开始报在线（hello/beat）后才把申请条目移除：
+                        // 之前点完「同意」立刻删，admit 丢了房间里就只剩房主一个人还浑然不知
+                        val joinedIds = members.map { it.userId }.toSet()
+                        current.copy(
+                            members = (listOf(me) + members).distinctBy { it.userId },
+                            pending = current.pending.filterNot { it.userId in joinedIds },
+                        )
                     }
                 }
 
@@ -187,6 +193,14 @@ object WatchPartySession {
                     _state.update {
                         it.copy(approved = true, error = null, pending = emptyList())
                     }
+                }
+
+                override fun onRemoteShow(show: PartyShowState) {
+                    _state.update { it.copy(show = show, hostLeft = false) }
+                }
+
+                override fun onHostLeftPlayer() {
+                    _state.update { it.copy(hostLeft = true) }
                 }
 
                 override fun onRejected(reason: String?) {
@@ -236,7 +250,13 @@ object WatchPartySession {
                     LogUtils.d(TAG, "保活服务不在了，重新拉起")
                     WatchPartyService.start(appCtx)
                 }
-                if (!current.active || !current.connected || !current.approved) continue
+                if (!current.active || !current.connected) continue
+                if (!current.approved) {
+                    // 还没被放行：每 10 秒补敲一次门。房主那边 approvedIds 是白名单，
+                    // 收到会再发一次 admit，所以 admit 丢包/断流也能自愈，不会永远卡在「等待房主同意」
+                    ch.sendKnock()
+                    continue
+                }
                 if (current.isHost) {
                     publishSnapshot(ch)
                 } else if (tick % 3 == 0) {
@@ -264,9 +284,25 @@ object WatchPartySession {
     fun approve(userId: String) {
         approvedIds.add(userId)
         channel?.sendAdmit(userId)
-        _state.update { current ->
-            current.copy(pending = current.pending.filterNot { it.userId == userId })
-        }
+        // 不立刻从 pending 里删：等对方真的报在线（onMembersChanged）再删，
+        // 否则 admit 丢了房主会以为成功、对方却还卡在等待
+        LogUtils.d(TAG, "同意加入：$userId")
+    }
+
+    /** 房主换集 / 换片：把「当前节目」广播出去，加入端据此提前跟随 */
+    fun notifyShow(fid: String, episode: String, title: String) {
+        if (!_state.value.isHost) return
+        val ch = channel ?: return
+        val show = PartyShowState(fid = fid, episode = episode, title = title, sentAt = System.currentTimeMillis())
+        _state.update { it.copy(show = show, hostLeft = false) }
+        ch.sendShow(fid, episode, title)
+    }
+
+    /** 房主退出了播放页：加入端暂停并等待，别再按旧进度外推 */
+    fun notifyHostLeftPlayer() {
+        if (!_state.value.isHost) return
+        _state.update { it.copy(hostLeft = true) }
+        channel?.sendLeavePlayer()
     }
 
     fun reject(userId: String) {

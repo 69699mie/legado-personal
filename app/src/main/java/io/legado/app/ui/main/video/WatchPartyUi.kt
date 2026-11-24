@@ -8,11 +8,13 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.People
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -40,51 +42,49 @@ private val partyBg = Color(0xCC111111)
 private val partyHint = Color(0xFF8A8A8E)
 private val partyLine = Color(0xFFE6E7EB)
 
-/** 播放页右上角的一起看状态条 */
+/**
+ * 播放页左侧的一起看入口：和「旋转屏幕」等按钮完全同一套圆形样式，
+ * 未建房是普通圆形图标；建房后右上角挂人数/待审批角标（绿=已连接，红=有人敲门）。
+ */
 @Composable
 fun WatchPartyHud(
     modifier: Modifier = Modifier,
     state: WatchPartyState,
     onOpenSettings: () -> Unit,
 ) {
-    if (!state.active) {
-        Box(
-            modifier = modifier
-                .background(partyBg, RoundedCornerShape(18.dp))
-                .clickable { onOpenSettings() }
-                .padding(horizontal = 12.dp, vertical = 6.dp)
-        ) {
-            Text("一起看", color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.Medium)
-        }
-        return
-    }
-    Row(
-        modifier = modifier
-            .background(partyBg, RoundedCornerShape(18.dp))
-            .padding(horizontal = 12.dp, vertical = 6.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    Surface(
+        modifier = modifier,
+        color = if (state.active) Color.White.copy(alpha = 0.22f) else Color.White.copy(alpha = 0.1f),
+        shape = CircleShape,
+        border = BorderStroke(1.dp, Color.White.copy(alpha = 0.2f)),
     ) {
-        Box(
-            modifier = Modifier
-                .size(7.dp)
-                .background(
-                    if (state.connected) Color(0xFF66BB6A) else Color(0xFFFFA726),
-                    RoundedCornerShape(4.dp),
-                )
-        )
-        Text(
-            text = "${state.code} · ${if (state.isHost) "房主" else "跟随"} · ${state.members.size}人",
-            color = Color.White,
-            fontSize = 12.sp,
-        )
-        Box(
-            modifier = Modifier
-                .background(Color(0x33FFFFFF), RoundedCornerShape(10.dp))
-                .clickable { WatchPartySession.leave() }
-                .padding(horizontal = 8.dp, vertical = 2.dp)
-        ) {
-            Text("退出", color = Color(0xFFE6E6E6), fontSize = 12.sp)
+        Box {
+            IconButton(onClick = onOpenSettings) {
+                Icon(Icons.Filled.People, contentDescription = "一起看", tint = Color.White)
+            }
+            // 角标：优先显示待审批人数（红），否则显示房间在线人数（绿）
+            val pendingCount = state.pending.size
+            val onlineCount = state.members.size + 1
+            val badgeText = when {
+                state.isHost && pendingCount > 0 -> "$pendingCount"
+                state.active -> "$onlineCount"
+                else -> null
+            }
+            if (badgeText != null) {
+                Box(
+                    modifier = Modifier
+                        .align(Alignment.TopEnd)
+                        .padding(top = 3.dp, end = 3.dp)
+                        .background(
+                            if (state.isHost && pendingCount > 0) Color(0xFFE53935)
+                            else if (state.connected) Color(0xFF43A047) else Color(0xFFFFA726),
+                            RoundedCornerShape(8.dp),
+                        )
+                        .padding(horizontal = 5.dp, vertical = 1.dp),
+                ) {
+                    Text(badgeText, color = Color.White, fontSize = 10.sp, fontWeight = FontWeight.Medium)
+                }
+            }
         }
     }
 }
@@ -122,6 +122,10 @@ fun WatchPartyDialog(
     // 退出房间后把残留提示清掉，否则未进房页面会被顶下去
     LaunchedEffect(state.active) {
         if (!state.active) message = null
+    }
+    // 被房主同意后清掉「已发送加入请求」这类提示，别再压在页面上
+    LaunchedEffect(state.approved) {
+        if (state.approved) message = null
     }
     val remainMs = (state.inviteExpiresAt - nowTick).coerceAtLeast(0L)
     val remainText = String.format("%02d:%02d", remainMs / 1000 / 60, remainMs / 1000 % 60)
@@ -169,8 +173,9 @@ fun WatchPartyDialog(
                             modifier = Modifier.weight(1f),
                         )
                         TextButton(onClick = {
-                            copyInvite("阅影一起看 邀请码 $invite")
-                            message = "已复制邀请码"
+                            // 剪贴板只放邀请码本体，粘出去不用删前缀
+                            copyInvite(invite)
+                            message = "已复制邀请码 $invite"
                         }) { Text("复制", color = Color.Black) }
                     }
                     Spacer(Modifier.height(6.dp))
@@ -181,7 +186,11 @@ fun WatchPartyDialog(
                             Text("邀请已过期，对方现在加入会被拒绝", color = Color(0xFFD32F2F), fontSize = 12.sp)
                         }
                     } else if (!state.approved) {
-                        Text("等待房主确认加入…", color = Color(0xFFD32F2F), fontSize = 12.sp)
+                        Text("已申请，等待房主同意（每 10 秒自动重试）…", color = Color(0xFFD32F2F), fontSize = 12.sp)
+                    } else if (state.hostLeft) {
+                        Text("房主已离开播放页，等待房主继续…", color = partyHint, fontSize = 12.sp)
+                    } else if (state.remoteSync == null && state.show == null) {
+                        Text("已加入房间，等待房主开始播放…", color = partyHint, fontSize = 12.sp)
                     }
                     if (state.isHost) {
                         Spacer(Modifier.height(12.dp))
@@ -197,7 +206,7 @@ fun WatchPartyDialog(
                     }
                     Spacer(Modifier.height(24.dp))
                     if (state.isHost && state.pending.isNotEmpty()) {
-                        Text("请求加入", color = Color.Black, fontSize = 13.sp)
+                        Text("请求加入（对方进入房间后才消失）", color = Color.Black, fontSize = 13.sp)
                         state.pending.forEach { p ->
                             Row(
                                 modifier = Modifier.fillMaxWidth().padding(vertical = 6.dp),
@@ -252,6 +261,10 @@ fun WatchPartyDialog(
                         border = BorderStroke(1.dp, Color(0xFF3C3C43)),
                         modifier = Modifier.fillMaxWidth().height(48.dp),
                     ) { Text("退出房间", color = Color.Black, fontWeight = FontWeight.Bold) }
+                    TextButton(
+                        onClick = { WatchPartySession.leave() },
+                        modifier = Modifier.fillMaxWidth(),
+                    ) { Text("换个房间（重新输入邀请码）", color = partyHint, fontSize = 13.sp) }
                 } else {
                     Text("你的昵称", color = Color.Black, fontSize = 13.sp)
                     Spacer(Modifier.height(8.dp))

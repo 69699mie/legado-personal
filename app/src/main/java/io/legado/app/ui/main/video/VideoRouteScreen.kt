@@ -54,7 +54,9 @@ import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutHorizontally
+import androidx.compose.animation.slideOutVertically
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
@@ -312,7 +314,6 @@ fun VideoScraperScreen(isActive: Boolean = true, modifier: Modifier = Modifier, 
     var manualScrapeSeries by remember { mutableStateOf<MediaSeries?>(null) }
     var showClearHistoryConfirm by remember { mutableStateOf(false) }
     var showPartyDialog by remember { mutableStateOf(false) }
-    var lastFollowFid by remember { mutableStateOf("") }
     val libraryPartyState by WatchPartySession.state.collectAsStateWithLifecycle()
 
     LaunchedEffect(uiState.playUrl, uiState.currentSeries) {
@@ -525,24 +526,12 @@ fun VideoScraperScreen(isActive: Boolean = true, modifier: Modifier = Modifier, 
     }
 
     if (showSettingsDialog) SettingsDialog(uiState = uiState, viewModel = viewModel, onDismiss = { showSettingsDialog = false }, onWebLoginClick = { showLoginConfirmDialog = true }, onPartyClick = { showSettingsDialog = false; showPartyDialog = true }, partyActive = libraryPartyState.active)
-    // 一起看：影视库页也能建房/加入，房主开播后本机自动跳到对应剧集
+    // 一起看：影视库页保留「加入/管理房间」入口；房主开播后的自动跟随由主页面的全局跟随逻辑统一处理
     WatchPartyDialog(show = showPartyDialog, onDismiss = { showPartyDialog = false })
-    LaunchedEffect(libraryPartyState.remoteSync, libraryPartyState.active) {
-        val sync = libraryPartyState.remoteSync ?: return@LaunchedEffect
-        if (!libraryPartyState.active || libraryPartyState.isHost) return@LaunchedEffect
-        // 已经在播放页时交给播放页自己处理
-        if (uiState.currentSeries != null || uiState.playUrl != null) return@LaunchedEffect
-        if (sync.fid.isBlank()) return@LaunchedEffect
-        // 同一集只自动跳一次，避免用户手动退出播放页又被拉回去
-        if (sync.fid == lastFollowFid) return@LaunchedEffect
-        val targetSeries = uiState.seriesList.firstOrNull { s -> s.videos.any { it.fid == sync.fid } }
-        val target = targetSeries?.videos?.firstOrNull { it.fid == sync.fid }
-        lastFollowFid = sync.fid
-        if (targetSeries == null || target == null) {
-            Toast.makeText(context, "房主在看：${sync.episode}，本机没有这一集", Toast.LENGTH_SHORT).show()
-        } else {
-            Toast.makeText(context, "跟随房主：${targetSeries.title} · ${target.name}", Toast.LENGTH_SHORT).show()
-            viewModel.playVideo(context, targetSeries, target)
+    // 进入播放页（含一起看自动跟随跳转）时收起影视库里的房间卡片，避免挡住播放画面
+    LaunchedEffect(uiState.playUrl, uiState.currentPlayFile?.fid, uiState.isDirectPlay) {
+        if (showPartyDialog && (uiState.playUrl != null || uiState.currentPlayFile != null || uiState.isDirectPlay)) {
+            showPartyDialog = false
         }
     }
     if (showLoginConfirmDialog) { AlertDialog(onDismissRequest = { showLoginConfirmDialog = false }, title = { AppText("登录", fontWeight = FontWeight.Bold) }, text = { AppText(if (uiState.cookie.isNotBlank()) "当前状态：已登录" else "当前状态：未登录") }, confirmButton = { TextButton(onClick = { showLoginConfirmDialog = false; if (uiState.cookie.isNotBlank()) viewModel.loginWithCapturedCookie(""); showWebLoginDialog = true }) { AppText("登录") } }, dismissButton = { TextButton(onClick = { showLoginConfirmDialog = false }) { AppText("取消", color = Color.Gray) } }) }
@@ -1015,6 +1004,19 @@ fun InternalVideoPlayer(url: String, title: String, cookie: String, series: Medi
         } else latestSeries.title
     }
 
+    // 一起看广播里只带「剧名 + 第几集」，不要把网盘里随便命名的文件名甩给对方
+    val partyEpisodeLabel = remember(latestSeries.title, latestSeries.category, currentFile.name) {
+        val parsed = currentFile.parsedInfo ?: io.legado.app.utils.VideoFileNameParser.parse(currentFile.name)
+        val epNum = viewModel.extractEpisodeNumber(currentFile.name, parsed.episode).takeIf { it > 0 }
+        when {
+            latestSeries.category == "电影" ||
+                latestSeries.title.contains("剧场版") ||
+                currentFile.name.contains("剧场版") -> ""
+            epNum != null -> "第${epNum}集"
+            else -> ""
+        }
+    }
+
     val isInPip = remember { mutableStateOf(activity?.isInPictureInPictureMode == true) }
     val lifecycleOwner = LocalLifecycleOwner.current
     var errorDialogMsg by remember { mutableStateOf<String?>(null) }
@@ -1083,10 +1085,10 @@ fun InternalVideoPlayer(url: String, title: String, cookie: String, series: Medi
     var isBuffering by remember { mutableStateOf(true) }
     // 一起看
     val partyState by WatchPartySession.state.collectAsState()
+    var showPartyPanel by remember { mutableStateOf(false) }
     // 一起看双向同步：本地操作时间 / 远端应用时间 / 最近一次跨集切换时间，用于防回环与防对切
     var lastLocalActionAt by remember { mutableLongStateOf(0L) }
     var lastAppliedRemoteAt by remember { mutableLongStateOf(0L) }
-    var lastSwitchAt by remember { mutableLongStateOf(0L) }
     // 一起看：上一帧的播放状态，用来区分「真的变了」还是「刚连上房间」，避免加入端一进门就把自己的进度推给房主
     var prevPartyFid by remember { mutableStateOf<String?>(null) }
     var prevPartyPlaying by remember { mutableStateOf<Boolean?>(null) }
@@ -1169,7 +1171,7 @@ fun InternalVideoPlayer(url: String, title: String, cookie: String, series: Medi
         if (!partyState.active || !partyState.connected) return
         WatchPartySession.pushLocalSync(
             fid = currentFile.fid,
-            episode = currentFile.name,
+            episode = partyEpisodeLabel,
             positionMs = exoPlayer.currentPosition,
             paused = !exoPlayer.isPlaying,
             speed = playbackSpeed,
@@ -1375,7 +1377,7 @@ fun InternalVideoPlayer(url: String, title: String, cookie: String, series: Medi
         while (true) {
             WatchPartySession.pushLocalSync(
                 fid = currentFile.fid,
-                episode = currentFile.name,
+                episode = partyEpisodeLabel,
                 positionMs = exoPlayer.currentPosition,
                 paused = !exoPlayer.isPlaying,
                 speed = playbackSpeed,
@@ -1385,15 +1387,20 @@ fun InternalVideoPlayer(url: String, title: String, cookie: String, series: Medi
     }
 
     // 一起看：切集 / 暂停 / 倍速 变化时立刻广播（远端应用引起的变化在这里被过滤掉）
-    LaunchedEffect(currentFile.fid, isPlaying, playbackSpeed, partyState.connected) {
+    LaunchedEffect(currentFile.fid, isPlaying, playbackSpeed, partyState.connected, partyState.isHost, partyState.active) {
         val fidChanged = prevPartyFid != null && prevPartyFid != currentFile.fid
+        val firstEnter = prevPartyFid == null
         val playingChanged = prevPartyPlaying != null && prevPartyPlaying != isPlaying
         val speedChanged = prevPartySpeed != null && prevPartySpeed != playbackSpeed
         prevPartyFid = currentFile.fid
         prevPartyPlaying = isPlaying
         prevPartySpeed = playbackSpeed
-        if (!fidChanged && !playingChanged && !speedChanged) return@LaunchedEffect
         if (!partyState.active || !partyState.connected) return@LaunchedEffect
+        // 房主换集/换片（含刚进播放页）：立刻发「当前节目」，加入端不用等真正开播就能先跳过去
+        if (partyState.isHost && (fidChanged || firstEnter)) {
+            WatchPartySession.notifyShow(currentFile.fid, partyEpisodeLabel, latestSeries.title)
+        }
+        if (!fidChanged && !playingChanged && !speedChanged) return@LaunchedEffect
         if (System.currentTimeMillis() - lastAppliedRemoteAt < 800L) return@LaunchedEffect
         lastLocalActionAt = System.currentTimeMillis()
         pushPartyNow()
@@ -1407,31 +1414,11 @@ fun InternalVideoPlayer(url: String, title: String, cookie: String, series: Medi
         // 本机 1.5 秒内刚操作过，以本机为准
         if (now - lastLocalActionAt < 1_500L) return@LaunchedEffect
         if (sync.fid.isNotBlank() && sync.fid != currentFile.fid) {
-            // 2 秒内已经跟随切过一次，防止两端同时切导致来回跳
-            if (now - lastSwitchAt < 2_000L) return@LaunchedEffect
-            lastSwitchAt = now
-            lastAppliedRemoteAt = now
-            val target = series.videos.find { it.fid == sync.fid }
-            if (target != null) {
-                Toast.makeText(context, "跟随切换到：${target.name}", Toast.LENGTH_SHORT).show()
-                viewModel.playVideo(context, series, target)
-            } else {
-                // 对方可能在看另一部剧：到全库找这个 fid
-                val otherSeries = uiState.seriesList.firstOrNull { s -> s.videos.any { it.fid == sync.fid } }
-                val otherVideo = otherSeries?.videos?.firstOrNull { it.fid == sync.fid }
-                if (otherSeries != null && otherVideo != null) {
-                    Toast.makeText(context, "跟随切到：${otherSeries.title} · ${otherVideo.name}", Toast.LENGTH_SHORT).show()
-                    viewModel.playVideo(context, otherSeries, otherVideo)
-                } else {
-                    Toast.makeText(
-                        context,
-                        "对方在看：${sync.episode}，本机没有这一集",
-                        Toast.LENGTH_SHORT
-                    ).show()
-                }
-            }
+            // 跨集/跨剧的跳转统一交给主页面那条「3 秒倒计时」的跟随提示，
+            // 这里不再直接切，否则会绕过倒计时、还可能和主页面同时切导致来回跳
             return@LaunchedEffect
         }
+        lastAppliedRemoteAt = now
         lastAppliedRemoteAt = now
         val drift = sync.positionMs - exoPlayer.currentPosition
         if (abs(drift) > 2_000L) exoPlayer.seekTo(sync.positionMs)
@@ -1440,6 +1427,20 @@ fun InternalVideoPlayer(url: String, title: String, cookie: String, series: Medi
         if (abs(playbackSpeed - sync.speed) > 0.01f) {
             playbackSpeed = sync.speed.coerceIn(0.5f, 3.0f)
             exoPlayer.setPlaybackParameters(PlaybackParameters(playbackSpeed, 1.0f))
+        }
+    }
+
+    // 一起看：房主退出播放页 → 加入端暂停并等待；房主这边离开时也广播一声
+    LaunchedEffect(partyState.hostLeft) {
+        if (partyState.hostLeft && !partyState.isHost) {
+            if (exoPlayer.isPlaying) exoPlayer.pause()
+            playerToastMessage = "房主已离开播放页，等待房主继续"
+        }
+    }
+    DisposableEffect(Unit) {
+        onDispose {
+            val s = WatchPartySession.state.value
+            if (s.isHost && s.active) WatchPartySession.notifyHostLeftPlayer()
         }
     }
 
@@ -1454,6 +1455,9 @@ fun InternalVideoPlayer(url: String, title: String, cookie: String, series: Medi
         else if (showEpisodeDrawer) showEpisodeDrawer = false
         else onBack()
     }
+
+    // 一起看房间面板（播放页内的房间卡片：邀请码/成员/审批/退出）
+    WatchPartyDialog(show = showPartyPanel, onDismiss = { showPartyPanel = false })
 
     if (errorDialogMsg != null) {
         AlertDialog(
@@ -1730,6 +1734,11 @@ fun InternalVideoPlayer(url: String, title: String, cookie: String, series: Medi
                     Surface(color = Color.White.copy(alpha = 0.1f), shape = CircleShape, border = BorderStroke(1.dp, Color.White.copy(alpha = 0.2f))) {
                         IconButton(onClick = { if (isLandscape) activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_PORTRAIT else activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE }) { Icon(Icons.Default.ScreenRotation, contentDescription = "旋转屏幕", tint = Color.White) }
                     }
+                    // 一起看入口：和旋转按钮同一套圆形样式，建房后按钮右上角挂人数/待审批角标
+                    WatchPartyHud(
+                        state = partyState,
+                        onOpenSettings = { showPartyPanel = true },
+                    )
                 }
 
                 Column(modifier = Modifier.align(Alignment.CenterEnd).padding(end = 16.dp), verticalArrangement = Arrangement.spacedBy(30.dp)) {
@@ -1758,8 +1767,52 @@ fun InternalVideoPlayer(url: String, title: String, cookie: String, series: Medi
                     IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, null, tint = Color.White) }
                     AppText(text = dynamicTitle, color = Color.White, maxLines = 1, modifier = Modifier.weight(1f).padding(start = 8.dp, end = 16.dp).basicMarquee())
                     if (isLandscape) { AppText(text = networkSpeed, color = Color.White, fontSize = 12.sp, modifier = Modifier.padding(end = 12.dp)); AppText(text = currentSystemTime, color = Color.White, fontSize = 12.sp, modifier = Modifier.padding(end = 12.dp)) }
-                    if (resolution.isNotBlank()) AppText(text = resolution, color = Color.White, fontSize = 12.sp, modifier = Modifier.padding(end = 16.dp))
+                    if (resolution.isNotBlank()) AppText(text = resolution, color = Color.White, fontSize = 12.sp, modifier = Modifier.padding(end = 12.dp))
                     IconButton(onClick = { showSettingsPanel = true }) { Icon(Icons.Default.Settings, contentDescription = "设置", tint = Color.White) }
+                }
+
+                // 一起看：房主播放中收到申请，直接在播放页上同意/拒绝；横幅 8 秒无操作自动收起，
+                // 收起后仍由左侧图标的红色角标继续提醒，不会漏掉
+                var partyBannerVisible by remember { mutableStateOf(false) }
+                LaunchedEffect(partyState.pending.map { it.userId }, partyState.active, partyState.isHost) {
+                    if (partyState.isHost && partyState.active && partyState.pending.isNotEmpty()) {
+                        partyBannerVisible = true
+                        delay(8000)
+                        partyBannerVisible = false
+                    } else {
+                        partyBannerVisible = false
+                    }
+                }
+                AnimatedVisibility(
+                    visible = partyBannerVisible,
+                    enter = fadeIn() + slideInVertically { -it / 2 },
+                    exit = fadeOut() + slideOutVertically { -it / 2 },
+                    modifier = Modifier.align(Alignment.TopCenter),
+                ) {
+                    Column(
+                        modifier = Modifier
+                            .padding(top = 60.dp)
+                            .background(Color(0xE61A1A1A), RoundedCornerShape(14.dp))
+                            .padding(horizontal = 12.dp, vertical = 10.dp),
+                        verticalArrangement = Arrangement.spacedBy(2.dp),
+                    ) {
+                        partyState.pending.forEach { p ->
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text(
+                                    text = "${p.userName} 申请加入一起看",
+                                    color = Color.White,
+                                    fontSize = 13.sp,
+                                    modifier = Modifier.padding(end = 8.dp),
+                                )
+                                TextButton(onClick = { WatchPartySession.approve(p.userId) }) {
+                                    Text("同意", color = Color(0xFF66BB6A), fontSize = 13.sp)
+                                }
+                                TextButton(onClick = { WatchPartySession.reject(p.userId) }) {
+                                    Text("拒绝", color = Color(0xFFEF5350), fontSize = 13.sp)
+                                }
+                            }
+                        }
+                    }
                 }
 
                 Box(modifier = Modifier.align(Alignment.BottomCenter).navigationBarsPadding().padding(bottom = 12.dp).widthIn(max = if (isLandscape) 600.dp else 360.dp).fillMaxWidth(0.9f).background(Color(0xB31A1A1A), RoundedCornerShape(16.dp)).border(1.dp, Color.White.copy(alpha = 0.1f), RoundedCornerShape(16.dp)).padding(horizontal = 12.dp, vertical = 8.dp)) {

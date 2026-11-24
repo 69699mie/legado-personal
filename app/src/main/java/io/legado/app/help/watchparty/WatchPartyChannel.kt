@@ -43,6 +43,10 @@ class WatchPartyChannel(
         fun onAdmitted()
         fun onRejected(reason: String?)
         fun onDecryptFailed()
+        /** 房主换集 / 换片：加入端据此提前跟随 */
+        fun onRemoteShow(show: PartyShowState)
+        /** 房主退出了播放页 */
+        fun onHostLeftPlayer()
         /** 发送结果：code<400 成功；code>=400 是中继拒收（429 限流 / 403 等）；error 为网络异常文案 */
         fun onPublishResult(event: String, code: Int, error: String?)
     }
@@ -162,6 +166,23 @@ class WatchPartyChannel(
             addProperty("sentAt", System.currentTimeMillis())
         })
     }
+
+    /** 房主换集 / 换片：只报「当前节目」，不等真正开播，加入端收到就能先跳过去 */
+    fun sendShow(fid: String, episode: String, title: String) {
+        publish("show", JsonObject().apply {
+            addProperty("userId", userId)
+            addProperty("userName", userName)
+            addProperty("fid", fid)
+            addProperty("episode", episode)
+            addProperty("title", title)
+            addProperty("sentAt", System.currentTimeMillis())
+        })
+    }
+
+    /** 房主退出播放页 */
+    fun sendLeavePlayer() = publish("leaveplayer", JsonObject().apply {
+        addProperty("userId", userId)
+    })
 
     // ---------------- 收 ----------------
 
@@ -303,6 +324,27 @@ class WatchPartyChannel(
             "sync" -> {
                 if (!approved) return
                 handleSync(data)
+            }
+
+            "show" -> {
+                if (!approved || amHost) return
+                val id = data.get("userId")?.asString ?: return
+                if (id == userId) return
+                callbacks.onRemoteShow(
+                    PartyShowState(
+                        fid = data.get("fid")?.asString ?: "",
+                        episode = data.get("episode")?.asString ?: "",
+                        title = data.get("title")?.asString ?: "",
+                        sentAt = data.get("sentAt")?.asLong ?: System.currentTimeMillis(),
+                    )
+                )
+            }
+
+            "leaveplayer" -> {
+                if (!approved || amHost) return
+                val id = data.get("userId")?.asString ?: return
+                if (id == userId) return
+                callbacks.onHostLeftPlayer()
             }
 
             "hello", "beat" -> {
