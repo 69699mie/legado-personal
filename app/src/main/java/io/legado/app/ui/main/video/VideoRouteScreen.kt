@@ -120,7 +120,6 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.zIndex
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.window.Dialog
@@ -1494,12 +1493,7 @@ fun InternalVideoPlayer(url: String, title: String, cookie: String, series: Medi
         )
     }
 
-    Box(modifier = Modifier.fillMaxSize().background(Color.Black)) {
-        AndroidView(factory = { ctx -> PlayerView(ctx).apply { player = exoPlayer; useController = false; layoutParams = FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT) } }, modifier = Modifier.fillMaxSize(), update = { view -> view.useController = false })
-
-        // 手势层：单独一层压在播放器之上、控制条之下。
-        // 之前把手势 pointerInput 挂在最外层 Box 上，会先吃掉全部触摸，播放页上的每个按钮都点不动
-        Box(modifier = Modifier.fillMaxSize().pointerInput(isLocked, isInPip.value) {
+    Box(modifier = Modifier.fillMaxSize().background(Color.Black).pointerInput(isLocked, isInPip.value) {
         if (isLocked || isInPip.value) { if (isLocked && !isInPip.value) detectTapGestures(onTap = { showUnlockIcon = true }); return@pointerInput }
         var gestureMode = ""; var startX = 0f; var startY = 0f; var startPos = 0L; var startBrightness = 0f; var startVolume = 0
         detectDragGestures(
@@ -1607,7 +1601,9 @@ fun InternalVideoPlayer(url: String, title: String, cookie: String, series: Medi
                 }
             }
         )
-    })
+    }) {
+        AndroidView(factory = { ctx -> PlayerView(ctx).apply { player = exoPlayer; useController = false; layoutParams = FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT) } }, modifier = Modifier.fillMaxSize(), update = { view -> view.useController = false })
+
         // 一起看入口已收进「播放设置」面板，不再在播放页浮层上跟播放器控件抢位置
 
         if (activity?.isInPictureInPictureMode == true || isInPip.value) { Box(modifier = Modifier.fillMaxSize()) {}; return@Box }
@@ -1744,7 +1740,7 @@ fun InternalVideoPlayer(url: String, title: String, cookie: String, series: Medi
             return@Box
         }
 
-        AnimatedVisibility(visible = showControls, enter = fadeIn(), exit = fadeOut(), modifier = Modifier.fillMaxSize().zIndex(2f)) {
+        AnimatedVisibility(visible = showControls, enter = fadeIn(), exit = fadeOut(), modifier = Modifier.fillMaxSize()) {
             Box(modifier = Modifier.fillMaxSize()) {
                 Column(modifier = Modifier.align(Alignment.CenterStart).padding(start = 16.dp), verticalArrangement = Arrangement.spacedBy(30.dp)) {
                     Surface(color = Color.White.copy(alpha = 0.1f), shape = CircleShape, border = BorderStroke(1.dp, Color.White.copy(alpha = 0.2f))) {
@@ -1905,8 +1901,8 @@ fun InternalVideoPlayer(url: String, title: String, cookie: String, series: Medi
         AnimatedVisibility(visible = seekMessage != null, enter = fadeIn(), exit = fadeOut(), modifier = Modifier.align(Alignment.TopCenter).padding(top = if (isLandscape) 40.dp else 60.dp)) { Box(modifier = Modifier.background(Color.Black.copy(alpha = 0.6f), RoundedCornerShape(8.dp)).padding(horizontal = 16.dp, vertical = 8.dp)) { AppText(text = seekMessage ?: "", color = Color.White, fontSize = 16.sp) } }
 
         if (showEpisodeDrawer) {
-            Box(modifier = Modifier.fillMaxSize().zIndex(3f).clickable(indication = null, interactionSource = remember { MutableInteractionSource() }) { showEpisodeDrawer = false })
-            AnimatedVisibility(visible = showEpisodeDrawer, enter = slideInHorizontally(initialOffsetX = { it }, animationSpec = tween(300)), exit = slideOutHorizontally(targetOffsetX = { it }, animationSpec = tween(300)), modifier = Modifier.align(Alignment.CenterEnd).fillMaxHeight().width(280.dp).zIndex(3f)) {
+            Box(modifier = Modifier.fillMaxSize().clickable(indication = null, interactionSource = remember { MutableInteractionSource() }) { showEpisodeDrawer = false })
+            AnimatedVisibility(visible = showEpisodeDrawer, enter = slideInHorizontally(initialOffsetX = { it }, animationSpec = tween(300)), exit = slideOutHorizontally(targetOffsetX = { it }, animationSpec = tween(300)), modifier = Modifier.align(Alignment.CenterEnd).fillMaxHeight().width(280.dp)) {
                 Surface(color = Color(0xEE1A1A1A), modifier = Modifier.fillMaxSize()) {
                     Column(modifier = Modifier.fillMaxSize().padding(16.dp)) {
                         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) { AppText("选集", color = Color.White, fontSize = 18.sp, fontWeight = FontWeight.Bold); IconButton(onClick = { showEpisodeDrawer = false }) { Icon(Icons.Default.Close, null, tint = Color.White) } }
@@ -1928,8 +1924,8 @@ fun InternalVideoPlayer(url: String, title: String, cookie: String, series: Medi
         }
 
         if (showSettingsPanel) {
-            Box(modifier = Modifier.fillMaxSize().zIndex(3f).clickable(indication = null, interactionSource = remember { MutableInteractionSource() }) { showSettingsPanel = false })
-            AnimatedVisibility(visible = showSettingsPanel, enter = slideInHorizontally(initialOffsetX = { it }, animationSpec = tween(300)), exit = slideOutHorizontally(targetOffsetX = { it }, animationSpec = tween(300)), modifier = Modifier.align(Alignment.CenterEnd).fillMaxHeight().width(280.dp).zIndex(3f)) {
+            Box(modifier = Modifier.fillMaxSize().clickable(indication = null, interactionSource = remember { MutableInteractionSource() }) { showSettingsPanel = false })
+            AnimatedVisibility(visible = showSettingsPanel, enter = slideInHorizontally(initialOffsetX = { it }, animationSpec = tween(300)), exit = slideOutHorizontally(targetOffsetX = { it }, animationSpec = tween(300)), modifier = Modifier.align(Alignment.CenterEnd).fillMaxHeight().width(280.dp)) {
                 Surface(color = Color(0xEE1A1A1A), modifier = Modifier.fillMaxSize()) {
                     Column(modifier = Modifier.fillMaxSize().padding(16.dp).verticalScroll(rememberScrollState())) {
                         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) { AppText("播放设置", color = Color.White, fontSize = 18.sp, fontWeight = FontWeight.Bold); IconButton(onClick = { showSettingsPanel = false }) { Icon(Icons.Default.Close, null, tint = Color.White) } }
