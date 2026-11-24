@@ -95,7 +95,9 @@ import io.legado.app.help.book.BookHelp
 import io.legado.app.help.config.LocalConfig
 import io.legado.app.help.coroutine.Coroutine
 import io.legado.app.help.http.LocalNetworkBlockedNotifier
+import io.legado.app.help.AppWebDav
 import io.legado.app.help.storage.Backup
+import org.json.JSONObject
 import io.legado.app.help.update.AppUpdateGitHub
 import io.legado.app.lib.dialogs.alert
 import io.legado.app.lib.theme.primaryColor
@@ -264,6 +266,15 @@ open class MainActivity : BaseComposeActivity(), AudioPlay.CallBack {
             if (shouldAutoCheckUpdate) checkUpdateOnStart()
         }
         lifecycleScope.launch { runCatching { bookshelfCoverPreloader.preloadCurrentGroupFirstScreen() } }
+
+        // 🌟 启动后自动备份：此前 autoBack 只在 onDestroy 触发，
+        // 导致设置里的"每次启动/每小时"等间隔选项实际不生效。
+        if (!BuildConfig.DEBUG) {
+            lifecycleScope.launch {
+                kotlinx.coroutines.delay(10_000)
+                Backup.autoBack(this@MainActivity)
+            }
+        }
     }
 
     private fun startWebServiceWithLocalNetworkPermission() {
@@ -274,6 +285,15 @@ open class MainActivity : BaseComposeActivity(), AudioPlay.CallBack {
         super.onResume()
         requestLocalNetworkPermissionIfBlocked()
         requestInsetsAndLayout()
+    }
+
+    /**
+     * 🌟 切到后台时收尾备份：按 Home、切到别的 App 都走这里。
+     * 指纹没变化会自动跳过，不会重复上传。
+     */
+    override fun onStop() {
+        super.onStop()
+        if (!BuildConfig.DEBUG) Backup.backupNow(this)
     }
 
     private fun requestLocalNetworkPermissionIfBlocked() {
@@ -522,7 +542,20 @@ open class MainActivity : BaseComposeActivity(), AudioPlay.CallBack {
         if (!backupSettingsGateway.currentSettings.autoCheckNewBackup) return
         lifecycleScope.launch {
             val file = try { withContext(IO) { viewModel.getLatestWebDavBackup() } } catch (e: Exception) { return@launch } ?: return@launch
+            // 先看云端"时间 + 数据"，再决定提示恢复还是允许本机上传
+            val meta = runCatching { withContext(IO) { AppWebDav.downloadBackupMeta() } }.getOrNull()
+            val cloudContent = meta?.let {
+                runCatching { JSONObject(it).optString("content") }.getOrNull()
+            }
+            val localContent = runCatching { Backup.contentFingerprint() }.getOrNull()
+            if (!cloudContent.isNullOrEmpty() && cloudContent == localContent) {
+                // 数据一致：只更新时间戳，不打断用户，也不限制上传
+                LocalConfig.lastBackup = file.lastModify
+                return@launch
+            }
             if (file.lastModify - LocalConfig.lastBackup > DateUtils.MINUTE_IN_MILLIS) {
+                // 云端比本机新且数据不同：先暂停自动上传，避免旧数据立刻覆盖云端
+                Backup.suppressAutoBack(30 * 60 * 1000L)
                 LocalConfig.lastBackup = file.lastModify
                 alert(R.string.restore, R.string.webdav_after_local_restore_confirm) { cancelButton(); okButton { viewModel.restoreWebDav(file.name) } }
             }
@@ -568,7 +601,7 @@ open class MainActivity : BaseComposeActivity(), AudioPlay.CallBack {
         window?.decorView?.let { ViewCompat.setWindowInsetsAnimationCallback(it, null); ViewCompat.setOnApplyWindowInsetsListener(it, null) }
         super.onDestroy()
         Coroutine.async { BookHelp.clearInvalidCache() }
-        if (!BuildConfig.DEBUG) Backup.autoBack(this)
+        if (!BuildConfig.DEBUG) Backup.backupNow(this)
     }
     override fun upLoading(loading: Boolean) { activeAudioPlayViewModel?.onLoadingChanged(loading) }
     override fun upLyric(lyric: String?) { activeAudioPlayViewModel?.onLyricChanged() }

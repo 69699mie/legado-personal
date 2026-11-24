@@ -88,6 +88,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.*
+import androidx.compose.material.icons.outlined.People
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -156,6 +157,10 @@ import androidx.media3.session.MediaSession
 import androidx.media3.ui.PlayerView
 import coil3.compose.AsyncImage
 import io.legado.app.data.repository.VideoSettingsRepository
+import io.legado.app.help.BackupToastGate
+import io.legado.app.help.storage.Backup
+import io.legado.app.help.watchparty.WatchPartyConfig
+import io.legado.app.help.watchparty.WatchPartySession
 import io.legado.app.ui.main.video.proxy.LocalProxyServer
 import io.legado.app.ui.widget.components.text.AppText
 import kotlinx.coroutines.Dispatchers
@@ -306,6 +311,9 @@ fun VideoScraperScreen(isActive: Boolean = true, modifier: Modifier = Modifier, 
     var viewAllCategory by remember { mutableStateOf<String?>(null) }
     var manualScrapeSeries by remember { mutableStateOf<MediaSeries?>(null) }
     var showClearHistoryConfirm by remember { mutableStateOf(false) }
+    var showPartyDialog by remember { mutableStateOf(false) }
+    var lastFollowFid by remember { mutableStateOf("") }
+    val libraryPartyState by WatchPartySession.state.collectAsStateWithLifecycle()
 
     LaunchedEffect(uiState.playUrl, uiState.currentSeries) {
         if (uiState.playUrl == null && uiState.currentSeries == null) {
@@ -516,7 +524,27 @@ fun VideoScraperScreen(isActive: Boolean = true, modifier: Modifier = Modifier, 
         }
     }
 
-    if (showSettingsDialog) SettingsDialog(uiState = uiState, viewModel = viewModel, onDismiss = { showSettingsDialog = false }, onWebLoginClick = { showLoginConfirmDialog = true })
+    if (showSettingsDialog) SettingsDialog(uiState = uiState, viewModel = viewModel, onDismiss = { showSettingsDialog = false }, onWebLoginClick = { showLoginConfirmDialog = true }, onPartyClick = { showSettingsDialog = false; showPartyDialog = true }, partyActive = libraryPartyState.active)
+    // 一起看：影视库页也能建房/加入，房主开播后本机自动跳到对应剧集
+    WatchPartyDialog(show = showPartyDialog, onDismiss = { showPartyDialog = false })
+    LaunchedEffect(libraryPartyState.remoteSync, libraryPartyState.active) {
+        val sync = libraryPartyState.remoteSync ?: return@LaunchedEffect
+        if (!libraryPartyState.active || libraryPartyState.isHost) return@LaunchedEffect
+        // 已经在播放页时交给播放页自己处理
+        if (uiState.currentSeries != null || uiState.playUrl != null) return@LaunchedEffect
+        if (sync.fid.isBlank()) return@LaunchedEffect
+        // 同一集只自动跳一次，避免用户手动退出播放页又被拉回去
+        if (sync.fid == lastFollowFid) return@LaunchedEffect
+        val targetSeries = uiState.seriesList.firstOrNull { s -> s.videos.any { it.fid == sync.fid } }
+        val target = targetSeries?.videos?.firstOrNull { it.fid == sync.fid }
+        lastFollowFid = sync.fid
+        if (targetSeries == null || target == null) {
+            Toast.makeText(context, "房主在看：${sync.episode}，本机没有这一集", Toast.LENGTH_SHORT).show()
+        } else {
+            Toast.makeText(context, "跟随房主：${targetSeries.title} · ${target.name}", Toast.LENGTH_SHORT).show()
+            viewModel.playVideo(context, targetSeries, target)
+        }
+    }
     if (showLoginConfirmDialog) { AlertDialog(onDismissRequest = { showLoginConfirmDialog = false }, title = { AppText("登录", fontWeight = FontWeight.Bold) }, text = { AppText(if (uiState.cookie.isNotBlank()) "当前状态：已登录" else "当前状态：未登录") }, confirmButton = { TextButton(onClick = { showLoginConfirmDialog = false; if (uiState.cookie.isNotBlank()) viewModel.loginWithCapturedCookie(""); showWebLoginDialog = true }) { AppText("登录") } }, dismissButton = { TextButton(onClick = { showLoginConfirmDialog = false }) { AppText("取消", color = Color.Gray) } }) }
     if (showWebLoginDialog) { Dialog(onDismissRequest = { showWebLoginDialog = false }, properties = DialogProperties(usePlatformDefaultWidth = false)) { Box(modifier = Modifier.fillMaxSize().background(Color.White).statusBarsPadding()) { WebLoginView(onLoginSuccess = { cookie -> viewModel.loginWithCapturedCookie(cookie); showWebLoginDialog = false; showSettingsDialog = false }, onCancel = { showWebLoginDialog = false }) } } }
     if (showManualScrapeDialog && manualScrapeSeries != null) ManualScrapeDialog(series = manualScrapeSeries!!, viewModel = viewModel, onDismiss = { showManualScrapeDialog = false })
@@ -567,7 +595,7 @@ fun RecentWatchedGridCard(item: RecentWatchedItem, isSelectionMode: Boolean, isS
 }
 
 @Composable
-private fun SettingsDialog(uiState: VideoUiState, viewModel: VideoScraperViewModel, onDismiss: () -> Unit, onWebLoginClick: (() -> Unit)? = null) {
+private fun SettingsDialog(uiState: VideoUiState, viewModel: VideoScraperViewModel, onDismiss: () -> Unit, onWebLoginClick: (() -> Unit)? = null, onPartyClick: (() -> Unit)? = null, partyActive: Boolean = false) {
     var inputCookie by remember { mutableStateOf(uiState.cookie) }
     var inputTmdbKey by remember { mutableStateOf(uiState.tmdbApiKey) }
     var inputTmdbUrl by remember { mutableStateOf(uiState.tmdbBaseUrl) }
@@ -576,6 +604,7 @@ private fun SettingsDialog(uiState: VideoUiState, viewModel: VideoScraperViewMod
     var showThreadSelection by remember { mutableStateOf(false) }
     var showBannerLogicSelection by remember { mutableStateOf(false) }
     var showCategoryOrderDialog by remember { mutableStateOf(false) }
+    // 通道改为公共中继后不再需要服务器配置
 
     Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
         val view = LocalView.current
@@ -594,6 +623,26 @@ private fun SettingsDialog(uiState: VideoUiState, viewModel: VideoScraperViewMod
                 Row(modifier = Modifier.fillMaxWidth().clickable { showThreadSelection = true }.padding(vertical = 8.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) { AppText("极速播放线程数", color = Color.Black); Row(verticalAlignment = Alignment.CenterVertically) { AppText("${uiState.downloadThreads} ", color = Color.Gray); Icon(Icons.Default.KeyboardArrowRight, null, tint = Color.Gray) } }
                 Row(modifier = Modifier.fillMaxWidth().clickable { showBannerLogicSelection = true }.padding(vertical = 8.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) { AppText("首页轮播海报显示逻辑", color = Color.Black); Row(verticalAlignment = Alignment.CenterVertically) { AppText(uiState.bannerLogic, color = Color.Gray); Icon(Icons.Default.KeyboardArrowRight, null, tint = Color.Gray) } }
                 Row(modifier = Modifier.fillMaxWidth().clickable { showCategoryOrderDialog = true }.padding(vertical = 8.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) { AppText("分类排序", color = Color.Black); Row(verticalAlignment = Alignment.CenterVertically) { Icon(Icons.Default.KeyboardArrowRight, null, tint = Color.Gray) } }
+                HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
+                if (onPartyClick != null) {
+                    Row(modifier = Modifier.fillMaxWidth().clickable { onPartyClick() }.padding(vertical = 8.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                        AppText("一起看", color = Color.Black)
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            AppText(if (partyActive) "已加入" else "未加入", fontSize = 13.sp, color = if (partyActive) Color.Black else Color.Gray)
+                            Icon(Icons.Default.KeyboardArrowRight, null, tint = Color.Gray)
+                        }
+                    }
+                }
+                Row(modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        AppText("一起看通道", color = Color.Black)
+                        AppText(
+                            text = "公共中继，自动选节点，无需配置",
+                            fontSize = 12.sp,
+                            color = Color.Gray,
+                        )
+                    }
+                }
                 OutlinedButton(onClick = { viewModel.saveSettings(inputCookie, inputTmdbKey, inputTmdbUrl); onDismiss() }, shape = RoundedCornerShape(20.dp), contentPadding = PaddingValues(horizontal = 24.dp, vertical = 8.dp), modifier = Modifier.fillMaxWidth().padding(top = 24.dp), border = BorderStroke(1.dp, Color.Gray.copy(alpha = 0.5f))) { AppText("确认保存", fontWeight = FontWeight.Bold, color = Color.Black) }
             }
         }
@@ -910,6 +959,16 @@ fun WebLoginView(onLoginSuccess: (String) -> Unit, onCancel: () -> Unit) {
 @Composable
 fun InternalVideoPlayer(url: String, title: String, cookie: String, series: MediaSeries, currentFile: QuarkFile, viewModel: VideoScraperViewModel, downloadThreads: Int, onBack: () -> Unit) {
     val context = LocalContext.current
+
+    // 播放界面期间不弹备份提示；离开播放页时立即推送（此刻进度已定型）
+    DisposableEffect(Unit) {
+        val appContext = context.applicationContext
+        BackupToastGate.enter()
+        onDispose {
+            BackupToastGate.exit()
+            Backup.backupNow(appContext)
+        }
+    }
     val activity = context.findActivity()
     val view = LocalView.current
     val configuration = LocalConfiguration.current
@@ -1022,6 +1081,16 @@ fun InternalVideoPlayer(url: String, title: String, cookie: String, series: Medi
 
     var isPlaying by remember { mutableStateOf(true) }
     var isBuffering by remember { mutableStateOf(true) }
+    // 一起看
+    val partyState by WatchPartySession.state.collectAsState()
+    // 一起看双向同步：本地操作时间 / 远端应用时间 / 最近一次跨集切换时间，用于防回环与防对切
+    var lastLocalActionAt by remember { mutableLongStateOf(0L) }
+    var lastAppliedRemoteAt by remember { mutableLongStateOf(0L) }
+    var lastSwitchAt by remember { mutableLongStateOf(0L) }
+    // 一起看：上一帧的播放状态，用来区分「真的变了」还是「刚连上房间」，避免加入端一进门就把自己的进度推给房主
+    var prevPartyFid by remember { mutableStateOf<String?>(null) }
+    var prevPartyPlaying by remember { mutableStateOf<Boolean?>(null) }
+    var prevPartySpeed by remember { mutableStateOf<Float?>(null) }
     var currentPosition by remember { mutableLongStateOf(0L) }
     var bufferedPosition by remember { mutableLongStateOf(0L) }
     var duration by remember { mutableLongStateOf(0L) }
@@ -1095,10 +1164,31 @@ fun InternalVideoPlayer(url: String, title: String, cookie: String, series: Medi
     val mediaSession = remember { MediaSession.Builder(context, exoPlayer).build() }
     DisposableEffect(mediaSession) { onDispose { mediaSession.release() } }
 
+    // 一起看：把本机当前播放状态立即广播出去（房主、加入端都能推）
+    fun pushPartyNow() {
+        if (!partyState.active || !partyState.connected) return
+        WatchPartySession.pushLocalSync(
+            fid = currentFile.fid,
+            episode = currentFile.name,
+            positionMs = exoPlayer.currentPosition,
+            paused = !exoPlayer.isPlaying,
+            speed = playbackSpeed,
+            force = true,
+        )
+    }
+
+    /** 用户主动操作（拖进度等）时调用：记下本地操作时间并立刻广播 */
+    fun pushLocalAction() {
+        if (!partyState.active || !partyState.connected) return
+        lastLocalActionAt = System.currentTimeMillis()
+        pushPartyNow()
+    }
+
     DisposableEffect(lifecycleOwner) {
         var isPlayerReleased = false
         val observer = LifecycleEventObserver { _, event ->
             if (event == Lifecycle.Event.ON_PAUSE || event == Lifecycle.Event.ON_STOP) {
+                // 熄屏/切后台一律暂停播放（省电、不后台放声音）；一起看的连接靠前台服务保活，不靠播放
                 Handler(Looper.getMainLooper()).postDelayed({ if (!isPlayerReleased && activity?.isInPictureInPictureMode != true) exoPlayer.pause(); if (activity?.isInPictureInPictureMode == true) isInPip.value = true }, 100)
             } else if (event == Lifecycle.Event.ON_RESUME) { if (activity?.isInPictureInPictureMode != true) isInPip.value = false }
         }
@@ -1278,6 +1368,81 @@ fun InternalVideoPlayer(url: String, title: String, cookie: String, series: Medi
     }
 
     LaunchedEffect(showEpisodeDrawer, sortedVideos) { if (showEpisodeDrawer) { val idx = sortedVideos.indexOfFirst { it.fid == currentFile.fid }; if (idx != -1) episodeListState.animateScrollToItem(idx) } }
+    // 一起看：房主每 10 秒广播一次「第几集 + 播放位置 + 是否暂停 + 倍速」，给加入端对齐基准。
+    // 不能太频繁：ntfy 公共中继限流 60 次请求/5 分钟，2 秒一次会在两分钟后被 429 静默丢掉。
+    LaunchedEffect(partyState.isHost, partyState.connected, currentFile.fid) {
+        if (!partyState.isHost || !partyState.connected) return@LaunchedEffect
+        while (true) {
+            WatchPartySession.pushLocalSync(
+                fid = currentFile.fid,
+                episode = currentFile.name,
+                positionMs = exoPlayer.currentPosition,
+                paused = !exoPlayer.isPlaying,
+                speed = playbackSpeed,
+            )
+            delay(10_000)
+        }
+    }
+
+    // 一起看：切集 / 暂停 / 倍速 变化时立刻广播（远端应用引起的变化在这里被过滤掉）
+    LaunchedEffect(currentFile.fid, isPlaying, playbackSpeed, partyState.connected) {
+        val fidChanged = prevPartyFid != null && prevPartyFid != currentFile.fid
+        val playingChanged = prevPartyPlaying != null && prevPartyPlaying != isPlaying
+        val speedChanged = prevPartySpeed != null && prevPartySpeed != playbackSpeed
+        prevPartyFid = currentFile.fid
+        prevPartyPlaying = isPlaying
+        prevPartySpeed = playbackSpeed
+        if (!fidChanged && !playingChanged && !speedChanged) return@LaunchedEffect
+        if (!partyState.active || !partyState.connected) return@LaunchedEffect
+        if (System.currentTimeMillis() - lastAppliedRemoteAt < 800L) return@LaunchedEffect
+        lastLocalActionAt = System.currentTimeMillis()
+        pushPartyNow()
+    }
+
+    // 一起看：任意一端的最新操作都同步过来（最后操作生效）
+    LaunchedEffect(partyState.remoteSync, partyState.connected) {
+        val sync = partyState.remoteSync ?: return@LaunchedEffect
+        if (!partyState.active || !partyState.connected) return@LaunchedEffect
+        val now = System.currentTimeMillis()
+        // 本机 1.5 秒内刚操作过，以本机为准
+        if (now - lastLocalActionAt < 1_500L) return@LaunchedEffect
+        if (sync.fid.isNotBlank() && sync.fid != currentFile.fid) {
+            // 2 秒内已经跟随切过一次，防止两端同时切导致来回跳
+            if (now - lastSwitchAt < 2_000L) return@LaunchedEffect
+            lastSwitchAt = now
+            lastAppliedRemoteAt = now
+            val target = series.videos.find { it.fid == sync.fid }
+            if (target != null) {
+                Toast.makeText(context, "跟随切换到：${target.name}", Toast.LENGTH_SHORT).show()
+                viewModel.playVideo(context, series, target)
+            } else {
+                // 对方可能在看另一部剧：到全库找这个 fid
+                val otherSeries = uiState.seriesList.firstOrNull { s -> s.videos.any { it.fid == sync.fid } }
+                val otherVideo = otherSeries?.videos?.firstOrNull { it.fid == sync.fid }
+                if (otherSeries != null && otherVideo != null) {
+                    Toast.makeText(context, "跟随切到：${otherSeries.title} · ${otherVideo.name}", Toast.LENGTH_SHORT).show()
+                    viewModel.playVideo(context, otherSeries, otherVideo)
+                } else {
+                    Toast.makeText(
+                        context,
+                        "对方在看：${sync.episode}，本机没有这一集",
+                        Toast.LENGTH_SHORT
+                    ).show()
+                }
+            }
+            return@LaunchedEffect
+        }
+        lastAppliedRemoteAt = now
+        val drift = sync.positionMs - exoPlayer.currentPosition
+        if (abs(drift) > 2_000L) exoPlayer.seekTo(sync.positionMs)
+        if (sync.paused && exoPlayer.isPlaying) exoPlayer.pause()
+        if (!sync.paused && !exoPlayer.isPlaying) exoPlayer.play()
+        if (abs(playbackSpeed - sync.speed) > 0.01f) {
+            playbackSpeed = sync.speed.coerceIn(0.5f, 3.0f)
+            exoPlayer.setPlaybackParameters(PlaybackParameters(playbackSpeed, 1.0f))
+        }
+    }
+
     LaunchedEffect(showControls, isPlaying, gestureType, showSettingsPanel, showEpisodeDrawer) { if (showControls && isPlaying && !isLocked && gestureType.isEmpty() && !showSettingsPanel && !showEpisodeDrawer && !isInPip.value && !isDraggingSeekBar) { delay(3000); showControls = false } }
     LaunchedEffect(isLocked, showUnlockIcon) { if (isLocked && showUnlockIcon) { delay(3000); showUnlockIcon = false } }
     LaunchedEffect(seekMessage) { if (seekMessage != null) { delay(1500); seekMessage = null } }
@@ -1381,6 +1546,7 @@ fun InternalVideoPlayer(url: String, title: String, cookie: String, series: Medi
                     if (abs(currentPosition - dragStartPosition) > 1000L) {
                         exoPlayer.seekTo(currentPosition); if (isPlaying) exoPlayer.play()
                         haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                        pushLocalAction()
                     } else currentPosition = dragStartPosition
                 };
                 gestureMode = ""; gestureType = ""; isDraggingSeekBar = false
@@ -1394,9 +1560,9 @@ fun InternalVideoPlayer(url: String, title: String, cookie: String, series: Medi
             onDoubleTap = { offset ->
                 haptic.performHapticFeedback(HapticFeedbackType.LongPress)
                 when {
-                    offset.x < size.width * 0.25f -> { exoPlayer.seekTo((exoPlayer.currentPosition - 10000).coerceAtLeast(0)); seekMessage = "已快退 10 秒" };
-                    offset.x > size.width * 0.75f -> { exoPlayer.seekTo((exoPlayer.currentPosition + 10000).coerceAtMost(if (duration > 0) duration else Long.MAX_VALUE)); seekMessage = "已快进 10 秒" };
-                    else -> { if (isPlaying) exoPlayer.pause() else exoPlayer.play() }
+                    offset.x < size.width * 0.25f -> { exoPlayer.seekTo((exoPlayer.currentPosition - 10000).coerceAtLeast(0)); seekMessage = "已快退 10 秒"; pushLocalAction() };
+                    offset.x > size.width * 0.75f -> { exoPlayer.seekTo((exoPlayer.currentPosition + 10000).coerceAtMost(if (duration > 0) duration else Long.MAX_VALUE)); seekMessage = "已快进 10 秒"; pushLocalAction() };
+                    else -> { if (isPlaying) exoPlayer.pause() else exoPlayer.play(); pushLocalAction() }
                 }
             },
             onLongPress = {
@@ -1421,6 +1587,8 @@ fun InternalVideoPlayer(url: String, title: String, cookie: String, series: Medi
         )
     }) {
         AndroidView(factory = { ctx -> PlayerView(ctx).apply { player = exoPlayer; useController = false; layoutParams = FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT) } }, modifier = Modifier.fillMaxSize(), update = { view -> view.useController = false })
+
+        // 一起看入口已收进「播放设置」面板，不再在播放页浮层上跟播放器控件抢位置
 
         if (activity?.isInPictureInPictureMode == true || isInPip.value) { Box(modifier = Modifier.fillMaxSize()) {}; return@Box }
 
@@ -1560,7 +1728,7 @@ fun InternalVideoPlayer(url: String, title: String, cookie: String, series: Medi
             Box(modifier = Modifier.fillMaxSize()) {
                 Column(modifier = Modifier.align(Alignment.CenterStart).padding(start = 16.dp), verticalArrangement = Arrangement.spacedBy(30.dp)) {
                     Surface(color = Color.White.copy(alpha = 0.1f), shape = CircleShape, border = BorderStroke(1.dp, Color.White.copy(alpha = 0.2f))) {
-                        IconButton(onClick = { if (isLandscape) activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_PORTRAIT else activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE }) { Icon(Icons.Default.ScreenRotation, null, tint = Color.White) }
+                        IconButton(onClick = { if (isLandscape) activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_PORTRAIT else activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE }) { Icon(Icons.Default.ScreenRotation, contentDescription = "旋转屏幕", tint = Color.White) }
                     }
                 }
 
@@ -1605,13 +1773,13 @@ fun InternalVideoPlayer(url: String, title: String, cookie: String, series: Medi
                                 .pointerInput(duration) {
                                     detectTapGestures(
                                         onPress = { offset -> if (duration > 0) { isDraggingSeekBar = true; dragStartPosition = exoPlayer.currentPosition; val target = (offset.x / sliderWidth).coerceIn(0f, 1f); currentPosition = (target * duration).toLong(); seekDeltaMillis = currentPosition - dragStartPosition } },
-                                        onTap = { offset -> if (duration > 0) { val target = (offset.x / sliderWidth).coerceIn(0f, 1f); val finalPos = (target * duration).toLong(); if (abs(finalPos - exoPlayer.currentPosition) > 1000L) exoPlayer.seekTo(finalPos); isDraggingSeekBar = false } }
+                                        onTap = { offset -> if (duration > 0) { val target = (offset.x / sliderWidth).coerceIn(0f, 1f); val finalPos = (target * duration).toLong(); if (abs(finalPos - exoPlayer.currentPosition) > 1000L) { exoPlayer.seekTo(finalPos); pushLocalAction() }; isDraggingSeekBar = false } }
                                     )
                                 }.pointerInput(duration) {
                                     detectDragGestures(
                                         onDragStart = { offset -> if (duration > 0) { isDraggingSeekBar = true; dragStartPosition = exoPlayer.currentPosition; val target = (offset.x / sliderWidth).coerceIn(0f, 1f); currentPosition = (target * duration).toLong(); seekDeltaMillis = currentPosition - dragStartPosition } },
                                         onDrag = { change, _ -> change.consume(); if (duration > 0) { val target = (change.position.x / sliderWidth).coerceIn(0f, 1f); currentPosition = (target * duration).toLong(); seekDeltaMillis = currentPosition - dragStartPosition } },
-                                        onDragEnd = { isDraggingSeekBar = false; if (abs(currentPosition - dragStartPosition) > 1000L) { exoPlayer.seekTo(currentPosition); if (isPlaying) exoPlayer.play(); haptic.performHapticFeedback(HapticFeedbackType.LongPress) } else currentPosition = dragStartPosition },
+                                        onDragEnd = { isDraggingSeekBar = false; if (abs(currentPosition - dragStartPosition) > 1000L) { exoPlayer.seekTo(currentPosition); if (isPlaying) exoPlayer.play(); haptic.performHapticFeedback(HapticFeedbackType.LongPress); pushLocalAction() } else currentPosition = dragStartPosition },
                                         onDragCancel = { isDraggingSeekBar = false }
                                     )
                                 }, contentAlignment = Alignment.Center
@@ -1633,6 +1801,7 @@ fun InternalVideoPlayer(url: String, title: String, cookie: String, series: Medi
                                 playbackSpeed = nextSpeed
                                 // 🌟 只在本播放页内生效（切集保留），退出播放页或重启 App 恢复 1.0x
                                 exoPlayer.setPlaybackParameters(PlaybackParameters(nextSpeed, 1.0f))
+                                pushLocalAction()
                             }.padding(8.dp))
                             Row(modifier = Modifier.weight(1f), horizontalArrangement = Arrangement.Center, verticalAlignment = Alignment.CenterVertically) {
                                 if (isLandscape) AppText(text = if (introSeconds > 0) formatIntroOutro(introSeconds) else "片头", color = Color.White, fontSize = 12.sp, modifier = Modifier.combinedClickable(
@@ -1640,7 +1809,7 @@ fun InternalVideoPlayer(url: String, title: String, cookie: String, series: Medi
                                     onLongClick = { introSeconds = 0; viewModel.saveIntroOutro(latestSeries.title, season, introSeconds, outroSeconds) }
                                 ).padding(horizontal = 8.dp, vertical = 4.dp))
                                 IconButton(onClick = { val videos = sortedVideos; val idx = videos.indexOfFirst { it.fid == currentFile.fid }; if (idx > 0) viewModel.playVideo(context, latestSeries, videos[idx - 1]) }, modifier = Modifier.size(36.dp)) { Icon(Icons.Default.SkipPrevious, null, tint = Color.White, modifier = Modifier.size(24.dp)) }
-                                IconButton(onClick = { if (isPlaying) exoPlayer.pause() else exoPlayer.play() }, modifier = Modifier.size(40.dp)) { Icon(if (isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow, null, tint = Color.White, modifier = Modifier.size(28.dp)) }
+                                IconButton(onClick = { if (isPlaying) exoPlayer.pause() else exoPlayer.play(); pushLocalAction() }, modifier = Modifier.size(40.dp)) { Icon(if (isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow, null, tint = Color.White, modifier = Modifier.size(28.dp)) }
                                 IconButton(onClick = { val videos = sortedVideos; val idx = videos.indexOfFirst { it.fid == currentFile.fid }; if (idx != -1 && idx < videos.size - 1) viewModel.playVideo(context, latestSeries, videos[idx + 1]) }, modifier = Modifier.size(36.dp)) { Icon(Icons.Default.SkipNext, null, tint = Color.White, modifier = Modifier.size(24.dp)) }
                                 if (isLandscape) AppText(text = if (outroSeconds > 0) formatIntroOutro(outroSeconds) else "片尾", color = Color.White, fontSize = 12.sp, modifier = Modifier.combinedClickable(
                                     onClick = { val remain = duration - currentPosition; if (remain > 0) { outroSeconds = (remain / 1000).toInt(); viewModel.saveIntroOutro(latestSeries.title, season, introSeconds, outroSeconds); outroWarningTriggered = false } },

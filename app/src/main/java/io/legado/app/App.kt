@@ -70,6 +70,7 @@ import io.legado.app.help.http.okHttpClient
 import io.legado.app.help.rhino.NativeBaseSource
 import io.legado.app.help.source.SourceHelp
 import io.legado.app.help.storage.Backup
+import io.legado.app.help.storage.AutoBackupScheduler
 import io.legado.app.help.storage.SyncWorker
 import io.legado.app.lib.theme.primaryColor
 import io.legado.app.model.BookCover
@@ -223,6 +224,9 @@ class App : Application(), SingletonImageLoader.Factory {
             ExistingWorkPolicy.REPLACE,
             syncRequest
         )
+
+        // 🌟 前台每 3 分钟比对数据指纹，有变化就静默推送到云端（主力触发）
+        AutoBackupScheduler.start()
 
         Coroutine.async {
             get<BackupSettingsGateway>().settings

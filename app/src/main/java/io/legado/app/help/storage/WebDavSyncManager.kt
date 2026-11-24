@@ -10,6 +10,7 @@ import io.legado.app.lib.webdav.Authorization
 import io.legado.app.lib.webdav.WebDav
 import io.legado.app.utils.GSON
 import io.legado.app.utils.GlobalToast
+import io.legado.app.utils.LogUtils
 import io.legado.app.utils.fromJsonArray
 import io.legado.app.utils.getPrefString
 import io.legado.app.utils.putPrefString
@@ -119,7 +120,7 @@ object WebDavSyncManager {
 
                 saveSyncMeta(meta)
                 if (hasDownloaded) {
-                    GlobalToast.show("自动同步成功：已拉取最新数据")
+                    LogUtils.d("WebDavSync", "自动同步已拉取最新数据")
                 }
             } catch (e: Exception) {
                 AppLog.put("自动同步失败: ${e.localizedMessage}")
@@ -157,7 +158,7 @@ object WebDavSyncManager {
                     }
                 }
                 saveSyncMeta(meta)
-                GlobalToast.show("手动上传成功")
+                LogUtils.d("WebDavSync", "手动上传完成")
             } catch (e: Exception) {
                 AppLog.put("手动上传失败: ${e.localizedMessage}")
                 GlobalToast.show("手动上传失败，请检查网络")

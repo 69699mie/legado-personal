@@ -51,6 +51,13 @@ by appCtx.getSharedPreferences("local", Context.MODE_PRIVATE) {
             }
         }
 
+    /** 上次成功备份时的数据指纹，用于判断"数据有没有变化" */
+    var lastBackupFingerprint: String?
+        get() = getString("lastBackupFingerprint", null)
+        set(value) {
+            edit { putString("lastBackupFingerprint", value) }
+        }
+
     var privacyPolicyOk: Boolean
         get() = runBlocking {
             localPreferencesRepository.getPreference(LocalPreferencesKeys.PRIVACY_POLICY_OK, false)
