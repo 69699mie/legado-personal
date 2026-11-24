@@ -6,6 +6,7 @@ import android.content.Context
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
@@ -29,6 +30,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
@@ -46,12 +48,14 @@ private val partyLine = Color(0xFFE6E7EB)
  * 播放页左侧的一起看入口：和「旋转屏幕」等按钮完全同一套圆形样式，
  * 未建房是普通圆形图标；建房后右上角挂人数/待审批角标（绿=已连接，红=有人敲门）。
  */
+@OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
 @Composable
 fun WatchPartyHud(
     modifier: Modifier = Modifier,
     state: WatchPartyState,
     onOpenSettings: () -> Unit,
 ) {
+    val context = LocalContext.current
     Surface(
         modifier = modifier,
         color = if (state.active) Color.White.copy(alpha = 0.22f) else Color.White.copy(alpha = 0.1f),
@@ -59,12 +63,30 @@ fun WatchPartyHud(
         border = BorderStroke(1.dp, Color.White.copy(alpha = 0.2f)),
     ) {
         Box {
-            IconButton(onClick = onOpenSettings) {
-                Icon(Icons.Filled.People, contentDescription = "一起看", tint = Color.White)
+            // 点开房间卡片；长按直接复制邀请码（房主想再发一个人时不用中断播放）
+            Box(
+                modifier = Modifier
+                    .size(48.dp)
+                    .combinedClickable(
+                        onClick = onOpenSettings,
+                        onLongClick = {
+                            if (state.active) {
+                                val cm = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                                cm.setPrimaryClip(ClipData.newPlainText("一起看邀请码", WatchPartySession.inviteOf(state.code, state.password)))
+                                android.widget.Toast.makeText(context, "已复制邀请码", android.widget.Toast.LENGTH_SHORT).show()
+                            } else {
+                                onOpenSettings()
+                            }
+                        },
+                    ),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(Icons.Filled.People, contentDescription = "一起看（长按复制邀请码）", tint = Color.White)
             }
             // 角标：优先显示待审批人数（红），否则显示房间在线人数（绿）
             val pendingCount = state.pending.size
-            val onlineCount = state.members.size + 1
+            // members 里已经包含自己（会话层会把自己插进去），这里不能 +1
+            val onlineCount = maxOf(1, state.members.size)
             val badgeText = when {
                 state.isHost && pendingCount > 0 -> "$pendingCount"
                 state.active -> "$onlineCount"
@@ -132,14 +154,26 @@ fun WatchPartyDialog(
 
     Dialog(
         onDismissRequest = onDismiss,
-        properties = DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false),
+        // 用居中卡片而不是满屏：横屏播放页里满屏会把标题/按钮顶到屏幕外
+        properties = DialogProperties(usePlatformDefaultWidth = false),
     ) {
-        Surface(color = AppBackgroundColor, modifier = Modifier.fillMaxSize()) {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(Color.Black.copy(alpha = 0.45f)),
+            contentAlignment = Alignment.Center,
+        ) {
+        Surface(
+            color = AppBackgroundColor,
+            shape = RoundedCornerShape(24.dp),
+            modifier = Modifier
+                .fillMaxWidth(0.94f)
+                .widthIn(max = 560.dp)
+                .fillMaxHeight(0.9f),
+        ) {
             Column(
                 modifier = Modifier
                     .fillMaxSize()
-                    .statusBarsPadding()
-                    .navigationBarsPadding()
                     .padding(24.dp)
                     .verticalScroll(rememberScrollState()),
             ) {
@@ -213,12 +247,39 @@ fun WatchPartyDialog(
                                 verticalAlignment = Alignment.CenterVertically,
                             ) {
                                 Text(p.userName, color = Color.Black, fontSize = 15.sp, modifier = Modifier.weight(1f))
-                                TextButton(onClick = { WatchPartySession.approve(p.userId) }) { Text("同意", color = Color.Black) }
-                                TextButton(onClick = { WatchPartySession.reject(p.userId) }) { Text("拒绝", color = Color(0xFFD32F2F)) }
+                                if (p.userId in state.approving) {
+                                    // 点过同意之后给个明确反馈，别让人以为没点上而反复点
+                                    Text("已同意，等待对方进入…", color = partyHint, fontSize = 12.sp)
+                                } else {
+                                    TextButton(onClick = { WatchPartySession.approve(p.userId) }) { Text("同意", color = Color.Black) }
+                                    TextButton(onClick = { WatchPartySession.reject(p.userId) }) { Text("拒绝", color = Color(0xFFD32F2F)) }
+                                }
                             }
                             line()
                         }
                         Spacer(Modifier.height(16.dp))
+                    }
+                    // 加入端：被取消过跟随 / 想手动回到房主那一集时，这里有个明确的入口
+                    val hostShow = state.show
+                    if (!state.isHost && state.approved && hostShow != null && hostShow.fid.isNotBlank()) {
+                        OutlinedButton(
+                            onClick = {
+                                WatchPartySession.requestFollow()
+                                onDismiss()
+                            },
+                            shape = RoundedCornerShape(20.dp),
+                            border = BorderStroke(1.dp, Color(0xFF3C3C43)),
+                            modifier = Modifier.fillMaxWidth().height(42.dp),
+                        ) {
+                            Text(
+                                text = "跟随房主：" + hostShow.title + hostShow.episode,
+                                color = Color.Black,
+                                fontSize = 13.sp,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                        }
+                        Spacer(Modifier.height(12.dp))
                     }
                     Text("在线", color = Color.Black, fontSize = 13.sp)
                     Spacer(Modifier.height(4.dp))
@@ -313,7 +374,9 @@ fun WatchPartyDialog(
                             onClick = {
                                 WatchPartyConfig.displayName = name
                                 WatchPartySession.joinRoom(inviteInput)
-                                    .onSuccess { message = "已发送加入请求，等房主同意" }
+                                    // 进房后房间卡片里已经有一条「已申请，等待房主同意…」，
+                                    // 这里再写一条就重复了
+                                    .onSuccess { message = null }
                                     .onFailure { message = it.message }
                             },
                             shape = RoundedCornerShape(24.dp),
@@ -323,6 +386,7 @@ fun WatchPartyDialog(
                     }
                 }
             }
+        }
         }
     }
 }

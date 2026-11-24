@@ -1093,6 +1093,7 @@ fun InternalVideoPlayer(url: String, title: String, cookie: String, series: Medi
     var prevPartyFid by remember { mutableStateOf<String?>(null) }
     var prevPartyPlaying by remember { mutableStateOf<Boolean?>(null) }
     var prevPartySpeed by remember { mutableStateOf<Float?>(null) }
+    var prevPartyActive by remember { mutableStateOf<Boolean?>(null) }
     var currentPosition by remember { mutableLongStateOf(0L) }
     var bufferedPosition by remember { mutableLongStateOf(0L) }
     var duration by remember { mutableLongStateOf(0L) }
@@ -1390,16 +1391,20 @@ fun InternalVideoPlayer(url: String, title: String, cookie: String, series: Medi
     LaunchedEffect(currentFile.fid, isPlaying, playbackSpeed, partyState.connected, partyState.isHost, partyState.active) {
         val fidChanged = prevPartyFid != null && prevPartyFid != currentFile.fid
         val firstEnter = prevPartyFid == null
+        // 房间是在播放中才建好的（先看片、后建房）：也要补一次「当前节目」，否则加入端只能等 10 秒心跳
+        val justActivated = prevPartyActive == false && partyState.active
         val playingChanged = prevPartyPlaying != null && prevPartyPlaying != isPlaying
         val speedChanged = prevPartySpeed != null && prevPartySpeed != playbackSpeed
         prevPartyFid = currentFile.fid
         prevPartyPlaying = isPlaying
         prevPartySpeed = playbackSpeed
-        if (!partyState.active || !partyState.connected) return@LaunchedEffect
-        // 房主换集/换片（含刚进播放页）：立刻发「当前节目」，加入端不用等真正开播就能先跳过去
-        if (partyState.isHost && (fidChanged || firstEnter)) {
+        prevPartyActive = partyState.active
+        if (!partyState.active) return@LaunchedEffect
+        // 房主换集/换片（含刚进播放页、刚建房）：立刻发「当前节目」，加入端不用等真正开播就能先跳过去
+        if (partyState.isHost && partyState.connected && (fidChanged || firstEnter || justActivated)) {
             WatchPartySession.notifyShow(currentFile.fid, partyEpisodeLabel, latestSeries.title)
         }
+        if (!partyState.connected) return@LaunchedEffect
         if (!fidChanged && !playingChanged && !speedChanged) return@LaunchedEffect
         if (System.currentTimeMillis() - lastAppliedRemoteAt < 800L) return@LaunchedEffect
         lastLocalActionAt = System.currentTimeMillis()
@@ -1419,7 +1424,6 @@ fun InternalVideoPlayer(url: String, title: String, cookie: String, series: Medi
             return@LaunchedEffect
         }
         lastAppliedRemoteAt = now
-        lastAppliedRemoteAt = now
         val drift = sync.positionMs - exoPlayer.currentPosition
         if (abs(drift) > 2_000L) exoPlayer.seekTo(sync.positionMs)
         if (sync.paused && exoPlayer.isPlaying) exoPlayer.pause()
@@ -1430,11 +1434,15 @@ fun InternalVideoPlayer(url: String, title: String, cookie: String, series: Medi
         }
     }
 
-    // 一起看：房主退出播放页 → 加入端暂停并等待；房主这边离开时也广播一声
+    // 一起看：房主退出播放页 → 加入端暂停并等待；等太久给个「可以自己看/退出」的兜底提示
     LaunchedEffect(partyState.hostLeft) {
         if (partyState.hostLeft && !partyState.isHost) {
             if (exoPlayer.isPlaying) exoPlayer.pause()
             playerToastMessage = "房主已离开播放页，等待房主继续"
+            delay(30_000)
+            if (WatchPartySession.state.value.hostLeft) {
+                playerToastMessage = "房主已离开较久，可以自己选片看，或退出房间"
+            }
         }
     }
     DisposableEffect(Unit) {
@@ -1444,7 +1452,11 @@ fun InternalVideoPlayer(url: String, title: String, cookie: String, series: Medi
         }
     }
 
-    LaunchedEffect(showControls, isPlaying, gestureType, showSettingsPanel, showEpisodeDrawer) { if (showControls && isPlaying && !isLocked && gestureType.isEmpty() && !showSettingsPanel && !showEpisodeDrawer && !isInPip.value && !isDraggingSeekBar) { delay(3000); showControls = false } }
+    LaunchedEffect(showControls, isPlaying, gestureType, showSettingsPanel, showEpisodeDrawer, partyState.pending.size) {
+        // 有申请在等房主点头时，控制条不收：否则左侧「一起看」按钮跟着一起消失，房主根本点不到
+        if (partyState.isHost && partyState.pending.isNotEmpty()) return@LaunchedEffect
+        if (showControls && isPlaying && !isLocked && gestureType.isEmpty() && !showSettingsPanel && !showEpisodeDrawer && !isInPip.value && !isDraggingSeekBar) { delay(3000); showControls = false }
+    }
     LaunchedEffect(isLocked, showUnlockIcon) { if (isLocked && showUnlockIcon) { delay(3000); showUnlockIcon = false } }
     LaunchedEffect(seekMessage) { if (seekMessage != null) { delay(1500); seekMessage = null } }
 
@@ -1771,16 +1783,18 @@ fun InternalVideoPlayer(url: String, title: String, cookie: String, series: Medi
                     IconButton(onClick = { showSettingsPanel = true }) { Icon(Icons.Default.Settings, contentDescription = "设置", tint = Color.White) }
                 }
 
-                // 一起看：房主播放中收到申请，直接在播放页上同意/拒绝；横幅 8 秒无操作自动收起，
-                // 收起后仍由左侧图标的红色角标继续提醒，不会漏掉
+                // 一起看：房主播放中收到申请，直接在播放页上同意/拒绝。
+                // 横幅 10 秒无操作自动收起（点一下横幅可固定不收起），收起后左侧角标继续提醒。
                 var partyBannerVisible by remember { mutableStateOf(false) }
+                var partyBannerPinned by remember { mutableStateOf(false) }
                 LaunchedEffect(partyState.pending.map { it.userId }, partyState.active, partyState.isHost) {
                     if (partyState.isHost && partyState.active && partyState.pending.isNotEmpty()) {
                         partyBannerVisible = true
-                        delay(8000)
-                        partyBannerVisible = false
+                        delay(10_000)
+                        if (!partyBannerPinned) partyBannerVisible = false
                     } else {
                         partyBannerVisible = false
+                        partyBannerPinned = false
                     }
                 }
                 AnimatedVisibility(
@@ -1793,6 +1807,10 @@ fun InternalVideoPlayer(url: String, title: String, cookie: String, series: Medi
                         modifier = Modifier
                             .padding(top = 60.dp)
                             .background(Color(0xE61A1A1A), RoundedCornerShape(14.dp))
+                            .clickable(
+                                interactionSource = remember { androidx.compose.foundation.interaction.MutableInteractionSource() },
+                                indication = null,
+                            ) { partyBannerPinned = true }
                             .padding(horizontal = 12.dp, vertical = 10.dp),
                         verticalArrangement = Arrangement.spacedBy(2.dp),
                     ) {
@@ -1804,11 +1822,15 @@ fun InternalVideoPlayer(url: String, title: String, cookie: String, series: Medi
                                     fontSize = 13.sp,
                                     modifier = Modifier.padding(end = 8.dp),
                                 )
-                                TextButton(onClick = { WatchPartySession.approve(p.userId) }) {
-                                    Text("同意", color = Color(0xFF66BB6A), fontSize = 13.sp)
-                                }
-                                TextButton(onClick = { WatchPartySession.reject(p.userId) }) {
-                                    Text("拒绝", color = Color(0xFFEF5350), fontSize = 13.sp)
+                                if (p.userId in partyState.approving) {
+                                    Text("已同意，等待对方进入…", color = Color(0xFFB8B8B8), fontSize = 12.sp)
+                                } else {
+                                    TextButton(onClick = { WatchPartySession.approve(p.userId) }) {
+                                        Text("同意", color = Color(0xFF66BB6A), fontSize = 13.sp)
+                                    }
+                                    TextButton(onClick = { WatchPartySession.reject(p.userId) }) {
+                                        Text("拒绝", color = Color(0xFFEF5350), fontSize = 13.sp)
+                                    }
                                 }
                             }
                         }

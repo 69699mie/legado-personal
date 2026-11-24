@@ -129,9 +129,12 @@ class WatchPartyChannel(
     }
 
     fun close() {
+        if (closed) return
+        // 先发 bye 再置 closed：publish 里开头就有 if (closed) return，
+        // 顺序反了 bye 永远发不出去，对方要等 90 秒成员超时才知道你走了
+        publish("bye", selfJson())
         closed = true
         connected = false
-        publish("bye", selfJson())
         runCatching { readerCall?.cancel() }
         readerCall = null
         synchronized(members) { members.clear() }

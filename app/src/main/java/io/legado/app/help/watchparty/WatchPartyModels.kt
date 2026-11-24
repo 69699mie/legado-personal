@@ -59,4 +59,8 @@ data class WatchPartyState(
     val show: PartyShowState? = null,
     /** 房主已离开播放页：加入端暂停播放并等待房主继续 */
     val hostLeft: Boolean = false,
+    /** 房主端：刚点过「同意」、还在等对方真正进房的申请人（按钮要变成等待态，避免连点） */
+    val approving: Set<String> = emptySet(),
+    /** 加入端手动点「跟随房主」时放进来的一次请求，主页面消费后清空 */
+    val followRequest: PartyShowState? = null,
 )

@@ -28,8 +28,8 @@ object WatchPartySession {
 
     private const val TAG = "WatchPartySession"
     private const val PREF = "watch_party"
-    /** 邀请码有效期：2 分钟 */
-    const val INVITE_WINDOW_MS = 120_000L
+    /** 邀请码有效期：5 分钟（之前 2 分钟，房主截图发码经常来不及） */
+    const val INVITE_WINDOW_MS = 300_000L
     /** 后台心跳步长（房主 10 秒一次同步，加入端 3 步报一次在线） */
     private const val HEARTBEAT_STEP_MS = 10_000L
 
@@ -110,6 +110,7 @@ object WatchPartySession {
     private fun start(code: String, password: String, host: Boolean) {
         leave()
         approvedIds.clear()
+        if (host) approvedIds.addAll(loadApproved(code))
         val uid = myId()
         val name = WatchPartyConfig.nameOrDefault()
         val now = System.currentTimeMillis()
@@ -161,6 +162,7 @@ object WatchPartySession {
                         current.copy(
                             members = (listOf(me) + members).distinctBy { it.userId },
                             pending = current.pending.filterNot { it.userId in joinedIds },
+                            approving = current.approving - joinedIds,
                         )
                     }
                 }
@@ -283,9 +285,11 @@ object WatchPartySession {
 
     fun approve(userId: String) {
         approvedIds.add(userId)
+        saveApproved(_state.value.code, approvedIds)
         channel?.sendAdmit(userId)
         // 不立刻从 pending 里删：等对方真的报在线（onMembersChanged）再删，
         // 否则 admit 丢了房主会以为成功、对方却还卡在等待
+        _state.update { it.copy(approving = it.approving + userId) }
         LogUtils.d(TAG, "同意加入：$userId")
     }
 
@@ -307,8 +311,37 @@ object WatchPartySession {
 
     fun reject(userId: String) {
         channel?.sendReject(userId, "房主拒绝了加入请求")
+        approvedIds.remove(userId)
+        saveApproved(_state.value.code, approvedIds)
         _state.update { current ->
-            current.copy(pending = current.pending.filterNot { it.userId == userId })
+            current.copy(
+                pending = current.pending.filterNot { it.userId == userId },
+                approving = current.approving - userId,
+            )
+        }
+    }
+
+    /** 加入端手动点「跟随房主当前节目」：把请求交给主页面，走同一套 3 秒倒计时 */
+    fun requestFollow() {
+        val show = _state.value.show ?: return
+        if (_state.value.isHost || !_state.value.approved) return
+        _state.update { it.copy(followRequest = show) }
+    }
+
+    fun consumeFollowRequest() {
+        _state.update { it.copy(followRequest = null) }
+    }
+
+    private fun approvedPrefKey(code: String) = "approved_$code"
+
+    private fun loadApproved(code: String): Set<String> =
+        pref().getStringSet(approvedPrefKey(code), emptySet()) ?: emptySet()
+
+    /** 房主进程被杀重启后，老成员回来仍免审批 */
+    private fun saveApproved(code: String, ids: Set<String>) {
+        if (code.isBlank()) return
+        runCatching {
+            pref().edit().putStringSet(approvedPrefKey(code), ids.toSet()).apply()
         }
     }
 

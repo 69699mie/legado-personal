@@ -63,6 +63,7 @@ import dev.chrisbanes.haze.HazeState
 import dev.chrisbanes.haze.hazeSource
 import io.legado.app.R
 import io.legado.app.data.repository.VideoSettingsRepository
+import io.legado.app.help.watchparty.WatchPartySession
 import io.legado.app.ui.book.readaloud.ReadAloudBarCapsuleEndPadding
 import io.legado.app.ui.book.readaloud.ReadAloudBarCapsuleSize
 import io.legado.app.ui.book.readaloud.ReadAloudBarCapsuleSlot
@@ -233,6 +234,8 @@ fun MainScreen(
         val fid = show?.fid?.takeIf { it.isNotBlank() }
             ?: partyState.remoteSync?.fid?.takeIf { it.isNotBlank() }
             ?: return@LaunchedEffect
+        // 房主换了别的片子/别的集，之前「取消」的记忆就作废：换回来时还会再提示
+        if (cancelledFollowFid != null && cancelledFollowFid != fid) cancelledFollowFid = null
         // 已经就在看的这一集：只同步进度，不用跳
         if (videoUiState.currentPlayFile?.fid == fid) return@LaunchedEffect
         if (fid == cancelledFollowFid || fid == followFid) return@LaunchedEffect
@@ -241,12 +244,31 @@ fun MainScreen(
         followEpisode = show?.episode ?: partyState.remoteSync?.episode ?: ""
     }
 
+    // 加入端在房间卡片里手动点「跟随房主」：走同一套 3 秒倒计时
+    LaunchedEffect(partyState.followRequest) {
+        val req = partyState.followRequest ?: return@LaunchedEffect
+        if (!partyState.active || partyState.isHost || req.fid.isBlank()) return@LaunchedEffect
+        // 本来就在看房主这一集：不用再弹倒计时
+        if (videoUiState.currentPlayFile?.fid == req.fid) {
+            WatchPartySession.consumeFollowRequest()
+            return@LaunchedEffect
+        }
+        cancelledFollowFid = null
+        followFid = req.fid
+        followTitle = req.title
+        followEpisode = req.episode
+        WatchPartySession.consumeFollowRequest()
+    }
+
     LaunchedEffect(followFid) {
         val fid = followFid ?: return@LaunchedEffect
         followSeconds = 3
-        while (followSeconds > 0) {
-            delay(1000)
-            followSeconds--
+        val deadline = System.currentTimeMillis() + 3000L
+        while (System.currentTimeMillis() < deadline && followSeconds > 0) {
+            // 100ms 一跳：「立即进入」把计数清零后马上走，不用再空等
+            delay(100)
+            followSeconds = (((deadline - System.currentTimeMillis()) + 999) / 1000).toInt().coerceIn(0, 3)
+            if (followSeconds <= 0) break
         }
         val exists = videoUiState.seriesList.any { s -> s.videos.any { it.fid == fid } }
         if (videoUiState.seriesList.isNotEmpty() && !exists) {
