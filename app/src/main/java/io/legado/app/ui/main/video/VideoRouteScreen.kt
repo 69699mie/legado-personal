@@ -1121,6 +1121,10 @@ fun InternalVideoPlayer(url: String, title: String, cookie: String, series: Medi
     var dragStartPosition by remember { mutableLongStateOf(0L) }
     var seekDeltaMillis by remember { mutableLongStateOf(0L) }
     var seekMessage by remember { mutableStateOf<String?>(null) }
+    // 双击快进/快退的提示文案累加：实际每次仍跳 10 秒，连续点只让"已快进 N 秒"的数字往上走
+    var seekMsgAccumSec by remember { mutableLongStateOf(0L) }
+    var seekMsgDir by remember { mutableIntStateOf(0) }
+    var seekMsgAt by remember { mutableLongStateOf(0L) }
 
     val season = currentFile.parsedInfo?.season ?: 1
     var introSeconds by remember { mutableIntStateOf(0) }
@@ -1585,10 +1589,30 @@ fun InternalVideoPlayer(url: String, title: String, cookie: String, series: Medi
             onTap = { showControls = !showControls },
             onDoubleTap = { offset ->
                 haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                val nowMs = System.currentTimeMillis()
+                // 连续双击（间隔 ≤1.5 秒、同方向）只累加提示数字，每次实际仍跳 10 秒
+                fun nextAccumSec(dir: Int): Long {
+                    seekMsgAccumSec =
+                        if (seekMsgDir == dir && nowMs - seekMsgAt <= 1500L) seekMsgAccumSec + 10L else 10L
+                    seekMsgDir = dir
+                    seekMsgAt = nowMs
+                    return seekMsgAccumSec
+                }
                 when {
-                    offset.x < size.width * 0.25f -> { exoPlayer.seekTo((exoPlayer.currentPosition - 10000).coerceAtLeast(0)); seekMessage = "已快退 10 秒"; pushLocalAction() };
-                    offset.x > size.width * 0.75f -> { exoPlayer.seekTo((exoPlayer.currentPosition + 10000).coerceAtMost(if (duration > 0) duration else Long.MAX_VALUE)); seekMessage = "已快进 10 秒"; pushLocalAction() };
-                    else -> { if (isPlaying) exoPlayer.pause() else exoPlayer.play(); pushLocalAction() }
+                    offset.x < size.width * 0.25f -> {
+                        exoPlayer.seekTo((exoPlayer.currentPosition - 10000).coerceAtLeast(0))
+                        seekMessage = "已快退 ${nextAccumSec(-1)} 秒"
+                        pushLocalAction()
+                    }
+                    offset.x > size.width * 0.75f -> {
+                        exoPlayer.seekTo((exoPlayer.currentPosition + 10000).coerceAtMost(if (duration > 0) duration else Long.MAX_VALUE))
+                        seekMessage = "已快进 ${nextAccumSec(1)} 秒"
+                        pushLocalAction()
+                    }
+                    else -> {
+                        seekMsgAccumSec = 0L; seekMsgDir = 0
+                        if (isPlaying) exoPlayer.pause() else exoPlayer.play(); pushLocalAction()
+                    }
                 }
             },
             onLongPress = {
