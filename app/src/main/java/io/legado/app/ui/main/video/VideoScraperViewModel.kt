@@ -313,7 +313,9 @@ class VideoScraperViewModel(
         if (overlap < 0.5) return ScrapeDecision(2, added, removed)
 
         return when {
-            added.isNotEmpty() -> ScrapeDecision(1, added, removed)
+            // 有新增集就整部重刮：全量路径会先继承旧标题再按 TMDB 季集覆写，新集标题必不会漏；
+            // 增量只补"季_集"完全对齐的键，一旦集号与 TMDB 错位新集就没标题（曾经踩过）。
+            added.isNotEmpty() -> ScrapeDecision(2, added, removed)
             removed.isNotEmpty() -> ScrapeDecision(0, emptySet(), removed)
             else -> ScrapeDecision(0)
         }
@@ -1170,7 +1172,17 @@ class VideoScraperViewModel(
                                 seriesPath = series.id.substringBeforeLast("#", "")
                             )
                         }
-                        series
+                        // 没搜到 TMDB（或没配 API key）时不能把旧标题丢掉：沿用手上缓存的标题/海报，避免整部剧变没标题
+                        oldCached?.let { c ->
+                            series.copy(
+                                title = c.title, category = c.category, posterUrl = c.posterUrl,
+                                backdropUrl = c.backdropUrl, overview = c.overview, rating = c.rating,
+                                seasonDetails = c.seasonDetails,
+                                episodeTitles = c.episodeTitles, episodeStills = c.episodeStills,
+                                seasonEpisodeTitles = c.seasonEpisodeTitles,
+                                seasonEpisodeStills = c.seasonEpisodeStills
+                            )
+                        } ?: series
                     }
                 }
             }
@@ -1720,6 +1732,79 @@ class VideoScraperViewModel(
                         .show()
                 }
             }
+        }
+    }
+
+    private fun matchTitleKey(title: String): String =
+        title.filter { it.isLetterOrDigit() }.lowercase()
+
+    /**
+     * 跟随房主时在本机找"同一集"，四级匹配里的前两级：
+     * 1) fid 精确命中（两边勾选的资源一致）
+     * 2) 房主给的剧名 + 集号 → 本机同剧里反查同集（两边勾的资源不同也能对上）
+     * 找不到返回 null，由上层走"房主点对点直链"兜底。
+     */
+    fun resolveFollowFid(remoteFid: String, seriesTitle: String, episodeText: String): String? {
+        if (remoteFid.isBlank()) return null
+        val list = _uiState.value.seriesList
+        if (list.any { s -> s.videos.any { it.fid == remoteFid } }) return remoteFid
+
+        val epNum = Regex("第\\s*(\\d+)\\s*集").find(episodeText)?.groupValues?.get(1)?.toIntOrNull()
+        val titleKey = matchTitleKey(seriesTitle)
+        if (titleKey.isBlank()) return null
+
+        val candidates = list.filter {
+            val k = matchTitleKey(it.title)
+            k.isNotBlank() && (k == titleKey || k.contains(titleKey) || titleKey.contains(k))
+        }
+        for (s in candidates) {
+            val hit = if (epNum == null) {
+                s.videos.firstOrNull()
+            } else {
+                s.videos.firstOrNull { v ->
+                    val p = v.parsedInfo ?: VideoFileNameParser.parse(v.name)
+                    extractEpisodeNumber(v.name, p.episode) == epNum
+                }
+            }
+            if (hit != null) return hit.fid
+        }
+        return null
+    }
+
+    /**
+     * 加入端：本机没有这一集时，用房主点对点下发的短时直链直接播。
+     * 只用于"一起看"跟随，直链不写入任何持久化缓存。
+     */
+    fun playFollowedLink(fid: String, seriesTitle: String, episodeText: String, url: String) {
+        if (url.isBlank() || fid.isBlank()) return
+        val existingSeries = _uiState.value.seriesList.find { s -> s.videos.any { it.fid == fid } }
+        val existingFile = existingSeries?.videos?.find { it.fid == fid }
+        if (existingSeries != null && existingFile != null) {
+            val p = existingFile.parsedInfo ?: VideoFileNameParser.parse(existingFile.name)
+            val ep = extractEpisodeNumber(existingFile.name, p.episode).takeIf { it > 0 }
+            val t = if (existingSeries.category != "电影" && ep != null) {
+                "${existingSeries.title} 第${ep}集"
+            } else existingSeries.title
+            _uiState.update {
+                it.copy(playUrl = url, playTitle = t, currentSeries = existingSeries,
+                    currentPlayFile = existingFile, isDirectPlay = false)
+            }
+            return
+        }
+        val safeTitle = seriesTitle.ifBlank { "一起看" }
+        val displayName = safeTitle + (if (episodeText.isNotBlank()) " $episodeText" else "")
+        val file = QuarkFile(fid = fid, name = displayName, isFolder = false)
+        val series = MediaSeries(
+            id = "wp_link_$fid",
+            title = safeTitle,
+            originalParsedTitle = safeTitle,
+            year = null,
+            category = "未分类",
+            videos = listOf(file)
+        )
+        _uiState.update {
+            it.copy(playUrl = url, playTitle = displayName, currentSeries = series,
+                currentPlayFile = file, isDirectPlay = false)
         }
     }
 

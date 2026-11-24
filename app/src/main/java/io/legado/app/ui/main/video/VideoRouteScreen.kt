@@ -990,6 +990,16 @@ fun InternalVideoPlayer(url: String, title: String, cookie: String, series: Medi
     val isInMultiWindowMode = remember { activity?.isInMultiWindowMode == true }
     DisposableEffect(Unit) { view.keepScreenOn = true; onDispose { view.keepScreenOn = false } }
 
+    // 一起看：房主在播的这一刻，若加入端索要当前集直链（对方本地缺这一集），
+    // 把本机正在用的直链点对点回给他。只回正在播的这一集，且只在对方已同意时才算数（会话层已校验）。
+    val partyStateForLink by io.legado.app.help.watchparty.WatchPartySession.state.collectAsStateWithLifecycle()
+    LaunchedEffect(partyStateForLink.linkRequest, url, currentFile.fid) {
+        val req = partyStateForLink.linkRequest ?: return@LaunchedEffect
+        if (!partyStateForLink.isHost) return@LaunchedEffect
+        if (req.fid != currentFile.fid || url.isBlank()) return@LaunchedEffect
+        io.legado.app.help.watchparty.WatchPartySession.respondLink(req.userId, req.fid, url)
+    }
+
     val dynamicTitle = remember(latestSeries, currentFile) {
         val parsedInfo = currentFile.parsedInfo ?: io.legado.app.utils.VideoFileNameParser.parse(currentFile.name)
         val epNum = viewModel.extractEpisodeNumber(currentFile.name, parsedInfo.episode).takeIf { it > 0 }

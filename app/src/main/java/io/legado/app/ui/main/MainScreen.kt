@@ -96,6 +96,7 @@ import io.legado.app.ui.widget.components.text.AppText
 import io.legado.app.utils.sendToClip
 import io.legado.app.utils.startActivityForBook
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 import org.koin.androidx.compose.koinViewModel
@@ -211,6 +212,7 @@ fun MainScreen(
     var followTitle by remember { mutableStateOf("") }
     var followEpisode by remember { mutableStateOf("") }
     var followSeconds by remember { mutableIntStateOf(3) }
+    var followUrgent by remember { mutableStateOf(false) }
     var cancelledFollowFid by remember { mutableStateOf<String?>(null) }
 
     suspend fun enterFollowedVideo(fid: String) {
@@ -262,25 +264,78 @@ fun MainScreen(
 
     LaunchedEffect(followFid) {
         val fid = followFid ?: return@LaunchedEffect
+        followUrgent = false
         followSeconds = 3
         val deadline = System.currentTimeMillis() + 3000L
-        while (System.currentTimeMillis() < deadline && followSeconds > 0) {
-            // 100ms 一跳：「立即进入」把计数清零后马上走，不用再空等
+        while (System.currentTimeMillis() < deadline) {
+            // 「立即进入」会把 followUrgent 置真，直接跳出，不用再空等满 3 秒
+            if (followUrgent) break
             delay(100)
+            if (followUrgent) break
             followSeconds = (((deadline - System.currentTimeMillis()) + 999) / 1000).toInt().coerceIn(0, 3)
             if (followSeconds <= 0) break
         }
-        val exists = videoUiState.seriesList.any { s -> s.videos.any { it.fid == fid } }
-        if (videoUiState.seriesList.isNotEmpty() && !exists) {
+        val titleNow = followTitle
+        val epNow = followEpisode
+        followFid = null
+
+        // 第 1、2 级：fid 命中，或「剧名 + 集号」在本机反查命中 → 直接播本机资源
+        val localFid = videoViewModel.resolveFollowFid(fid, titleNow, epNow)
+        if (localFid != null) {
+            enterFollowedVideo(localFid)
+            return@LaunchedEffect
+        }
+
+        val roomUsable = partyState.active && !partyState.isHost && partyState.approved
+        if (!roomUsable) {
             android.widget.Toast.makeText(
                 context,
-                "房主在看${if (followTitle.isNotBlank()) "《$followTitle》" else ""}${followEpisode}，本机没有这一集",
+                "房主在看${if (titleNow.isNotBlank()) "《$titleNow》" else ""}$epNow，本机没有这一集",
                 android.widget.Toast.LENGTH_SHORT,
             ).show()
-        } else {
-            enterFollowedVideo(fid)
+            return@LaunchedEffect
         }
-        followFid = null
+
+        // 第 3 级：本机确实没有，向房主点对点要一次短时直链（有冷却/上限/TTL，不落盘不打日志）
+        coroutineScope.launch {
+            WatchPartySession.requestLink(fid)
+            android.widget.Toast.makeText(
+                context,
+                "本机没有这一集，正在向房主请求直链…",
+                android.widget.Toast.LENGTH_SHORT,
+            ).show()
+            val got = withTimeoutOrNull(15_000L) {
+                var hit: io.legado.app.help.watchparty.PartyLink? = null
+                while (hit == null) {
+                    val st = WatchPartySession.state.value
+                    if (!st.active) break
+                    val inc = st.incomingLink
+                    if (inc != null && inc.fid == fid && inc.expiresAt > System.currentTimeMillis()) {
+                        hit = inc
+                        break
+                    }
+                    delay(300)
+                }
+                hit
+            }
+            if (got != null) {
+                val targetIndex = destinations.indexOfFirst { it == MainDestination.Video }
+                if (targetIndex >= 0 && pagerState.currentPage != targetIndex) {
+                    pagerState.animateScrollToPage(targetIndex)
+                    delay(200)
+                }
+                videoViewModel.playFollowedLink(fid, titleNow, epNow, got.url)
+                WatchPartySession.consumeIncomingLink()
+            } else {
+                // 第 4 级：拿不到就明确提示，不阻断当前观看
+                WatchPartySession.abandonPendingLink()
+                android.widget.Toast.makeText(
+                    context,
+                    "没拿到这一集的播放地址，已跳过；房主换集后会再提示",
+                    android.widget.Toast.LENGTH_SHORT,
+                ).show()
+            }
+        }
     }
 
     // 跟随时给一个 3 秒倒计时，可取消：换集/换片不会突兀地抢走用户当前画面
@@ -303,7 +358,10 @@ fun MainScreen(
                 )
             },
             confirmButton = {
-                androidx.compose.material3.TextButton(onClick = { followSeconds = 0 }) {
+                androidx.compose.material3.TextButton(onClick = {
+                    followUrgent = true
+                    followSeconds = 0
+                }) {
                     AppText("立即进入")
                 }
             },

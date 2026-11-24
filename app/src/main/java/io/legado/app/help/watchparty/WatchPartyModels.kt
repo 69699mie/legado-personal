@@ -25,8 +25,28 @@ data class PartyShowState(
     val sentAt: Long = 0L,
 )
 
-/** 房间成员 */
-data class PartyMember(
+/**
+ * 加入端向房主索要「房主正在播的那一集」的短时直链。
+ * 只在本地按 fid / 剧名+集号都对不上时才发，不是常态广播。
+ * 防泄露：按 fid 60 秒冷却、每个房间最多 3 次、房主只发给已同意的成员。
+ */
+data class PartyLinkRequest(
+    val userId: String = "",
+    val fid: String = "",
+)
+
+/**
+ * 房主点对点返回的短时直链（只发给申请的 userId）。
+ * 防泄露：接收方只认 to == 自己、只认自己刚请求过的 fid、且必须在 expiresAt 之前（默认 120 秒）。
+ */
+data class PartyLink(
+    val toId: String = "",
+    val fid: String = "",
+    val url: String = "",
+    val expiresAt: Long = 0L,
+)
+
+/** 房间成员 */data class PartyMember(
     val userId: String,
     val userName: String,
     val lastSeen: Long = 0L,
@@ -63,4 +83,8 @@ data class WatchPartyState(
     val approving: Set<String> = emptySet(),
     /** 加入端手动点「跟随房主」时放进来的一次请求，主页面消费后清空 */
     val followRequest: PartyShowState? = null,
+    /** 房主端：收到某个加入端索要当前集直链（播放页消费后清空） */
+    val linkRequest: PartyLinkRequest? = null,
+    /** 加入端：收到房主返回的短时直链（主页面消费后清空） */
+    val incomingLink: PartyLink? = null,
 )

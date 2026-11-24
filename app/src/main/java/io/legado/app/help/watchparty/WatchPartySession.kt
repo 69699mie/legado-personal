@@ -41,6 +41,22 @@ object WatchPartySession {
     /** 本房间内已被房主同意过的设备，退出再进免确认、不受 2 分钟限制 */
     private val approvedIds = mutableSetOf<String>()
 
+    // ---- 短时直链（本地缺这一集时的兜底）防泄露参数 ----
+    /** 同一集 60 秒内只允许请求一次，避免有人反复刷着要链接 */
+    private const val LINK_REQ_COOLDOWN_MS = 60_000L
+    /** 每个房间最多给 3 条直链，防止被当成「多集批量抓链」的工具 */
+    private const val LINK_MAX_PER_ROOM = 3
+    /** 直链有效期：2 分钟（夸克直链本身也是短时的，过期就别用了） */
+    private const val LINK_TTL_MS = 120_000L
+
+    /** fid -> 上次请求时间，做冷却 */
+    private val linkReqAt = mutableMapOf<String, Long>()
+    /** 房主已经给出过几条直链 */
+    private var linkSentCount = 0
+    /** 本机正在等哪一集（fid）的直链，收到 link 时用它校验「是不是我请求的那一集」 */
+    @Volatile
+    private var pendingLinkFid: String? = null
+
     /** 心跳跑在自己的后台线程上：熄屏后 Compose 的帧调度会停，不能把心跳挂在 UI 上 */
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private var heartbeatJob: Job? = null
@@ -110,6 +126,10 @@ object WatchPartySession {
     private fun start(code: String, password: String, host: Boolean) {
         leave()
         approvedIds.clear()
+        // 直链相关状态按房间重置，别把上个房间的冷却/计数带过来
+        linkReqAt.clear()
+        linkSentCount = 0
+        pendingLinkFid = null
         if (host) approvedIds.addAll(loadApproved(code))
         val uid = myId()
         val name = WatchPartyConfig.nameOrDefault()
@@ -203,6 +223,21 @@ object WatchPartySession {
 
                 override fun onHostLeftPlayer() {
                     _state.update { it.copy(hostLeft = true) }
+                }
+
+                override fun onLinkRequest(userId: String, fid: String) {
+                    // 只服务已经同意的成员；陌生人即使知道邀请码也拿不到直链
+                    if (!_state.value.isHost || !approvedIds.contains(userId)) return
+                    _state.update { it.copy(linkRequest = PartyLinkRequest(userId, fid)) }
+                }
+
+                override fun onLinkReceived(toId: String, fid: String, url: String, expiresAt: Long) {
+                    val cur = _state.value
+                    if (cur.isHost) return
+                    // 只认「我请求过的那一集」，防止同房间别人拿到的链接被复用/串号
+                    if (pendingLinkFid == null || pendingLinkFid != fid) return
+                    if (expiresAt > 0 && System.currentTimeMillis() > expiresAt) return
+                    _state.update { it.copy(incomingLink = PartyLink(toId, fid, url, expiresAt)) }
                 }
 
                 override fun onRejected(reason: String?) {
@@ -330,6 +365,47 @@ object WatchPartySession {
 
     fun consumeFollowRequest() {
         _state.update { it.copy(followRequest = null) }
+    }
+
+    /** 加入端：本地没有房主正在播的这一集时，向他索要一次短时直链（带冷却，不会刷屏） */
+    fun requestLink(fid: String) {
+        val cur = _state.value
+        if (!cur.active || cur.isHost || !cur.approved || fid.isBlank()) return
+        val now = System.currentTimeMillis()
+        val last = linkReqAt[fid]
+        if (last != null && now - last < LINK_REQ_COOLDOWN_MS) return
+        linkReqAt[fid] = now
+        pendingLinkFid = fid
+        channel?.sendLinkRequest(fid)
+    }
+
+    /**
+     * 房主：把当前集的直链点对点发给申请的成员。
+     * 只发给已同意的成员、每个房间最多 3 条、有效期 120 秒，且不落盘、不打印日志。
+     */
+    fun respondLink(userId: String, fid: String, url: String) {
+        val cur = _state.value
+        if (!cur.isHost || !cur.active) return
+        if (!approvedIds.contains(userId)) return
+        if (url.isBlank()) return
+        if (linkSentCount >= LINK_MAX_PER_ROOM) return
+        linkSentCount++
+        channel?.sendLink(userId, fid, url, System.currentTimeMillis() + LINK_TTL_MS)
+        _state.update { it.copy(linkRequest = null) }
+    }
+
+    fun consumeLinkRequest() {
+        _state.update { it.copy(linkRequest = null) }
+    }
+
+    fun consumeIncomingLink() {
+        pendingLinkFid = null
+        _state.update { it.copy(incomingLink = null) }
+    }
+
+    /** 放弃等待直链（比如 15 秒没等到、或用户取消了跟随） */
+    fun abandonPendingLink() {
+        pendingLinkFid = null
     }
 
     private fun approvedPrefKey(code: String) = "approved_$code"

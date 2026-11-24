@@ -47,6 +47,10 @@ class WatchPartyChannel(
         fun onRemoteShow(show: PartyShowState)
         /** 房主退出了播放页 */
         fun onHostLeftPlayer()
+        /** 房主端：某个加入端索要当前集的短时直链 */
+        fun onLinkRequest(userId: String, fid: String)
+        /** 加入端：收到房主返回的短时直链 */
+        fun onLinkReceived(toId: String, fid: String, url: String, expiresAt: Long)
         /** 发送结果：code<400 成功；code>=400 是中继拒收（429 限流 / 403 等）；error 为网络异常文案 */
         fun onPublishResult(event: String, code: Int, error: String?)
     }
@@ -186,6 +190,30 @@ class WatchPartyChannel(
     fun sendLeavePlayer() = publish("leaveplayer", JsonObject().apply {
         addProperty("userId", userId)
     })
+
+    /**
+     * 加入端索要当前集直链。只带 fid 和 userId，不带任何本地路径/文件名，
+     * 房主据此判断「是不是我正在播的那一集」再决定给不给。
+     */
+    fun sendLinkRequest(fid: String) {
+        if (amHost || !approved) return
+        publish("linkreq", JsonObject().apply {
+            addProperty("userId", userId)
+            addProperty("fid", fid)
+        })
+    }
+
+    /** 房主点对点回一条短时直链：只发给申请的 userId，带有效期戳 */
+    fun sendLink(toId: String, fid: String, url: String, expiresAt: Long) {
+        if (!amHost || !approved) return
+        publish("link", JsonObject().apply {
+            addProperty("to", toId)
+            addProperty("fid", fid)
+            addProperty("url", url)
+            addProperty("expiresAt", expiresAt)
+            addProperty("sentAt", System.currentTimeMillis())
+        })
+    }
 
     // ---------------- 收 ----------------
 
@@ -348,6 +376,26 @@ class WatchPartyChannel(
                 val id = data.get("userId")?.asString ?: return
                 if (id == userId) return
                 callbacks.onHostLeftPlayer()
+            }
+
+            "linkreq" -> {
+                // 只有房主处理；且不处理自己发的
+                if (!amHost) return
+                val id = data.get("userId")?.asString ?: return
+                val fid = data.get("fid")?.asString ?: return
+                if (id == userId || fid.isBlank()) return
+                callbacks.onLinkRequest(id, fid)
+            }
+
+            "link" -> {
+                // 加入端只认发给自己的那一条，别人的直链一律忽略（防串号/防被动收集）
+                if (amHost || !approved) return
+                val to = data.get("to")?.asString ?: return
+                if (to != userId) return
+                val fid = data.get("fid")?.asString ?: return
+                val url = data.get("url")?.asString ?: return
+                if (url.isBlank()) return
+                callbacks.onLinkReceived(to, fid, url, data.get("expiresAt")?.asLong ?: 0L)
             }
 
             "hello", "beat" -> {
