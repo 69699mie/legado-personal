@@ -22,12 +22,14 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
 
-    <!-- 这些权限是依赖库带进来的（相机/闪光灯、生物识别、广告 ID、安装来源），本应用用不到，
-         明确声明移除，免得安装时在系统权限页里出现 -->
+    <!-- 这些权限是依赖库带进来的（相机/闪光灯、生物识别、广告 ID、安装来源、电话状态、开机自启），
+         本应用用不到，明确声明移除，免得安装时在系统权限页里出现 -->
     <uses-permission android:name="android.permission.CAMERA" tools:node="remove" />
     <uses-permission android:name="android.permission.FLASHLIGHT" tools:node="remove" />
     <uses-permission android:name="android.permission.USE_BIOMETRIC" tools:node="remove" />
     <uses-permission android:name="android.permission.USE_FINGERPRINT" tools:node="remove" />
+    <uses-permission android:name="android.permission.READ_PHONE_STATE" tools:node="remove" />
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" tools:node="remove" />
     <uses-permission android:name="android.permission.ACCESS_ADSERVICES_AD_ID" tools:node="remove" />
     <uses-permission android:name="android.permission.ACCESS_ADSERVICES_ATTRIBUTION" tools:node="remove" />
     <uses-permission android:name="com.google.android.gms.permission.AD_ID" tools:node="remove" />
