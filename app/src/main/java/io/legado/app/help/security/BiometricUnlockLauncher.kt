@@ -29,7 +29,13 @@ object BiometricUnlockLauncher {
             return PrivateBiometricStatus.UnsupportedSystem
         }
         val manager = BiometricManager.from(context)
-        return when (manager.canAuthenticate(BiometricManager.Authenticators.BIOMETRIC_STRONG)) {
+        // 本应用不申请 USE_BIOMETRIC：没有该权限时 canAuthenticate 会直接抛 SecurityException，
+        // 而它在应用启动阶段就会被调用，不兜住会整个 App 起不来。拿不到能力就当作不可用，
+        // 密码解锁路径不受影响。
+        val result = runCatching {
+            manager.canAuthenticate(BiometricManager.Authenticators.BIOMETRIC_STRONG)
+        }.getOrDefault(BiometricManager.BIOMETRIC_ERROR_NO_HARDWARE)
+        return when (result) {
             BiometricManager.BIOMETRIC_SUCCESS -> PrivateBiometricStatus.Available
             BiometricManager.BIOMETRIC_ERROR_NONE_ENROLLED -> PrivateBiometricStatus.NotEnrolled
             BiometricManager.BIOMETRIC_ERROR_NO_HARDWARE -> PrivateBiometricStatus.NoHardware
