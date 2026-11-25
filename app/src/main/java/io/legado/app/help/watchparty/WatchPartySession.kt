@@ -109,11 +109,18 @@ object WatchPartySession {
         }
     }
 
-    /** 建房：房间码、密码全自动生成，返回邀请码 */
-    fun createRoom(): Result<String> {
-        val code = newRoomCode()
-        val password = newPassword()
+    /** 建房：默认复用上一次的邀请码，换新码用 createRoom(fresh = true)。
+     *  复用是为了「房主看完退出、再开另一部」时，还在房间里的加入端能直接收到节目、自动跟随，
+     *  不用再回「加入房间」面板手动点跟随。 */
+    fun createRoom(fresh: Boolean = false): Result<String> {
+        val p = pref()
+        val last = p.getString("last_invite", null)
+        val reuse = if (!fresh && !last.isNullOrBlank()) parseInvite(last) else null
+        val code = reuse?.first ?: newRoomCode()
+        val password = reuse?.second ?: newPassword()
         start(code, password, host = true)
+        p.edit().putString("last_invite", inviteOf(code, password))
+            .putString("last_role", "host").apply()
         return Result.success(inviteOf(code, password))
     }
 
@@ -126,7 +133,19 @@ object WatchPartySession {
             return Result.failure(IllegalArgumentException("邀请码里缺少密码"))
         }
         start(code, password, host = false)
+        pref().edit().putString("last_invite", inviteOf(code, password))
+            .putString("last_role", "guest").apply()
         return Result.success(inviteOf(code, password))
+    }
+
+    /** 加入端：应用启动/回到前台时静默回到上次的房间（房主复用同一邀请码时，节目事件能直接送达）。
+     *  用户主动「退出房间」会清掉记录，不会自动回来。 */
+    fun tryAutoRejoin(): Boolean {
+        if (_state.value.active) return false
+        val p = pref()
+        if (p.getString("last_role", null) != "guest") return false
+        val last = p.getString("last_invite", null) ?: return false
+        return joinRoom(last).isSuccess
     }
 
     private fun start(code: String, password: String, host: Boolean) {
@@ -493,6 +512,12 @@ object WatchPartySession {
         channel = null
         runCatching { ch?.close() }
         _state.value = WatchPartyState()
+    }
+
+    /** 用户主动「退出房间」：连上次房间记录一起清掉，避免下次启动又自己回去 */
+    fun leaveAndForget() {
+        pref().edit().remove("last_invite").remove("last_role").apply()
+        leave()
     }
 
     /**

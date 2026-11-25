@@ -365,13 +365,13 @@ private fun PartyPanelContent(
         }
         Spacer(Modifier.height(bigGap))
         OutlinedButton(
-            onClick = { WatchPartySession.leave() },
+            onClick = { WatchPartySession.leaveAndForget() },
             shape = RoundedCornerShape(24.dp),
             border = BorderStroke(1.dp, Color(0xFF3C3C43)),
             modifier = Modifier.fillMaxWidth().height(48.dp),
         ) { Text("退出房间", color = Color.Black, fontWeight = FontWeight.Bold) }
         TextButton(
-            onClick = { WatchPartySession.leave() },
+            onClick = { WatchPartySession.leaveAndForget() },
             modifier = Modifier.fillMaxWidth(),
         ) { Text("换个房间（重新输入邀请码）", color = partyHint, fontSize = 13.sp) }
     } else {

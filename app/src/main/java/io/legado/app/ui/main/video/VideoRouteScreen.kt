@@ -1119,6 +1119,9 @@ fun InternalVideoPlayer(url: String, title: String, cookie: String, series: Medi
     var prevPartySpeed by remember { mutableStateOf<Float?>(null) }
     var prevPartyActive by remember { mutableStateOf<Boolean?>(null) }
     var currentPosition by remember { mutableLongStateOf(0L) }
+    // 拖动进度条那一刻是否在播：seek 会触发缓冲，isPlaying 会短暂变 false，
+    // 如果这时按 isPlaying 上报，对端会收到 paused=true 跟着暂停（用户反馈的「我拉进度对方停了」）
+    var seekWasPlaying by remember { mutableStateOf(false) }
     var bufferedPosition by remember { mutableLongStateOf(0L) }
     var duration by remember { mutableLongStateOf(0L) }
     var resolution by remember { mutableStateOf("") }
@@ -1196,23 +1199,23 @@ fun InternalVideoPlayer(url: String, title: String, cookie: String, series: Medi
     DisposableEffect(mediaSession) { onDispose { mediaSession.release() } }
 
     // 一起看：把本机当前播放状态立即广播出去（房主、加入端都能推）
-    fun pushPartyNow() {
+    fun pushPartyNow(pausedOverride: Boolean? = null) {
         if (!partyState.active || !partyState.connected) return
         WatchPartySession.pushLocalSync(
             fid = currentFile.fid,
             episode = partyEpisodeLabel,
             positionMs = exoPlayer.currentPosition,
-            paused = !exoPlayer.isPlaying,
+            paused = pausedOverride ?: !exoPlayer.isPlaying,
             speed = playbackSpeed,
             force = true,
         )
     }
 
     /** 用户主动操作（拖进度等）时调用：记下本地操作时间并立刻广播 */
-    fun pushLocalAction() {
+    fun pushLocalAction(pausedOverride: Boolean? = null) {
         if (!partyState.active || !partyState.connected) return
         lastLocalActionAt = System.currentTimeMillis()
-        pushPartyNow()
+        pushPartyNow(pausedOverride)
     }
 
     /**
@@ -1605,7 +1608,7 @@ fun InternalVideoPlayer(url: String, title: String, cookie: String, series: Medi
         if (isLocked || isInPip.value) { if (isLocked && !isInPip.value) detectTapGestures(onTap = { showUnlockIcon = true }); return@pointerInput }
         var gestureMode = ""; var startX = 0f; var startY = 0f; var startPos = 0L; var startBrightness = 0f; var startVolume = 0
         detectDragGestures(
-            onDragStart = { offset -> gestureMode = ""; startX = offset.x; startY = offset.y; startPos = exoPlayer.currentPosition; startBrightness = activity?.window?.attributes?.screenBrightness?.let { if (it < 0) 0.5f else it } ?: 0.5f; startVolume = audioManager.getStreamVolume(AudioManager.STREAM_MUSIC) },
+            onDragStart = { offset -> gestureMode = ""; startX = offset.x; startY = offset.y; startPos = exoPlayer.currentPosition; seekWasPlaying = exoPlayer.isPlaying; startBrightness = activity?.window?.attributes?.screenBrightness?.let { if (it < 0) 0.5f else it } ?: 0.5f; startVolume = audioManager.getStreamVolume(AudioManager.STREAM_MUSIC) },
             onDrag = { change, _ ->
                 val deltaX = change.position.x - startX; val deltaY = change.position.y - startY; val absX = abs(deltaX); val absY = abs(deltaY)
                 if (gestureMode.isEmpty()) {
@@ -1673,8 +1676,8 @@ fun InternalVideoPlayer(url: String, title: String, cookie: String, series: Medi
                         if (partyState.active && partyState.isHost && WatchPartySession.peersNeedReady().isNotEmpty()) {
                             stagePartyPlayback()
                         } else {
-                            if (isPlaying) exoPlayer.play()
-                            pushLocalAction()
+                            if (seekWasPlaying) exoPlayer.play()
+                            pushLocalAction(pausedOverride = !seekWasPlaying)
                         }
                     } else currentPosition = dragStartPosition
                 };
@@ -1967,14 +1970,14 @@ fun InternalVideoPlayer(url: String, title: String, cookie: String, series: Medi
                             Box(modifier = Modifier.weight(1f).padding(horizontal = 8.dp).height(32.dp).onSizeChanged { sliderWidth = it.width.toFloat() }
                                 .pointerInput(duration) {
                                     detectTapGestures(
-                                        onPress = { offset -> if (duration > 0) { isDraggingSeekBar = true; dragStartPosition = exoPlayer.currentPosition; val target = (offset.x / sliderWidth).coerceIn(0f, 1f); currentPosition = (target * duration).toLong(); seekDeltaMillis = currentPosition - dragStartPosition } },
-                                        onTap = { offset -> if (duration > 0) { val target = (offset.x / sliderWidth).coerceIn(0f, 1f); val finalPos = (target * duration).toLong(); if (abs(finalPos - exoPlayer.currentPosition) > 1000L) { exoPlayer.seekTo(finalPos); if (partyState.active && partyState.isHost && WatchPartySession.peersNeedReady().isNotEmpty()) stagePartyPlayback() else pushLocalAction() }; isDraggingSeekBar = false } }
+                                        onPress = { offset -> if (duration > 0) { isDraggingSeekBar = true; seekWasPlaying = exoPlayer.isPlaying; dragStartPosition = exoPlayer.currentPosition; val target = (offset.x / sliderWidth).coerceIn(0f, 1f); currentPosition = (target * duration).toLong(); seekDeltaMillis = currentPosition - dragStartPosition } },
+                                        onTap = { offset -> if (duration > 0) { val target = (offset.x / sliderWidth).coerceIn(0f, 1f); val finalPos = (target * duration).toLong(); if (abs(finalPos - exoPlayer.currentPosition) > 1000L) { seekWasPlaying = exoPlayer.isPlaying; exoPlayer.seekTo(finalPos); if (partyState.active && partyState.isHost && WatchPartySession.peersNeedReady().isNotEmpty()) stagePartyPlayback() else pushLocalAction(pausedOverride = !seekWasPlaying) }; isDraggingSeekBar = false } }
                                     )
                                 }.pointerInput(duration) {
                                     detectDragGestures(
-                                        onDragStart = { offset -> if (duration > 0) { isDraggingSeekBar = true; dragStartPosition = exoPlayer.currentPosition; val target = (offset.x / sliderWidth).coerceIn(0f, 1f); currentPosition = (target * duration).toLong(); seekDeltaMillis = currentPosition - dragStartPosition } },
+                                        onDragStart = { offset -> if (duration > 0) { isDraggingSeekBar = true; seekWasPlaying = exoPlayer.isPlaying; dragStartPosition = exoPlayer.currentPosition; val target = (offset.x / sliderWidth).coerceIn(0f, 1f); currentPosition = (target * duration).toLong(); seekDeltaMillis = currentPosition - dragStartPosition } },
                                         onDrag = { change, _ -> change.consume(); if (duration > 0) { val target = (change.position.x / sliderWidth).coerceIn(0f, 1f); currentPosition = (target * duration).toLong(); seekDeltaMillis = currentPosition - dragStartPosition } },
-                                        onDragEnd = { isDraggingSeekBar = false; if (abs(currentPosition - dragStartPosition) > 1000L) { exoPlayer.seekTo(currentPosition); haptic.performHapticFeedback(HapticFeedbackType.LongPress); if (partyState.active && partyState.isHost && WatchPartySession.peersNeedReady().isNotEmpty()) stagePartyPlayback() else { if (isPlaying) exoPlayer.play(); pushLocalAction() } } else currentPosition = dragStartPosition },
+                                        onDragEnd = { isDraggingSeekBar = false; if (abs(currentPosition - dragStartPosition) > 1000L) { exoPlayer.seekTo(currentPosition); haptic.performHapticFeedback(HapticFeedbackType.LongPress); if (partyState.active && partyState.isHost && WatchPartySession.peersNeedReady().isNotEmpty()) stagePartyPlayback() else { if (seekWasPlaying) exoPlayer.play(); pushLocalAction(pausedOverride = !seekWasPlaying) } } else currentPosition = dragStartPosition },
                                         onDragCancel = { isDraggingSeekBar = false }
                                     )
                                 }, contentAlignment = Alignment.Center

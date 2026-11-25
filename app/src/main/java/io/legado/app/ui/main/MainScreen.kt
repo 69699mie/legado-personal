@@ -226,74 +226,18 @@ fun MainScreen(
         videoViewModel.handlePendingPlayRequest()
     }
 
-    LaunchedEffect(
-        partyState.show?.fid,
-        partyState.remoteSync?.fid,
-        partyState.active,
-        partyState.approved,
-    ) {
-        if (!partyState.active || partyState.isHost || !partyState.approved) return@LaunchedEffect
-        val show = partyState.show
-        val fid = show?.fid?.takeIf { it.isNotBlank() }
-            ?: partyState.remoteSync?.fid?.takeIf { it.isNotBlank() }
-            ?: return@LaunchedEffect
-        // 房主换了别的片子/别的集，之前「取消」的记忆就作废：换回来时还会再提示
-        if (cancelledFollowFid != null && cancelledFollowFid != fid) cancelledFollowFid = null
-        // 已经就在看的这一集：只同步进度，不用跳
-        if (videoUiState.currentPlayFile?.fid == fid) return@LaunchedEffect
-        if (fid == cancelledFollowFid || fid == followFid) return@LaunchedEffect
-        followFid = fid
-        followTitle = show?.title ?: ""
-        followEpisode = show?.episode ?: partyState.remoteSync?.episode ?: ""
-        followEpisodeTitle = show?.episodeTitle ?: ""
-    }
-
-    // 加入端在房间卡片里手动点「跟随房主」：走同一套 3 秒倒计时
-    LaunchedEffect(partyState.followRequest) {
-        val req = partyState.followRequest ?: return@LaunchedEffect
-        if (!partyState.active || partyState.isHost || req.fid.isBlank()) return@LaunchedEffect
-        // 本来就在看房主这一集：不用再弹倒计时
-        if (videoUiState.currentPlayFile?.fid == req.fid) {
-            WatchPartySession.consumeFollowRequest()
-            return@LaunchedEffect
-        }
-        cancelledFollowFid = null
-        followFid = req.fid
-        followTitle = req.title
-        followEpisode = req.episode
-        followEpisodeTitle = req.episodeTitle
-        WatchPartySession.consumeFollowRequest()
-    }
-
-    LaunchedEffect(followFid) {
-        val fid = followFid ?: return@LaunchedEffect
-        followUrgent = false
-        followSeconds = 3
-        val deadline = System.currentTimeMillis() + 3000L
-        while (System.currentTimeMillis() < deadline) {
-            // 「立即进入」会把 followUrgent 置真，直接跳出，不用再空等满 3 秒
-            if (followUrgent) break
-            delay(100)
-            if (followUrgent) break
-            followSeconds = (((deadline - System.currentTimeMillis()) + 999) / 1000).toInt().coerceIn(0, 3)
-            if (followSeconds <= 0) break
-        }
-        // 房主补发的 show 可能比跟随晚到一步（加入时先只有心跳 sync）：这里现读一次最新状态兜底，
-        // 否则剧名/集标题是空，左上角会退化成「一起看」
+    /** 真正执行「跟随房主这一集」：本机有就播本机，没有就要直链；剧名/集标题缺失时现读一次兜底 */
+    suspend fun applyFollow(fid: String, title0: String, ep0: String, epTitle0: String) {
         val liveShow = WatchPartySession.state.value.show
-        val titleNow = followTitle.ifBlank { liveShow?.title.orEmpty() }
-        val epNow = followEpisode.ifBlank { liveShow?.episode.orEmpty() }
-        val epTitleNow = followEpisodeTitle.ifBlank { liveShow?.episodeTitle.orEmpty() }
-        followFid = null
-        followTitle = ""
-        followEpisode = ""
-        followEpisodeTitle = ""
+        val titleNow = title0.ifBlank { liveShow?.title.orEmpty() }
+        val epNow = ep0.ifBlank { liveShow?.episode.orEmpty() }
+        val epTitleNow = epTitle0.ifBlank { liveShow?.episodeTitle.orEmpty() }
 
         // 第 1、2 级：fid 命中，或「剧名 + 集号」在本机反查命中 → 直接播本机资源
         val localFid = videoViewModel.resolveFollowFid(fid, titleNow, epNow)
         if (localFid != null) {
             enterFollowedVideo(localFid)
-            return@LaunchedEffect
+            return
         }
 
         val roomUsable = partyState.active && !partyState.isHost && partyState.approved
@@ -303,11 +247,10 @@ fun MainScreen(
                 "房主在看${if (titleNow.isNotBlank()) "《$titleNow》" else ""}$epNow，本机没有这一集",
                 android.widget.Toast.LENGTH_SHORT,
             ).show()
-            return@LaunchedEffect
+            return
         }
 
         // 第 3 级：本机确实没有，向房主点对点要一次短时直链（有冷却/上限/TTL，不落盘不打日志）
-        // 这里不再弹「正在向房主请求直链…」：正常 1-2 秒就拿到，弹窗只是噪音
         coroutineScope.launch {
             WatchPartySession.requestLink(fid)
             val got = withTimeoutOrNull(15_000L) {
@@ -342,6 +285,85 @@ fun MainScreen(
                 ).show()
             }
         }
+    }
+
+    LaunchedEffect(
+        partyState.show?.fid,
+        partyState.remoteSync?.fid,
+        partyState.active,
+        partyState.approved,
+    ) {
+        if (!partyState.active || partyState.isHost || !partyState.approved) return@LaunchedEffect
+        val show = partyState.show
+        val fid = show?.fid?.takeIf { it.isNotBlank() }
+            ?: partyState.remoteSync?.fid?.takeIf { it.isNotBlank() }
+            ?: return@LaunchedEffect
+        // 房主换了别的片子/别的集，之前「取消」的记忆就作废：换回来时还会再提示
+        if (cancelledFollowFid != null && cancelledFollowFid != fid) cancelledFollowFid = null
+        // 已经就在看的这一集：只同步进度，不用跳
+        if (videoUiState.currentPlayFile?.fid == fid) return@LaunchedEffect
+        if (fid == cancelledFollowFid || fid == followFid) return@LaunchedEffect
+        // 用户已经在播放页里看着：房主换集/换片直接切过去，不再弹 3 秒确认（点了跟随已经是明确意图）
+        val videoPageIndex = destinations.indexOfFirst { it == MainDestination.Video }
+        val inPlayerPage = videoPageIndex >= 0 && pagerState.currentPage == videoPageIndex
+        if (inPlayerPage && videoUiState.currentPlayFile != null) {
+            followFid = null
+            applyFollow(
+                fid,
+                show?.title.orEmpty(),
+                show?.episode ?: partyState.remoteSync?.episode.orEmpty(),
+                show?.episodeTitle.orEmpty(),
+            )
+            return@LaunchedEffect
+        }
+        followFid = fid
+        followTitle = show?.title ?: ""
+        followEpisode = show?.episode ?: partyState.remoteSync?.episode ?: ""
+        followEpisodeTitle = show?.episodeTitle ?: ""
+    }
+
+    // 一起看：加入端启动/回到前台时，静默回到上次的房间（房主复用邀请码，节目事件能直接送达，不用再手动进面板跟随）
+    LaunchedEffect(Unit) {
+        WatchPartySession.tryAutoRejoin()
+    }
+
+    // 加入端在房间卡片里手动点「跟随房主」：用户已经明确点了跟随，直接进，不再弹 3 秒倒计时
+    LaunchedEffect(partyState.followRequest) {
+        val req = partyState.followRequest ?: return@LaunchedEffect
+        if (!partyState.active || partyState.isHost || req.fid.isBlank()) return@LaunchedEffect
+        // 本来就在看房主这一集：不用再切
+        if (videoUiState.currentPlayFile?.fid == req.fid) {
+            WatchPartySession.consumeFollowRequest()
+            return@LaunchedEffect
+        }
+        cancelledFollowFid = null
+        followFid = null
+        applyFollow(req.fid, req.title, req.episode, req.episodeTitle)
+        WatchPartySession.consumeFollowRequest()
+    }
+
+    LaunchedEffect(followFid) {
+        val fid = followFid ?: return@LaunchedEffect
+        followUrgent = false
+        followSeconds = 3
+        val deadline = System.currentTimeMillis() + 3000L
+        while (System.currentTimeMillis() < deadline) {
+            // 「立即进入」会把 followUrgent 置真，直接跳出，不用再空等满 3 秒
+            if (followUrgent) break
+            delay(100)
+            if (followUrgent) break
+            followSeconds = (((deadline - System.currentTimeMillis()) + 999) / 1000).toInt().coerceIn(0, 3)
+            if (followSeconds <= 0) break
+        }
+        // 房主补发的 show 可能比跟随晚到一步（加入时先只有心跳 sync）：applyFollow 里会现读一次兜底
+        val title0 = followTitle
+        val ep0 = followEpisode
+        val epTitle0 = followEpisodeTitle
+        followFid = null
+        followTitle = ""
+        followEpisode = ""
+        followEpisodeTitle = ""
+        applyFollow(fid, title0, ep0, epTitle0)
     }
 
     // 跟随时给一个 3 秒倒计时，可取消：换集/换片不会突兀地抢走用户当前画面
