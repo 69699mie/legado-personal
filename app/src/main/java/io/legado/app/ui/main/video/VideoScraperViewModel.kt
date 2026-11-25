@@ -1848,7 +1848,14 @@ class VideoScraperViewModel(
      * 加入端：本机没有这一集时，用房主点对点下发的短时直链直接播。
      * 只用于"一起看"跟随，直链不写入任何持久化缓存。
      */
-    fun playFollowedLink(fid: String, seriesTitle: String, episodeText: String, url: String, fileSize: Long = 0L) {
+    fun playFollowedLink(
+        fid: String,
+        seriesTitle: String,
+        episodeText: String,
+        episodeTitle: String,
+        url: String,
+        fileSize: Long = 0L,
+    ) {
         if (url.isBlank() || fid.isBlank()) return
         val existingSeries = _uiState.value.seriesList.find { s -> s.videos.any { it.fid == fid } }
         val existingFile = existingSeries?.videos?.find { it.fid == fid }
@@ -1856,7 +1863,8 @@ class VideoScraperViewModel(
             val p = existingFile.parsedInfo ?: VideoFileNameParser.parse(existingFile.name)
             val ep = extractEpisodeNumber(existingFile.name, p.episode).takeIf { it > 0 }
             val t = if (existingSeries.category != "电影" && ep != null) {
-                "${existingSeries.title} 第${ep}集"
+                val epT = episodeTitle.ifBlank { resolveEpisodeTitle(existingSeries, p.season ?: 1, ep).orEmpty() }
+                if (epT.isNotBlank()) "${existingSeries.title} 第${ep}集 $epT" else "${existingSeries.title} 第${ep}集"
             } else existingSeries.title
             _uiState.update {
                 it.copy(playUrl = url, playTitle = t, currentSeries = existingSeries,
@@ -1865,6 +1873,9 @@ class VideoScraperViewModel(
             return
         }
         val safeTitle = seriesTitle.ifBlank { "一起看" }
+        // 集号从「第2集」里反解，集标题（如「舍哥儿」）单独塞进 episodeTitles，
+        // 这样播放页左上角能拼出「剧名 第2集 舍哥儿」，而不是回退成「一起看 第2集」
+        val epNum = Regex("第\\s*(\\d+)\\s*集").find(episodeText)?.groupValues?.getOrNull(1)?.toIntOrNull()
         val displayName = safeTitle + (if (episodeText.isNotBlank()) " $episodeText" else "")
         // size 必须带：播放前会校验文件大小，0 会直接弹「无法获取视频文件大小」
         val file = QuarkFile(fid = fid, name = displayName, isFolder = false, size = fileSize)
@@ -1874,7 +1885,9 @@ class VideoScraperViewModel(
             originalParsedTitle = safeTitle,
             year = null,
             category = "未分类",
-            videos = listOf(file)
+            videos = listOf(file),
+            episodeTitles = if (epNum != null && episodeTitle.isNotBlank())
+                mapOf(epNum to episodeTitle) else emptyMap(),
         )
         _uiState.update {
             it.copy(playUrl = url, playTitle = displayName, currentSeries = series,

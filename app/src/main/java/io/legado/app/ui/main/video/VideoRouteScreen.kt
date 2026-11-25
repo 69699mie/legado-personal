@@ -966,6 +966,8 @@ fun InternalVideoPlayer(url: String, title: String, cookie: String, series: Medi
     val proxyServer = koinInject<LocalProxyServer>()
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val latestSeries = uiState.seriesList.find { it.id == series.id || it.title == series.title } ?: series
+    // 播放监听器是长效的（DisposableEffect(exoPlayer)），里面要读「当前这一集」的最新值，不能捕获旧值
+    val currentFileState = rememberUpdatedState(uiState.currentPlayFile)
 
     // 触觉反馈（震动）
     val haptic = LocalHapticFeedback.current
@@ -1025,6 +1027,18 @@ fun InternalVideoPlayer(url: String, title: String, cookie: String, series: Medi
             epNum != null -> "第${epNum}集"
             else -> ""
         }
+    }
+
+    // 集标题（如「舍哥儿」）：跟着 show 一起发给加入端，否则对方左上角只能显示「剧名 第2集」
+    val partyEpisodeTitle = remember(latestSeries, currentFile) {
+        val parsed = currentFile.parsedInfo ?: io.legado.app.utils.VideoFileNameParser.parse(currentFile.name)
+        val epNum = viewModel.extractEpisodeNumber(currentFile.name, parsed.episode).takeIf { it > 0 }
+        val season = parsed.season ?: 1
+        if (latestSeries.category == "电影" || epNum == null) ""
+        else resolveEpisodeTitleOf(latestSeries, season, epNum)
+            ?.replace(Regex("^\\s*第\\s*\\d+\\s*集\\s*"), "")
+            ?.trim()
+            .orEmpty()
     }
 
     val isInPip = remember { mutableStateOf(activity?.isInPictureInPictureMode == true) }
@@ -1201,6 +1215,56 @@ fun InternalVideoPlayer(url: String, title: String, cookie: String, series: Medi
         pushPartyNow()
     }
 
+    /**
+     * 房主主动拖动 / 换集之后的「两端就位再一起播」：
+     * 先广播「暂停在 X 秒」，等所有已同意的加入端回报已就位（缓冲完成 + 进度对上），
+     * 再统一点播放；最多等 8 秒兜底，避免有人网差把房主也一起拖死。
+     * 被动卡顿（播放中网速抖动）不走这里：另一端照常播，卡顿端恢复后自己追上。
+     */
+    val partyUiScope = rememberCoroutineScope()
+    var partyStaging by remember { mutableStateOf(false) }
+    fun stagePartyPlayback() {
+        if (!partyState.active || !partyState.connected || !partyState.isHost) return
+        if (partyStaging) return
+        val peers = WatchPartySession.peersNeedReady()
+        if (peers.isEmpty()) return
+        lastLocalActionAt = System.currentTimeMillis()
+        val targetFid = currentFile.fid
+        val targetPos = exoPlayer.currentPosition
+        val wantPlay = exoPlayer.isPlaying
+        partyStaging = true
+        WatchPartySession.clearReadyAcks()
+        if (wantPlay) exoPlayer.pause()
+        WatchPartySession.pushLocalSync(
+            fid = targetFid,
+            episode = partyEpisodeLabel,
+            positionMs = targetPos,
+            paused = true,
+            speed = playbackSpeed,
+            force = true,
+            stage = true,
+        )
+        partyUiScope.launch {
+            val started = System.currentTimeMillis()
+            while (System.currentTimeMillis() - started < 8_000L) {
+                if (peers.all { WatchPartySession.readyAckAt(it) >= started }) break
+                delay(120)
+            }
+            partyStaging = false
+            if (wantPlay) {
+                exoPlayer.play()
+                WatchPartySession.pushLocalSync(
+                    fid = targetFid,
+                    episode = partyEpisodeLabel,
+                    positionMs = exoPlayer.currentPosition,
+                    paused = false,
+                    speed = playbackSpeed,
+                    force = true,
+                )
+            }
+        }
+    }
+
     DisposableEffect(lifecycleOwner) {
         var isPlayerReleased = false
         val observer = LifecycleEventObserver { _, event ->
@@ -1315,6 +1379,23 @@ fun InternalVideoPlayer(url: String, title: String, cookie: String, series: Medi
                     if (introSeconds > 0 && !hasAutoSkippedIntro && exoPlayer.currentPosition < introSeconds * 1000L) {
                         exoPlayer.seekTo(introSeconds * 1000L); currentPosition = introSeconds * 1000L; hasAutoSkippedIntro = true
                     }
+                    // 一起看（加入端）：被动卡顿（缓冲空了/网速抖动）恢复后立刻对齐一次，
+                    // 不等下一次 10 秒心跳，否则会一直差十几秒
+                    val ps = WatchPartySession.state.value
+                    if (!ps.isHost && ps.active && ps.connected) {
+                        val s = ps.remoteSync
+                        val myFid = currentFileState.value?.fid.orEmpty()
+                        if (s != null && s.fid == myFid && !s.paused &&
+                            System.currentTimeMillis() - lastAppliedRemoteAt > 1_000L
+                        ) {
+                            val expected = s.positionMs +
+                                ((System.currentTimeMillis() - s.sentAt) * s.speed).toLong()
+                            if (expected > 0 && abs(expected - exoPlayer.currentPosition) > 1_500L) {
+                                exoPlayer.seekTo(expected)
+                                lastAppliedRemoteAt = System.currentTimeMillis()
+                            }
+                        }
+                    }
                 } else if (state == Player.STATE_ENDED) {
                     val idx = sortedVideos.indexOfFirst { it.fid == currentFile.fid }
                     if (idx != -1 && idx < sortedVideos.size - 1) {
@@ -1416,7 +1497,7 @@ fun InternalVideoPlayer(url: String, title: String, cookie: String, series: Medi
         if (!partyState.active) return@LaunchedEffect
         // 房主换集/换片（含刚进播放页、刚建房）：立刻发「当前节目」，加入端不用等真正开播就能先跳过去
         if (partyState.isHost && partyState.connected && (fidChanged || firstEnter || justActivated)) {
-            WatchPartySession.notifyShow(currentFile.fid, partyEpisodeLabel, latestSeries.title)
+            WatchPartySession.notifyShow(currentFile.fid, partyEpisodeLabel, latestSeries.title, partyEpisodeTitle)
         }
         if (!partyState.connected) return@LaunchedEffect
         if (!fidChanged && !playingChanged && !speedChanged) return@LaunchedEffect
@@ -1445,6 +1526,19 @@ fun InternalVideoPlayer(url: String, title: String, cookie: String, series: Medi
         if (abs(playbackSpeed - sync.speed) > 0.01f) {
             playbackSpeed = sync.speed.coerceIn(0.5f, 3.0f)
             exoPlayer.setPlaybackParameters(PlaybackParameters(playbackSpeed, 1.0f))
+        }
+        // 房主主动拖动/换集后停在某处等我们就位：本机缓冲好了再回报 ready，
+        // 房主收齐所有加入端回执才真正开播（最多等 8 秒）
+        if (sync.stage && !partyState.isHost && sync.fid == currentFile.fid) {
+            partyUiScope.launch {
+                val waitStart = System.currentTimeMillis()
+                while (System.currentTimeMillis() - waitStart < 6_000L &&
+                    exoPlayer.playbackState != Player.STATE_READY
+                ) {
+                    delay(120)
+                }
+                WatchPartySession.notifyReady(currentFile.fid, exoPlayer.currentPosition)
+            }
         }
     }
 
@@ -1574,9 +1668,14 @@ fun InternalVideoPlayer(url: String, title: String, cookie: String, series: Medi
             onDragEnd = {
                 if (gestureMode == "seek") {
                     if (abs(currentPosition - dragStartPosition) > 1000L) {
-                        exoPlayer.seekTo(currentPosition); if (isPlaying) exoPlayer.play()
+                        exoPlayer.seekTo(currentPosition)
                         haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                        pushLocalAction()
+                        if (partyState.active && partyState.isHost && WatchPartySession.peersNeedReady().isNotEmpty()) {
+                            stagePartyPlayback()
+                        } else {
+                            if (isPlaying) exoPlayer.play()
+                            pushLocalAction()
+                        }
                     } else currentPosition = dragStartPosition
                 };
                 gestureMode = ""; gestureType = ""; isDraggingSeekBar = false
@@ -1774,6 +1873,47 @@ fun InternalVideoPlayer(url: String, title: String, cookie: String, series: Medi
             return@Box
         }
 
+        // 一起看：房主收到申请就在播放页顶部常驻一条，直到点同意/拒绝为止。
+        // 必须放在控制条那一层之外：控制条 3 秒自动隐藏，写在里面就会跟着一起消失，
+        // 表现成「申请到了但屏幕上完全没提示」。
+        val partyPending = partyState.pending
+        AnimatedVisibility(
+            visible = partyState.isHost && partyState.active && partyPending.isNotEmpty(),
+            enter = fadeIn() + slideInVertically { -it / 2 },
+            exit = fadeOut() + slideOutVertically { -it / 2 },
+            modifier = Modifier.align(Alignment.TopCenter),
+        ) {
+            Column(
+                modifier = Modifier
+                    .statusBarsPadding()
+                    .padding(top = 16.dp)
+                    .background(Color(0xE61A1A1A), RoundedCornerShape(14.dp))
+                    .padding(horizontal = 12.dp, vertical = 10.dp),
+                verticalArrangement = Arrangement.spacedBy(2.dp),
+            ) {
+                partyPending.forEach { p ->
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(
+                            text = "${p.userName} 申请加入一起看",
+                            color = Color.White,
+                            fontSize = 13.sp,
+                            modifier = Modifier.padding(end = 8.dp),
+                        )
+                        if (p.userId in partyState.approving) {
+                            Text("已同意，等待对方进入…", color = Color(0xFFB8B8B8), fontSize = 12.sp)
+                        } else {
+                            TextButton(onClick = { WatchPartySession.approve(p.userId) }) {
+                                Text("同意", color = Color(0xFF66BB6A), fontSize = 13.sp)
+                            }
+                            TextButton(onClick = { WatchPartySession.reject(p.userId) }) {
+                                Text("拒绝", color = Color(0xFFEF5350), fontSize = 13.sp)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
         AnimatedVisibility(visible = showControls, enter = fadeIn(), exit = fadeOut(), modifier = Modifier.fillMaxSize()) {
             Box(modifier = Modifier.fillMaxSize()) {
                 Column(modifier = Modifier.align(Alignment.CenterStart).padding(start = 16.dp), verticalArrangement = Arrangement.spacedBy(30.dp)) {
@@ -1817,61 +1957,6 @@ fun InternalVideoPlayer(url: String, title: String, cookie: String, series: Medi
                     IconButton(onClick = { showSettingsPanel = true }) { Icon(Icons.Default.Settings, contentDescription = "设置", tint = Color.White) }
                 }
 
-                // 一起看：房主播放中收到申请，直接在播放页上同意/拒绝。
-                // 横幅 10 秒无操作自动收起（点一下横幅可固定不收起），收起后左侧角标继续提醒。
-                var partyBannerVisible by remember { mutableStateOf(false) }
-                var partyBannerPinned by remember { mutableStateOf(false) }
-                LaunchedEffect(partyState.pending.map { it.userId }, partyState.active, partyState.isHost) {
-                    if (partyState.isHost && partyState.active && partyState.pending.isNotEmpty()) {
-                        partyBannerVisible = true
-                        delay(10_000)
-                        if (!partyBannerPinned) partyBannerVisible = false
-                    } else {
-                        partyBannerVisible = false
-                        partyBannerPinned = false
-                    }
-                }
-                AnimatedVisibility(
-                    visible = partyBannerVisible,
-                    enter = fadeIn() + slideInVertically { -it / 2 },
-                    exit = fadeOut() + slideOutVertically { -it / 2 },
-                    modifier = Modifier.align(Alignment.TopCenter),
-                ) {
-                    Column(
-                        modifier = Modifier
-                            .statusBarsPadding()
-                            .padding(top = 16.dp)
-                            .background(Color(0xE61A1A1A), RoundedCornerShape(14.dp))
-                            .clickable(
-                                interactionSource = remember { androidx.compose.foundation.interaction.MutableInteractionSource() },
-                                indication = null,
-                            ) { partyBannerPinned = true }
-                            .padding(horizontal = 12.dp, vertical = 10.dp),
-                        verticalArrangement = Arrangement.spacedBy(2.dp),
-                    ) {
-                        partyState.pending.forEach { p ->
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                Text(
-                                    text = "${p.userName} 申请加入一起看",
-                                    color = Color.White,
-                                    fontSize = 13.sp,
-                                    modifier = Modifier.padding(end = 8.dp),
-                                )
-                                if (p.userId in partyState.approving) {
-                                    Text("已同意，等待对方进入…", color = Color(0xFFB8B8B8), fontSize = 12.sp)
-                                } else {
-                                    TextButton(onClick = { WatchPartySession.approve(p.userId) }) {
-                                        Text("同意", color = Color(0xFF66BB6A), fontSize = 13.sp)
-                                    }
-                                    TextButton(onClick = { WatchPartySession.reject(p.userId) }) {
-                                        Text("拒绝", color = Color(0xFFEF5350), fontSize = 13.sp)
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-
                 Box(modifier = Modifier.align(Alignment.BottomCenter).navigationBarsPadding().padding(bottom = 12.dp).widthIn(max = if (isLandscape) 600.dp else 360.dp).fillMaxWidth(0.9f).background(Color(0xB31A1A1A), RoundedCornerShape(16.dp)).border(1.dp, Color.White.copy(alpha = 0.1f), RoundedCornerShape(16.dp)).padding(horizontal = 12.dp, vertical = 8.dp)) {
                     Column(modifier = Modifier.fillMaxWidth()) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -1883,13 +1968,13 @@ fun InternalVideoPlayer(url: String, title: String, cookie: String, series: Medi
                                 .pointerInput(duration) {
                                     detectTapGestures(
                                         onPress = { offset -> if (duration > 0) { isDraggingSeekBar = true; dragStartPosition = exoPlayer.currentPosition; val target = (offset.x / sliderWidth).coerceIn(0f, 1f); currentPosition = (target * duration).toLong(); seekDeltaMillis = currentPosition - dragStartPosition } },
-                                        onTap = { offset -> if (duration > 0) { val target = (offset.x / sliderWidth).coerceIn(0f, 1f); val finalPos = (target * duration).toLong(); if (abs(finalPos - exoPlayer.currentPosition) > 1000L) { exoPlayer.seekTo(finalPos); pushLocalAction() }; isDraggingSeekBar = false } }
+                                        onTap = { offset -> if (duration > 0) { val target = (offset.x / sliderWidth).coerceIn(0f, 1f); val finalPos = (target * duration).toLong(); if (abs(finalPos - exoPlayer.currentPosition) > 1000L) { exoPlayer.seekTo(finalPos); if (partyState.active && partyState.isHost && WatchPartySession.peersNeedReady().isNotEmpty()) stagePartyPlayback() else pushLocalAction() }; isDraggingSeekBar = false } }
                                     )
                                 }.pointerInput(duration) {
                                     detectDragGestures(
                                         onDragStart = { offset -> if (duration > 0) { isDraggingSeekBar = true; dragStartPosition = exoPlayer.currentPosition; val target = (offset.x / sliderWidth).coerceIn(0f, 1f); currentPosition = (target * duration).toLong(); seekDeltaMillis = currentPosition - dragStartPosition } },
                                         onDrag = { change, _ -> change.consume(); if (duration > 0) { val target = (change.position.x / sliderWidth).coerceIn(0f, 1f); currentPosition = (target * duration).toLong(); seekDeltaMillis = currentPosition - dragStartPosition } },
-                                        onDragEnd = { isDraggingSeekBar = false; if (abs(currentPosition - dragStartPosition) > 1000L) { exoPlayer.seekTo(currentPosition); if (isPlaying) exoPlayer.play(); haptic.performHapticFeedback(HapticFeedbackType.LongPress); pushLocalAction() } else currentPosition = dragStartPosition },
+                                        onDragEnd = { isDraggingSeekBar = false; if (abs(currentPosition - dragStartPosition) > 1000L) { exoPlayer.seekTo(currentPosition); haptic.performHapticFeedback(HapticFeedbackType.LongPress); if (partyState.active && partyState.isHost && WatchPartySession.peersNeedReady().isNotEmpty()) stagePartyPlayback() else { if (isPlaying) exoPlayer.play(); pushLocalAction() } } else currentPosition = dragStartPosition },
                                         onDragCancel = { isDraggingSeekBar = false }
                                     )
                                 }, contentAlignment = Alignment.Center

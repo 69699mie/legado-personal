@@ -10,6 +10,8 @@ data class PartySyncState(
     val paused: Boolean = true,
     /** 倍速：两端都可改，按「最后操作生效」同步 */
     val speed: Float = 1.0f,
+    /** 房主主动拖动/换集后正在「等所有加入端就位」：加入端此时才需要回报 ready */
+    val stage: Boolean = false,
     /** 发送端本地时间戳（用于估算传输耗时，做粗略漂移校正） */
     val sentAt: Long = 0L,
 )
@@ -22,6 +24,8 @@ data class PartyShowState(
     val fid: String = "",
     val episode: String = "",
     val title: String = "",
+    /** 这一集的集标题（如「舍哥儿」），加入端拼「剧名 第2集 舍哥儿」用；没有就留空 */
+    val episodeTitle: String = "",
     val sentAt: Long = 0L,
 )
 

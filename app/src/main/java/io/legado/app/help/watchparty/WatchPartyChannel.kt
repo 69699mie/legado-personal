@@ -51,6 +51,8 @@ class WatchPartyChannel(
         fun onLinkRequest(userId: String, fid: String)
         /** 加入端：收到房主返回的短时直链 */
         fun onLinkReceived(toId: String, fid: String, url: String, expiresAt: Long, size: Long)
+        /** 房主端：某个加入端回报「已就位」（缓冲好、进度对上了） */
+        fun onReadyAck(userId: String)
         /** 发送结果：code<400 成功；code>=400 是中继拒收（429 限流 / 403 等）；error 为网络异常文案 */
         fun onPublishResult(event: String, code: Int, error: String?)
     }
@@ -170,18 +172,34 @@ class WatchPartyChannel(
             addProperty("positionMs", state.positionMs)
             addProperty("paused", state.paused)
             addProperty("speed", state.speed)
+            addProperty("stage", state.stage)
             addProperty("sentAt", System.currentTimeMillis())
         })
     }
 
     /** 房主换集 / 换片：只报「当前节目」，不等真正开播，加入端收到就能先跳过去 */
-    fun sendShow(fid: String, episode: String, title: String) {
+    fun sendShow(fid: String, episode: String, title: String, episodeTitle: String = "") {
         publish("show", JsonObject().apply {
             addProperty("userId", userId)
             addProperty("userName", userName)
             addProperty("fid", fid)
             addProperty("episode", episode)
             addProperty("title", title)
+            addProperty("episodeTitle", episodeTitle)
+            addProperty("sentAt", System.currentTimeMillis())
+        })
+    }
+
+    /**
+     * 加入端回报「我这一集已经缓冲好了、进度也对上了」。
+     * 房主主动拖动/换集时靠它决定什么时候真正开播（最多等 8 秒兜底）。
+     */
+    fun sendReady(fid: String, positionMs: Long) {
+        if (amHost || !approved) return
+        publish("ready", JsonObject().apply {
+            addProperty("userId", userId)
+            addProperty("fid", fid)
+            addProperty("positionMs", positionMs)
             addProperty("sentAt", System.currentTimeMillis())
         })
     }
@@ -367,9 +385,16 @@ class WatchPartyChannel(
                         fid = data.get("fid")?.asString ?: "",
                         episode = data.get("episode")?.asString ?: "",
                         title = data.get("title")?.asString ?: "",
+                        episodeTitle = data.get("episodeTitle")?.asString ?: "",
                         sentAt = data.get("sentAt")?.asLong ?: System.currentTimeMillis(),
                     )
                 )
+            }
+
+            "ready" -> {
+                val id = data.get("userId")?.asString ?: return
+                if (id == userId) return
+                if (amHost) callbacks.onReadyAck(id)
             }
 
             "leaveplayer" -> {
@@ -421,6 +446,7 @@ class WatchPartyChannel(
             positionMs = data.get("positionMs")?.asLong ?: 0L,
             paused = data.get("paused")?.asBoolean ?: true,
             speed = data.get("speed")?.asFloat ?: 1.0f,
+            stage = data.get("stage")?.asBoolean ?: false,
             sentAt = data.get("sentAt")?.asLong ?: System.currentTimeMillis(),
         )
         if (state.userId.isBlank() || state.userId == userId) return

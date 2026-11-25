@@ -211,6 +211,7 @@ fun MainScreen(
     var followFid by remember { mutableStateOf<String?>(null) }
     var followTitle by remember { mutableStateOf("") }
     var followEpisode by remember { mutableStateOf("") }
+    var followEpisodeTitle by remember { mutableStateOf("") }
     var followSeconds by remember { mutableIntStateOf(3) }
     var followUrgent by remember { mutableStateOf(false) }
     var cancelledFollowFid by remember { mutableStateOf<String?>(null) }
@@ -244,6 +245,7 @@ fun MainScreen(
         followFid = fid
         followTitle = show?.title ?: ""
         followEpisode = show?.episode ?: partyState.remoteSync?.episode ?: ""
+        followEpisodeTitle = show?.episodeTitle ?: ""
     }
 
     // 加入端在房间卡片里手动点「跟随房主」：走同一套 3 秒倒计时
@@ -259,6 +261,7 @@ fun MainScreen(
         followFid = req.fid
         followTitle = req.title
         followEpisode = req.episode
+        followEpisodeTitle = req.episodeTitle
         WatchPartySession.consumeFollowRequest()
     }
 
@@ -275,9 +278,16 @@ fun MainScreen(
             followSeconds = (((deadline - System.currentTimeMillis()) + 999) / 1000).toInt().coerceIn(0, 3)
             if (followSeconds <= 0) break
         }
-        val titleNow = followTitle
-        val epNow = followEpisode
+        // 房主补发的 show 可能比跟随晚到一步（加入时先只有心跳 sync）：这里现读一次最新状态兜底，
+        // 否则剧名/集标题是空，左上角会退化成「一起看」
+        val liveShow = WatchPartySession.state.value.show
+        val titleNow = followTitle.ifBlank { liveShow?.title.orEmpty() }
+        val epNow = followEpisode.ifBlank { liveShow?.episode.orEmpty() }
+        val epTitleNow = followEpisodeTitle.ifBlank { liveShow?.episodeTitle.orEmpty() }
         followFid = null
+        followTitle = ""
+        followEpisode = ""
+        followEpisodeTitle = ""
 
         // 第 1、2 级：fid 命中，或「剧名 + 集号」在本机反查命中 → 直接播本机资源
         val localFid = videoViewModel.resolveFollowFid(fid, titleNow, epNow)
@@ -297,13 +307,9 @@ fun MainScreen(
         }
 
         // 第 3 级：本机确实没有，向房主点对点要一次短时直链（有冷却/上限/TTL，不落盘不打日志）
+        // 这里不再弹「正在向房主请求直链…」：正常 1-2 秒就拿到，弹窗只是噪音
         coroutineScope.launch {
             WatchPartySession.requestLink(fid)
-            android.widget.Toast.makeText(
-                context,
-                "本机没有这一集，正在向房主请求直链…",
-                android.widget.Toast.LENGTH_SHORT,
-            ).show()
             val got = withTimeoutOrNull(15_000L) {
                 var hit: io.legado.app.help.watchparty.PartyLink? = null
                 while (hit == null) {
@@ -324,7 +330,7 @@ fun MainScreen(
                     pagerState.animateScrollToPage(targetIndex)
                     delay(200)
                 }
-                videoViewModel.playFollowedLink(fid, titleNow, epNow, got.url, got.size)
+                videoViewModel.playFollowedLink(fid, titleNow, epNow, epTitleNow, got.url, got.size)
                 WatchPartySession.consumeIncomingLink()
             } else {
                 // 第 4 级：拿不到就明确提示，不阻断当前观看

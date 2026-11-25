@@ -68,6 +68,12 @@ object WatchPartySession {
     @Volatile
     private var snapshotAt = 0L
 
+    /** 房主最近一次广播的「当前节目」；有新成员进房时按它补发一次，新来的人不用等 10 秒心跳 */
+    @Volatile
+    private var lastShow: PartyShowState? = null
+    /** 房主端：各加入端回报「已就位」的时间戳（userId -> ackAt） */
+    private val readyAcks = mutableMapOf<String, Long>()
+
     private fun pref() = appCtx.getSharedPreferences(PREF, Context.MODE_PRIVATE)
 
     fun myId(): String {
@@ -169,6 +175,7 @@ object WatchPartySession {
                 }
 
                 override fun onMembersChanged(members: List<PartyMember>) {
+                    val before = _state.value.members.map { it.userId }.toSet()
                     _state.update { current ->
                         val me = PartyMember(
                             userId = current.myId,
@@ -184,6 +191,16 @@ object WatchPartySession {
                             pending = current.pending.filterNot { it.userId in joinedIds },
                             approving = current.approving - joinedIds,
                         )
+                    }
+                    // 有新成员刚进房：房主补发一次「当前节目」，新来的人不用干等 10 秒心跳
+                    // （否则加入端只能拿到不含剧名/集标题的 sync，标题会回退成「一起看」）
+                    val cur = _state.value
+                    val after = cur.members.map { it.userId }.toSet()
+                    val newlyJoined = after - before - cur.myId
+                    if (cur.isHost && cur.approved && newlyJoined.isNotEmpty()) {
+                        lastShow?.let { s ->
+                            channel?.sendShow(s.fid, s.episode, s.title, s.episodeTitle)
+                        }
                     }
                 }
 
@@ -223,6 +240,10 @@ object WatchPartySession {
 
                 override fun onHostLeftPlayer() {
                     _state.update { it.copy(hostLeft = true) }
+                }
+
+                override fun onReadyAck(userId: String) {
+                    readyAcks[userId] = System.currentTimeMillis()
                 }
 
                 override fun onLinkRequest(userId: String, fid: String) {
@@ -329,12 +350,44 @@ object WatchPartySession {
     }
 
     /** 房主换集 / 换片：把「当前节目」广播出去，加入端据此提前跟随 */
-    fun notifyShow(fid: String, episode: String, title: String) {
+    fun notifyShow(fid: String, episode: String, title: String, episodeTitle: String = "") {
         if (!_state.value.isHost) return
         val ch = channel ?: return
-        val show = PartyShowState(fid = fid, episode = episode, title = title, sentAt = System.currentTimeMillis())
+        val show = PartyShowState(
+            fid = fid,
+            episode = episode,
+            title = title,
+            episodeTitle = episodeTitle,
+            sentAt = System.currentTimeMillis(),
+        )
+        lastShow = show
         _state.update { it.copy(show = show, hostLeft = false) }
-        ch.sendShow(fid, episode, title)
+        ch.sendShow(fid, episode, title, episodeTitle)
+    }
+
+    /** 房主端：还要等哪些成员回报「已就位」。
+     *  只算「刚还在报在线」的已同意成员：已经退出的人不能每次拖动都拖住房主 8 秒。 */
+    fun peersNeedReady(): Set<String> {
+        val cur = _state.value
+        if (!cur.isHost) return emptySet()
+        val now = System.currentTimeMillis()
+        return cur.members.asSequence()
+            .filter { it.userId != cur.myId && now - it.lastSeen < 25_000L }
+            .map { it.userId }
+            .filter { it in approvedIds }
+            .toSet()
+    }
+
+    /** 房主端：开始一轮就位等待前先清空旧回执，避免上一轮的 ack 被误当成本轮 */
+    fun clearReadyAcks() = readyAcks.clear()
+
+    fun readyAckAt(userId: String): Long = readyAcks[userId] ?: 0L
+
+    /** 加入端：本机缓冲就绪、进度也对上了，回报一声 */
+    fun notifyReady(fid: String, positionMs: Long) {
+        val cur = _state.value
+        if (cur.isHost || !cur.approved || fid.isBlank()) return
+        channel?.sendReady(fid, positionMs)
     }
 
     /** 房主退出了播放页：加入端暂停并等待，别再按旧进度外推 */
@@ -453,6 +506,7 @@ object WatchPartySession {
         paused: Boolean,
         speed: Float = 1.0f,
         force: Boolean = false,
+        stage: Boolean = false,
     ) {
         val ch = channel ?: return
         if (!_state.value.connected || !_state.value.approved) return
@@ -465,6 +519,7 @@ object WatchPartySession {
             positionMs = positionMs,
             paused = paused,
             speed = speed,
+            stage = stage,
             sentAt = System.currentTimeMillis(),
         )
         localSnapshot = snap
