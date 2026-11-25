@@ -44,6 +44,8 @@ data class PartyLink(
     val fid: String = "",
     val url: String = "",
     val expiresAt: Long = 0L,
+    /** 房主侧这一集的文件大小（播放前要用它做流式读取，缺失会报"无法获取视频文件大小"） */
+    val size: Long = 0L,
 )
 
 /** 房间成员 */data class PartyMember(

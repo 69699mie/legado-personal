@@ -997,7 +997,7 @@ fun InternalVideoPlayer(url: String, title: String, cookie: String, series: Medi
         val req = partyStateForLink.linkRequest ?: return@LaunchedEffect
         if (!partyStateForLink.isHost) return@LaunchedEffect
         if (req.fid != currentFile.fid || url.isBlank()) return@LaunchedEffect
-        io.legado.app.help.watchparty.WatchPartySession.respondLink(req.userId, req.fid, url)
+        io.legado.app.help.watchparty.WatchPartySession.respondLink(req.userId, req.fid, url, currentFile.size)
     }
 
     val dynamicTitle = remember(latestSeries, currentFile) {
@@ -1839,7 +1839,8 @@ fun InternalVideoPlayer(url: String, title: String, cookie: String, series: Medi
                 ) {
                     Column(
                         modifier = Modifier
-                            .padding(top = 60.dp)
+                            .statusBarsPadding()
+                            .padding(top = 16.dp)
                             .background(Color(0xE61A1A1A), RoundedCornerShape(14.dp))
                             .clickable(
                                 interactionSource = remember { androidx.compose.foundation.interaction.MutableInteractionSource() },

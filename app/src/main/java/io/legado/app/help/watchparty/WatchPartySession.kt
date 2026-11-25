@@ -231,13 +231,13 @@ object WatchPartySession {
                     _state.update { it.copy(linkRequest = PartyLinkRequest(userId, fid)) }
                 }
 
-                override fun onLinkReceived(toId: String, fid: String, url: String, expiresAt: Long) {
+                override fun onLinkReceived(toId: String, fid: String, url: String, expiresAt: Long, size: Long) {
                     val cur = _state.value
                     if (cur.isHost) return
                     // 只认「我请求过的那一集」，防止同房间别人拿到的链接被复用/串号
                     if (pendingLinkFid == null || pendingLinkFid != fid) return
                     if (expiresAt > 0 && System.currentTimeMillis() > expiresAt) return
-                    _state.update { it.copy(incomingLink = PartyLink(toId, fid, url, expiresAt)) }
+                    _state.update { it.copy(incomingLink = PartyLink(toId, fid, url, expiresAt, size)) }
                 }
 
                 override fun onRejected(reason: String?) {
@@ -383,14 +383,15 @@ object WatchPartySession {
      * 房主：把当前集的直链点对点发给申请的成员。
      * 只发给已同意的成员、每个房间最多 3 条、有效期 120 秒，且不落盘、不打印日志。
      */
-    fun respondLink(userId: String, fid: String, url: String) {
+    fun respondLink(userId: String, fid: String, url: String, size: Long) {
         val cur = _state.value
         if (!cur.isHost || !cur.active) return
         if (!approvedIds.contains(userId)) return
         if (url.isBlank()) return
         if (linkSentCount >= LINK_MAX_PER_ROOM) return
         linkSentCount++
-        channel?.sendLink(userId, fid, url, System.currentTimeMillis() + LINK_TTL_MS)
+        // size 一起给：加入端播放前要校验文件大小，缺了会直接弹「无法获取视频文件大小」
+        channel?.sendLink(userId, fid, url, System.currentTimeMillis() + LINK_TTL_MS, size)
         _state.update { it.copy(linkRequest = null) }
     }
 

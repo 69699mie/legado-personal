@@ -50,7 +50,7 @@ class WatchPartyChannel(
         /** 房主端：某个加入端索要当前集的短时直链 */
         fun onLinkRequest(userId: String, fid: String)
         /** 加入端：收到房主返回的短时直链 */
-        fun onLinkReceived(toId: String, fid: String, url: String, expiresAt: Long)
+        fun onLinkReceived(toId: String, fid: String, url: String, expiresAt: Long, size: Long)
         /** 发送结果：code<400 成功；code>=400 是中继拒收（429 限流 / 403 等）；error 为网络异常文案 */
         fun onPublishResult(event: String, code: Int, error: String?)
     }
@@ -204,13 +204,14 @@ class WatchPartyChannel(
     }
 
     /** 房主点对点回一条短时直链：只发给申请的 userId，带有效期戳 */
-    fun sendLink(toId: String, fid: String, url: String, expiresAt: Long) {
+    fun sendLink(toId: String, fid: String, url: String, expiresAt: Long, size: Long) {
         if (!amHost || !approved) return
         publish("link", JsonObject().apply {
             addProperty("to", toId)
             addProperty("fid", fid)
             addProperty("url", url)
             addProperty("expiresAt", expiresAt)
+            addProperty("size", size)
             addProperty("sentAt", System.currentTimeMillis())
         })
     }
@@ -395,7 +396,7 @@ class WatchPartyChannel(
                 val fid = data.get("fid")?.asString ?: return
                 val url = data.get("url")?.asString ?: return
                 if (url.isBlank()) return
-                callbacks.onLinkReceived(to, fid, url, data.get("expiresAt")?.asLong ?: 0L)
+                callbacks.onLinkReceived(to, fid, url, data.get("expiresAt")?.asLong ?: 0L, data.get("size")?.asLong ?: 0L)
             }
 
             "hello", "beat" -> {

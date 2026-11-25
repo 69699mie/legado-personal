@@ -324,7 +324,7 @@ fun MainScreen(
                     pagerState.animateScrollToPage(targetIndex)
                     delay(200)
                 }
-                videoViewModel.playFollowedLink(fid, titleNow, epNow, got.url)
+                videoViewModel.playFollowedLink(fid, titleNow, epNow, got.url, got.size)
                 WatchPartySession.consumeIncomingLink()
             } else {
                 // 第 4 级：拿不到就明确提示，不阻断当前观看

@@ -107,20 +107,33 @@ data class ScrapeCacheItem(
     /** 手动季号：fid -> 季。fid 变了也能靠文件名兜底 */
     val seasonOverrideByFid: Map<String, Int> = emptyMap(),
     /** 手动季号：规范化文件名 -> 季 */
-    val seasonOverrideByName: Map<String, Int> = emptyMap()
+    val seasonOverrideByName: Map<String, Int> = emptyMap(),
+    /** 上次真正请求 TMDB 刮削的时间；0 表示旧缓存，没记录过 */
+    val scrapedAt: Long = 0L,
+    /** "盘上有这一集但 TMDB 没标题"的重试次数，补上后清零，防止对永远没标题的集反复请求 */
+    val gapAttempts: Int = 0
 )
 
 /** 刮削任务：全量 or 只补新增集 */
 private data class ScrapeTask(
     val series: MediaSeries,
     val full: Boolean,
-    val newEpisodeKeys: Set<String> = emptySet()
+    val newEpisodeKeys: Set<String> = emptySet(),
+    /** 本次是"补缺口"重试（不是新增集），用来给 gapAttempts 计数，避免无限重试 */
+    val gapRetry: Boolean = false
 )
 
 class VideoScraperViewModel(
     private val videoSettingsRepository: VideoSettingsRepository,
     private val videoScrapedDao: VideoScrapedDao
 ) : ViewModel() {
+
+    companion object {
+        /** 缺口重试间隔：盘上已有这一集、TMDB 当时还没标题，12 小时后再试一次 */
+        private const val GAP_RETRY_INTERVAL_MS = 12L * 60 * 60 * 1000
+        /** 缺口最多重试 6 次（约 3 天），之后不再请求，避免对永远不会有标题的集反复刮 */
+        private const val GAP_MAX_ATTEMPTS = 6
+    }
 
     private val client = OkHttpClient.Builder()
         .connectTimeout(15, TimeUnit.SECONDS)
@@ -290,7 +303,9 @@ class VideoScraperViewModel(
     private data class ScrapeDecision(
         val mode: Int,               // 0=不刮 1=增量 2=全量
         val addedKeys: Set<String> = emptySet(),
-        val removedKeys: Set<String> = emptySet()
+        val removedKeys: Set<String> = emptySet(),
+        /** 这次全量是因为"缺标题"重试，不是新增集 */
+        val gapRetry: Boolean = false
     )
 
     private fun decideScrape(cached: ScrapeCacheItem?, videos: List<QuarkFile>): ScrapeDecision {
@@ -312,12 +327,46 @@ class VideoScraperViewModel(
         val overlap = (oldKeys intersect newKeys).size.toDouble() / maxOf(oldKeys.size, newKeys.size)
         if (overlap < 0.5) return ScrapeDecision(2, added, removed)
 
+        // 盘上已有、但 TMDB 当时没有标题的集：隔一段时间再整部重刮一次（TMDB 后来补标题就能拉回来）
+        val gapRetryDue = hasTitleGap(cached, videos) &&
+            System.currentTimeMillis() - cached.scrapedAt >= GAP_RETRY_INTERVAL_MS &&
+            cached.gapAttempts < GAP_MAX_ATTEMPTS
+        if (gapRetryDue && added.isEmpty() && removed.isEmpty()) {
+            return ScrapeDecision(2, gapRetry = true)
+        }
+
         return when {
             // 有新增集就整部重刮：全量路径会先继承旧标题再按 TMDB 季集覆写，新集标题必不会漏；
             // 增量只补"季_集"完全对齐的键，一旦集号与 TMDB 错位新集就没标题（曾经踩过）。
             added.isNotEmpty() -> ScrapeDecision(2, added, removed)
             removed.isNotEmpty() -> ScrapeDecision(0, emptySet(), removed)
             else -> ScrapeDecision(0)
+        }
+    }
+
+    /** 盘上有的集号在已刮到的标题表里找不到对应标题（季_集 或 单季集号），就算缺口 */
+    private fun hasTitleGap(cached: ScrapeCacheItem, videos: List<QuarkFile>): Boolean =
+        hasTitleGap(videos, cached.seasonEpisodeTitles, cached.episodeTitles)
+
+    private fun hasTitleGap(
+        videos: List<QuarkFile>,
+        sEpTitles: Map<String, String>,
+        epTitles: Map<Int, String>
+    ): Boolean {
+        // 完全没有任何集标题（电影、或还没刮到季集信息）时不算缺口，避免对电影反复重刮
+        if (sEpTitles.isEmpty() && epTitles.isEmpty()) return false
+        val multiSeason = videos.map { seasonOf(it) }.distinct().size > 1
+        return videos.any { f ->
+            val ep = episodeOf(f)
+            if (ep <= 0) {
+                false
+            } else {
+                val s = seasonOf(f)
+                val bySeason = sEpTitles["${s}_${ep}"]
+                if (!bySeason.isNullOrBlank()) false
+                else if (!multiSeason) epTitles[ep].isNullOrBlank()
+                else true
+            }
         }
     }
 
@@ -504,10 +553,14 @@ class VideoScraperViewModel(
         var seriesPath = ""
         var seasonByFid = mapOf<String, Int>()
         var seasonByName = mapOf<String, Int>()
+        var scrapedAt = 0L
+        var gapAttempts = 0
         try {
             if (extraData.isNotBlank()) {
                 val json = JSONObject(extraData)
                 seriesPath = json.optString("seriesPath", "")
+                scrapedAt = json.optLong("scrapedAt", 0L)
+                gapAttempts = json.optInt("gapAttempts", 0)
                 json.optJSONObject("seasonOverrideByFid")?.let { obj ->
                     val map = mutableMapOf<String, Int>()
                     obj.keys().forEach { k -> map[k] = obj.optInt(k, 0) }
@@ -539,7 +592,9 @@ class VideoScraperViewModel(
             cachedVideos = videos,
             seriesPath = seriesPath,
             seasonOverrideByFid = seasonByFid,
-            seasonOverrideByName = seasonByName
+            seasonOverrideByName = seasonByName,
+            scrapedAt = scrapedAt,
+            gapAttempts = gapAttempts
         )
     }
 
@@ -601,6 +656,8 @@ class VideoScraperViewModel(
             val byNameObj = JSONObject()
             seasonOverrideByName.forEach { (k, v) -> byNameObj.put(k, v) }
             extraObj.put("seasonOverrideByName", byNameObj)
+            extraObj.put("scrapedAt", scrapedAt)
+            extraObj.put("gapAttempts", gapAttempts)
         } catch (e: Exception) { e.printStackTrace() }
 
         return VideoScrapedEntity(
@@ -842,7 +899,7 @@ class VideoScraperViewModel(
                     } else series
 
                     when (decision.mode) {
-                        2 -> tasks.add(ScrapeTask(series, true))
+                        2 -> tasks.add(ScrapeTask(series, true, gapRetry = decision.gapRetry))
                         1 -> tasks.add(ScrapeTask(series, false, decision.addedKeys))
                         else -> Unit
                     }
@@ -1157,7 +1214,16 @@ class VideoScraperViewModel(
                             cachedVideos = newSeries.videos,
                             seriesPath = oldCached?.seriesPath ?: series.id.substringBeforeLast("#", ""),
                             seasonOverrideByFid = oldCached?.seasonOverrideByFid ?: emptyMap(),
-                            seasonOverrideByName = oldCached?.seasonOverrideByName ?: emptyMap()
+                            seasonOverrideByName = oldCached?.seasonOverrideByName ?: emptyMap(),
+                            scrapedAt = System.currentTimeMillis(),
+                            // 补缺口重试：这轮还缺就 +1（搜不到 TMDB 也算一次，防止无限重试）；
+                            // 新增集/换片源引起的整部重刮则重新计数
+                            gapAttempts = when {
+                                task.gapRetry -> (oldCached?.gapAttempts ?: 0) + 1
+                                hasTitleGap(newSeries.videos, newSeries.seasonEpisodeTitles, newSeries.episodeTitles) ->
+                                    (oldCached?.gapAttempts ?: 0) + 1
+                                else -> 0
+                            }
                         )
                         newSeries
                     } else {
@@ -1174,6 +1240,13 @@ class VideoScraperViewModel(
                         }
                         // 没搜到 TMDB（或没配 API key）时不能把旧标题丢掉：沿用手上缓存的标题/海报，避免整部剧变没标题
                         oldCached?.let { c ->
+                            // 补缺口重试但没搜到也要计数，否则会每 12 小时无限重试
+                            if (task.gapRetry) {
+                                scrapedCache[series.id] = c.copy(
+                                    scrapedAt = System.currentTimeMillis(),
+                                    gapAttempts = c.gapAttempts + 1
+                                )
+                            }
                             series.copy(
                                 title = c.title, category = c.category, posterUrl = c.posterUrl,
                                 backdropUrl = c.backdropUrl, overview = c.overview, rating = c.rating,
@@ -1775,7 +1848,7 @@ class VideoScraperViewModel(
      * 加入端：本机没有这一集时，用房主点对点下发的短时直链直接播。
      * 只用于"一起看"跟随，直链不写入任何持久化缓存。
      */
-    fun playFollowedLink(fid: String, seriesTitle: String, episodeText: String, url: String) {
+    fun playFollowedLink(fid: String, seriesTitle: String, episodeText: String, url: String, fileSize: Long = 0L) {
         if (url.isBlank() || fid.isBlank()) return
         val existingSeries = _uiState.value.seriesList.find { s -> s.videos.any { it.fid == fid } }
         val existingFile = existingSeries?.videos?.find { it.fid == fid }
@@ -1793,7 +1866,8 @@ class VideoScraperViewModel(
         }
         val safeTitle = seriesTitle.ifBlank { "一起看" }
         val displayName = safeTitle + (if (episodeText.isNotBlank()) " $episodeText" else "")
-        val file = QuarkFile(fid = fid, name = displayName, isFolder = false)
+        // size 必须带：播放前会校验文件大小，0 会直接弹「无法获取视频文件大小」
+        val file = QuarkFile(fid = fid, name = displayName, isFolder = false, size = fileSize)
         val series = MediaSeries(
             id = "wp_link_$fid",
             title = safeTitle,
