@@ -300,13 +300,14 @@ fun MainScreen(
             ?: return@LaunchedEffect
         // 房主换了别的片子/别的集，之前「取消」的记忆就作废：换回来时还会再提示
         if (cancelledFollowFid != null && cancelledFollowFid != fid) cancelledFollowFid = null
-        // 已经就在看的这一集：只同步进度，不用跳
-        if (videoUiState.currentPlayFile?.fid == fid) return@LaunchedEffect
+        // 已经就在看的这一集：只有在播放页里才算「不用跳」。
+        // 已经退回影视库时 currentPlayFile 还是上一集（不会清空），不能据此吞掉跟随提示
+        val videoPageIndex0 = destinations.indexOfFirst { it == MainDestination.Video }
+        val inPlayerPage0 = videoPageIndex0 >= 0 && pagerState.currentPage == videoPageIndex0
+        if (inPlayerPage0 && videoUiState.currentPlayFile?.fid == fid) return@LaunchedEffect
         if (fid == cancelledFollowFid || fid == followFid) return@LaunchedEffect
         // 用户已经在播放页里看着：房主换集/换片直接切过去，不再弹 3 秒确认（点了跟随已经是明确意图）
-        val videoPageIndex = destinations.indexOfFirst { it == MainDestination.Video }
-        val inPlayerPage = videoPageIndex >= 0 && pagerState.currentPage == videoPageIndex
-        if (inPlayerPage && videoUiState.currentPlayFile != null) {
+        if (inPlayerPage0 && videoUiState.currentPlayFile != null) {
             followFid = null
             applyFollow(
                 fid,
@@ -322,9 +323,13 @@ fun MainScreen(
         followEpisodeTitle = show?.episodeTitle ?: ""
     }
 
-    // 一起看：加入端启动/回到前台时，静默回到上次的房间（房主复用邀请码，节目事件能直接送达，不用再手动进面板跟随）
+    // 一起看：加入端启动/回到前台时，静默回到上次的房间（房主复用邀请码，节目事件能直接送达，不用再手动进面板跟随）。
+    // 房间被房主关掉后还会等一会儿再试，避免「刚退出就被判定没房间」导致后面一直收不到节目。
     LaunchedEffect(Unit) {
-        WatchPartySession.tryAutoRejoin()
+        repeat(10) {
+            if (!WatchPartySession.state.value.active) WatchPartySession.tryAutoRejoin()
+            delay(30_000)
+        }
     }
 
     // 加入端在房间卡片里手动点「跟随房主」：用户已经明确点了跟随，直接进，不再弹 3 秒倒计时

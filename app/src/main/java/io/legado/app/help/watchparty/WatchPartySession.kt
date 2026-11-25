@@ -74,6 +74,22 @@ object WatchPartySession {
     /** 房主端：各加入端回报「已就位」的时间戳（userId -> ackAt） */
     private val readyAcks = mutableMapOf<String, Long>()
 
+    // ---- 房主「推送到观看端」确认 ----
+    /** 本房间内已经推送过几次：0 表示还没推过，房间里第一次播放要问一次 */
+    @Volatile
+    private var pushCount = 0
+    /** 上一次推送的是哪部影视（剧名），用来判断「同一影视换集 → 不问，直接推」 */
+    @Volatile
+    private var lastPushSeries: String? = null
+    /** 本次播放「不推送」：房主不发进度同步，也不跟着加入端的操作走，直到下一次推送确认 */
+    @Volatile
+    private var pushMuted = false
+    /** 选了「不推送」的那部影视：同一部再换集时还是要问一次，不能默默改成推送 */
+    @Volatile
+    private var mutedSeries: String? = null
+
+    fun isPushMuted(): Boolean = pushMuted
+
     private fun pref() = appCtx.getSharedPreferences(PREF, Context.MODE_PRIVATE)
 
     fun myId(): String {
@@ -109,15 +125,12 @@ object WatchPartySession {
         }
     }
 
-    /** 建房：默认复用上一次的邀请码，换新码用 createRoom(fresh = true)。
-     *  复用是为了「房主看完退出、再开另一部」时，还在房间里的加入端能直接收到节目、自动跟随，
-     *  不用再回「加入房间」面板手动点跟随。 */
-    fun createRoom(fresh: Boolean = false): Result<String> {
+    /** 建房：每次都生成全新的邀请码（不复用旧码，旧码的人进不来）。
+     *  房间没关的时候（只是退出播放页又点开另一部）连接和房间都不变，加入端照样收得到节目。 */
+    fun createRoom(): Result<String> {
         val p = pref()
-        val last = p.getString("last_invite", null)
-        val reuse = if (!fresh && !last.isNullOrBlank()) parseInvite(last) else null
-        val code = reuse?.first ?: newRoomCode()
-        val password = reuse?.second ?: newPassword()
+        val code = newRoomCode()
+        val password = newPassword()
         start(code, password, host = true)
         p.edit().putString("last_invite", inviteOf(code, password))
             .putString("last_role", "host").apply()
@@ -155,6 +168,10 @@ object WatchPartySession {
         linkReqAt.clear()
         linkSentCount = 0
         pendingLinkFid = null
+        // 推送确认按房间重新来过
+        pushCount = 0
+        lastPushSeries = null
+        pushMuted = false
         if (host) approvedIds.addAll(loadApproved(code))
         val uid = myId()
         val name = WatchPartyConfig.nameOrDefault()
@@ -190,7 +207,10 @@ object WatchPartySession {
                 }
 
                 override fun onRemoteSync(state: PartySyncState) {
-                    _state.update { it.copy(remoteSync = state) }
+                    _state.update {
+                        if (state.stage) it.copy(remoteSync = state, stageRequest = state)
+                        else it.copy(remoteSync = state)
+                    }
                 }
 
                 override fun onMembersChanged(members: List<PartyMember>) {
@@ -336,14 +356,18 @@ object WatchPartySession {
                 }
                 if (current.isHost) {
                     publishSnapshot(ch)
-                } else if (tick % 3 == 0) {
-                    ch.sendBeat()
+                } else {
+                    // 每 10 秒报一次在线（和房主同步同频）：房主「等对方就位」按 25 秒内的在线算，
+                    // 30 秒报一次会让对面有一半时间被判成「不在了」而不等你
+                    ch.sendBeat(localSnapshot?.fid.orEmpty())
                 }
             }
         }
     }
 
     private fun publishSnapshot(ch: WatchPartyChannel) {
+        // 「不推送」期间房主不发任何进度同步：否则加入了同一集时，观看端仍会被进度带着走
+        if (pushMuted) return
         val snap = localSnapshot ?: return
         val now = System.currentTimeMillis()
         val elapsed = now - snapshotAt
@@ -380,20 +404,51 @@ object WatchPartySession {
             sentAt = System.currentTimeMillis(),
         )
         lastShow = show
+        pushCount++
+        lastPushSeries = title
+        pushMuted = false
+        mutedSeries = null
         _state.update { it.copy(show = show, hostLeft = false) }
         ch.sendShow(fid, episode, title, episodeTitle)
     }
 
+    /**
+     * 房主这次播放要不要先问一句「推送到观看端」。
+     * 房间里第一次播放不问，直接推（在房间里就是要一起看）。
+     * 只有这两种情况问：
+     *   1) 换成了另一部影视（同剧换集不算）；
+     *   2) 刚退回影视库首页又重新开播（hostLeft）。
+     */
+    fun shouldConfirmPush(series: String): Boolean {
+        if (!_state.value.isHost) return false
+        if (_state.value.hostLeft) return true
+        // 刚选过「不推送」：同一部再换集也要再问一次，不能默默改成推送
+        if (pushMuted && (mutedSeries.isNullOrBlank() || mutedSeries == series)) return true
+        val last = lastPushSeries ?: return false
+        return last != series
+    }
+
+    /** 房主点了「不推送」：本次播放不参与同步，也不打扰观看端 */
+    fun mutePush(series: String = "") {
+        pushMuted = true
+        if (series.isNotBlank()) mutedSeries = series
+        _state.update { it.copy(hostLeft = false) }
+    }
+
     /** 房主端：还要等哪些成员回报「已就位」。
-     *  只算「刚还在报在线」的已同意成员：已经退出的人不能每次拖动都拖住房主 8 秒。 */
-    fun peersNeedReady(): Set<String> {
+     *  只算「刚还在报在线、已同意、而且看的是同一集」的成员：
+     *  已经退出的人、或在房间里自己看别的片子的人，不能拖住房主。 */
+    fun peersNeedReady(targetFid: String = ""): Set<String> {
         val cur = _state.value
         if (!cur.isHost) return emptySet()
         val now = System.currentTimeMillis()
         return cur.members.asSequence()
             .filter { it.userId != cur.myId && now - it.lastSeen < 25_000L }
+            .filter { it.userId in approvedIds }
+            // 看同一集的等；还没上报过集号的（刚进房、还没产生过同步）也等，它多半正要跟随。
+            // 已经明确上报了另一集的（自己在看别的片子）不等。
+            .filter { targetFid.isBlank() || it.fid == targetFid || it.fid.isBlank() }
             .map { it.userId }
-            .filter { it in approvedIds }
             .toSet()
     }
 
@@ -407,6 +462,10 @@ object WatchPartySession {
         val cur = _state.value
         if (cur.isHost || !cur.approved || fid.isBlank()) return
         channel?.sendReady(fid, positionMs)
+        // 这一轮就位请求已经处理过了，清掉，避免后面重进播放页又把旧的 stage 当新请求
+        _state.update {
+            if (it.stageRequest?.fid == fid) it.copy(stageRequest = null) else it
+        }
     }
 
     /** 房主退出了播放页：加入端暂停并等待，别再按旧进度外推 */
@@ -549,6 +608,8 @@ object WatchPartySession {
         )
         localSnapshot = snap
         snapshotAt = snap.sentAt
+        // 房主选了「不推送」：状态照存（恢复推送后心跳要用），但不发出去
+        if (_state.value.isHost && pushMuted) return
         val now = System.currentTimeMillis()
         if (!force && now - lastBroadcastAt < 2_500L) return
         lastBroadcastAt = now

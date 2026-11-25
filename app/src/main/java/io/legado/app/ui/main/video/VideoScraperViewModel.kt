@@ -8,6 +8,7 @@ import androidx.lifecycle.viewModelScope
 import io.legado.app.data.dao.VideoScrapedDao
 import io.legado.app.data.entities.VideoScrapedEntity
 import io.legado.app.data.repository.VideoSettingsRepository
+import io.legado.app.help.watchparty.WatchPartySession
 import io.legado.app.utils.ParsedVideoName
 import io.legado.app.utils.VideoFileNameParser
 import kotlinx.coroutines.Dispatchers
@@ -1756,7 +1757,11 @@ class VideoScraperViewModel(
             }
         }
 
-        try {
+        // 观看端（一起看的加入端）看的东西不计入「最近观看」：那是房主选的片，
+        // 只有房主端正常记录。这里跳过整段，其它逻辑照旧。
+        val party = WatchPartySession.state.value
+        val isPartyGuest = party.active && !party.isHost
+        if (!isPartyGuest) try {
             val jsonArray = JSONArray(videoSettingsRepository.recentWatchedVideos)
             val newList = mutableListOf<JSONObject>()
             for (i in 0 until jsonArray.length()) {

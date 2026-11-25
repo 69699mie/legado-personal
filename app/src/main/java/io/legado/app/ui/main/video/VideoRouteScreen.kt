@@ -1122,6 +1122,9 @@ fun InternalVideoPlayer(url: String, title: String, cookie: String, series: Medi
     // 拖动进度条那一刻是否在播：seek 会触发缓冲，isPlaying 会短暂变 false，
     // 如果这时按 isPlaying 上报，对端会收到 paused=true 跟着暂停（用户反馈的「我拉进度对方停了」）
     var seekWasPlaying by remember { mutableStateOf(false) }
+    // 刚 seek 完的那一两秒，playbackState 会因为重新缓冲短暂变成「不在播」，
+    // 这时如果按实际状态广播，对端会收到 paused=true 抖一下（用户反馈的「拉进度对方暂停」）
+    var lastSeekAt by remember { mutableLongStateOf(0L) }
     var bufferedPosition by remember { mutableLongStateOf(0L) }
     var duration by remember { mutableLongStateOf(0L) }
     var resolution by remember { mutableStateOf("") }
@@ -1220,22 +1223,37 @@ fun InternalVideoPlayer(url: String, title: String, cookie: String, series: Medi
 
     /**
      * 房主主动拖动 / 换集之后的「两端就位再一起播」：
-     * 先广播「暂停在 X 秒」，等所有已同意的加入端回报已就位（缓冲完成 + 进度对上），
-     * 再统一点播放；最多等 8 秒兜底，避免有人网差把房主也一起拖死。
+     * 先广播「暂停在 X 秒」，等「正在看同一集」的加入端回报已就位（真缓冲到能播 + 进度对上），
+     * 再统一点播放。对方网慢时不再 8 秒强行开播——等满 30 秒弹窗问房主「继续播放 / 再等一会」。
      * 被动卡顿（播放中网速抖动）不走这里：另一端照常播，卡顿端恢复后自己追上。
      */
     val partyUiScope = rememberCoroutineScope()
     var partyStaging by remember { mutableStateOf(false) }
-    fun stagePartyPlayback() {
+    var stageWaitPrompt by remember { mutableStateOf(false) }
+    var stagePlayNow by remember { mutableStateOf(false) }
+    var stageWaitingHint by remember { mutableStateOf(false) }
+    // 房主端「推送到观看端？」确认：房间里第一次、换另一部影视、退回影视库后又开播，这三种才问
+    var showPushConfirm by remember { mutableStateOf(false) }
+    var pendingPushFid by remember { mutableStateOf("") }
+    var pendingPushTitle by remember { mutableStateOf("") }
+    var pendingPushEpisode by remember { mutableStateOf("") }
+    var pendingPushEpisodeTitle by remember { mutableStateOf("") }
+
+    fun stagePartyPlayback(filterFid: String = currentFile.fid) {
         if (!partyState.active || !partyState.connected || !partyState.isHost) return
+        // 房主选了「不推送」：观看端没在跟，不存在等它就位
+        if (WatchPartySession.isPushMuted()) return
         if (partyStaging) return
-        val peers = WatchPartySession.peersNeedReady()
-        if (peers.isEmpty()) return
-        lastLocalActionAt = System.currentTimeMillis()
         val targetFid = currentFile.fid
+        // filterFid 为空 = 等房间里所有在线成员（换集/换片时，对方还停在上一集，按集号筛会永远筛不到）
+        if (WatchPartySession.peersNeedReady(filterFid).isEmpty()) return
+        lastLocalActionAt = System.currentTimeMillis()
         val targetPos = exoPlayer.currentPosition
         val wantPlay = exoPlayer.isPlaying
         partyStaging = true
+        stageWaitingHint = true
+        stagePlayNow = false
+        playerToastMessage = "等待对方缓冲…"
         WatchPartySession.clearReadyAcks()
         if (wantPlay) exoPlayer.pause()
         WatchPartySession.pushLocalSync(
@@ -1249,12 +1267,32 @@ fun InternalVideoPlayer(url: String, title: String, cookie: String, series: Medi
         )
         partyUiScope.launch {
             val started = System.currentTimeMillis()
-            while (System.currentTimeMillis() - started < 8_000L) {
-                if (peers.all { WatchPartySession.readyAckAt(it) >= started }) break
+            var roundStart = started
+            while (true) {
+                val peers = WatchPartySession.peersNeedReady(filterFid)
+                val allReady = peers.all { WatchPartySession.readyAckAt(it) >= started }
+                if (peers.isEmpty() || allReady || stagePlayNow) break
+                // 房主自己按了播放（不想再等），也算选择「继续播放」
+                if (wantPlay && exoPlayer.isPlaying) break
+                if (System.currentTimeMillis() - roundStart >= 30_000L) {
+                    stageWaitPrompt = true
+                    while (!stagePlayNow && stageWaitPrompt && System.currentTimeMillis() - started < 600_000L) {
+                        delay(120)
+                        if (WatchPartySession.peersNeedReady(filterFid).isEmpty()) break
+                    }
+                    if (stagePlayNow) break
+                    stageWaitPrompt = false
+                    // 用户选了「再等一会」：重新计 30 秒，期间就一直等
+                    roundStart = System.currentTimeMillis()
+                }
                 delay(120)
             }
+            stageWaitPrompt = false
+            stageWaitingHint = false
             partyStaging = false
+            stagePlayNow = false
             if (wantPlay) {
+                playerToastMessage = "两端已就位"
                 exoPlayer.play()
                 WatchPartySession.pushLocalSync(
                     fid = targetFid,
@@ -1500,10 +1538,28 @@ fun InternalVideoPlayer(url: String, title: String, cookie: String, series: Medi
         if (!partyState.active) return@LaunchedEffect
         // 房主换集/换片（含刚进播放页、刚建房）：立刻发「当前节目」，加入端不用等真正开播就能先跳过去
         if (partyState.isHost && partyState.connected && (fidChanged || firstEnter || justActivated)) {
-            WatchPartySession.notifyShow(currentFile.fid, partyEpisodeLabel, latestSeries.title, partyEpisodeTitle)
+            val series = latestSeries.title
+            if (WatchPartySession.shouldConfirmPush(series)) {
+                // 房间里第一次推送 / 换另一部影视 / 退回影视库后又开播：先问房主一句。
+                // 问的这段时间先停掉同步：否则 10 秒心跳会把新一集的 fid 带过去，
+                // 观看端在房主还没决定「推不推」时就已经弹跟随提示了
+                WatchPartySession.mutePush()
+                pendingPushFid = currentFile.fid
+                pendingPushTitle = series
+                pendingPushEpisode = partyEpisodeLabel
+                pendingPushEpisodeTitle = partyEpisodeTitle
+                showPushConfirm = true
+            } else {
+                // 同一部剧自动跳到下一集（或房间里第一次开播）：不问，直接推
+                WatchPartySession.notifyShow(currentFile.fid, partyEpisodeLabel, latestSeries.title, partyEpisodeTitle)
+                // 换集也等两端就位再一起开：对方这时还停在上一集，按集号筛会永远筛不到，所以不筛集号
+                if (fidChanged) stagePartyPlayback("")
+            }
         }
         if (!partyState.connected) return@LaunchedEffect
         if (!fidChanged && !playingChanged && !speedChanged) return@LaunchedEffect
+        // 刚 seek 完的短暂缓冲态不要广播（否则对端会跟着抖一下暂停），进度由上面那次 pushLocalAction 负责
+        if (System.currentTimeMillis() - lastSeekAt < 1_500L) return@LaunchedEffect
         if (System.currentTimeMillis() - lastAppliedRemoteAt < 800L) return@LaunchedEffect
         lastLocalActionAt = System.currentTimeMillis()
         pushPartyNow()
@@ -1513,6 +1569,8 @@ fun InternalVideoPlayer(url: String, title: String, cookie: String, series: Medi
     LaunchedEffect(partyState.remoteSync, partyState.connected) {
         val sync = partyState.remoteSync ?: return@LaunchedEffect
         if (!partyState.active || !partyState.connected) return@LaunchedEffect
+        // 房主这次播放选了「不推送」：整段同步都停掉，既不打扰观看端，也不被观看端的操作带跑
+        if (partyState.isHost && WatchPartySession.isPushMuted()) return@LaunchedEffect
         val now = System.currentTimeMillis()
         // 本机 1.5 秒内刚操作过，以本机为准
         if (now - lastLocalActionAt < 1_500L) return@LaunchedEffect
@@ -1530,18 +1588,27 @@ fun InternalVideoPlayer(url: String, title: String, cookie: String, series: Medi
             playbackSpeed = sync.speed.coerceIn(0.5f, 3.0f)
             exoPlayer.setPlaybackParameters(PlaybackParameters(playbackSpeed, 1.0f))
         }
-        // 房主主动拖动/换集后停在某处等我们就位：本机缓冲好了再回报 ready，
-        // 房主收齐所有加入端回执才真正开播（最多等 8 秒）
-        if (sync.stage && !partyState.isHost && sync.fid == currentFile.fid) {
-            partyUiScope.launch {
-                val waitStart = System.currentTimeMillis()
-                while (System.currentTimeMillis() - waitStart < 6_000L &&
-                    exoPlayer.playbackState != Player.STATE_READY
-                ) {
-                    delay(120)
-                }
-                WatchPartySession.notifyReady(currentFile.fid, exoPlayer.currentPosition)
-            }
+    }
+
+    // 房主主动拖动/换集后停在某处等我们就位：先对齐进度，再等「真的缓冲到能播」才回报 ready。
+    // 之前是「最多等 6 秒就强行回执」，网慢的时候房主已经开播了、这边还在转圈，就是那个原因。
+    // 单独一条 effect：不受上面「本机刚操作过就以本机为准」的 1.5 秒拦截影响，否则会漏掉就位请求。
+    LaunchedEffect(partyState.stageRequest?.sentAt, partyState.stageRequest?.fid, currentFile.fid) {
+        val sync = partyState.stageRequest ?: return@LaunchedEffect
+        if (!sync.stage || partyState.isHost || !partyState.active || !partyState.connected) return@LaunchedEffect
+        if (sync.fid.isBlank() || sync.fid != currentFile.fid) return@LaunchedEffect
+        if (abs(exoPlayer.currentPosition - sync.positionMs) > 500L) {
+            exoPlayer.seekTo(sync.positionMs)
+        }
+        val limit = System.currentTimeMillis() + 180_000L
+        while (exoPlayer.playbackState != Player.STATE_READY &&
+            System.currentTimeMillis() < limit &&
+            WatchPartySession.state.value.active
+        ) {
+            delay(150)
+        }
+        if (exoPlayer.playbackState == Player.STATE_READY) {
+            WatchPartySession.notifyReady(currentFile.fid, exoPlayer.currentPosition)
         }
     }
 
@@ -1601,6 +1668,62 @@ fun InternalVideoPlayer(url: String, title: String, cookie: String, series: Medi
                     TextButton(onClick = { errorDialogMsg = null }) { AppText("关闭", color = Color(0xFF333333)) }
                 }
             }
+        )
+    }
+
+    // 房主端：换另一部影视 / 退回影视库后又开播时，先问一句「推送到观看端？」
+    if (showPushConfirm) {
+        AlertDialog(
+            onDismissRequest = {
+                showPushConfirm = false
+                WatchPartySession.mutePush(pendingPushTitle)
+            },
+            title = { AppText("一起看 · 推送", fontWeight = FontWeight.Bold) },
+            text = {
+                AppText(buildString {
+                    append("推送到观看端？\n正在看")
+                    if (pendingPushTitle.isNotBlank()) append("《$pendingPushTitle》")
+                    if (pendingPushEpisode.isNotBlank()) append(pendingPushEpisode)
+                    append("\n推送后观看端会跟随房主；不推送各看各的，房间仍保持在线")
+                })
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    showPushConfirm = false
+                    WatchPartySession.notifyShow(
+                        pendingPushFid.ifBlank { currentFile.fid },
+                        pendingPushEpisode,
+                        pendingPushTitle,
+                        pendingPushEpisodeTitle,
+                    )
+                    // 推送之后也等对方就位再一起开播
+                    stagePartyPlayback("")
+                }) { AppText("推送") }
+            },
+            dismissButton = {
+                TextButton(onClick = {
+                    showPushConfirm = false
+                    WatchPartySession.mutePush(pendingPushTitle)
+                }) { AppText("不推送", color = Color.Gray) }
+            },
+        )
+    }
+
+    // 房主端：等对方缓冲超过 30 秒，问是否继续播放
+    if (stageWaitPrompt) {
+        AlertDialog(
+            onDismissRequest = { stageWaitPrompt = false },
+            title = { AppText("对方还在缓冲", fontWeight = FontWeight.Bold) },
+            text = { AppText("观看端网速较慢，已经等了 30 秒还没就绪。继续播放的话，对方缓冲好了会自己追上来。") },
+            confirmButton = {
+                TextButton(onClick = {
+                    stagePlayNow = true
+                    stageWaitPrompt = false
+                }) { AppText("继续播放") }
+            },
+            dismissButton = {
+                TextButton(onClick = { stageWaitPrompt = false }) { AppText("再等一会", color = Color.Gray) }
+            },
         )
     }
 
@@ -1672,8 +1795,9 @@ fun InternalVideoPlayer(url: String, title: String, cookie: String, series: Medi
                 if (gestureMode == "seek") {
                     if (abs(currentPosition - dragStartPosition) > 1000L) {
                         exoPlayer.seekTo(currentPosition)
+                        lastSeekAt = System.currentTimeMillis()
                         haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                        if (partyState.active && partyState.isHost && WatchPartySession.peersNeedReady().isNotEmpty()) {
+                        if (partyState.active && partyState.isHost && WatchPartySession.peersNeedReady(currentFile.fid).isNotEmpty()) {
                             stagePartyPlayback()
                         } else {
                             if (seekWasPlaying) exoPlayer.play()
@@ -1971,13 +2095,13 @@ fun InternalVideoPlayer(url: String, title: String, cookie: String, series: Medi
                                 .pointerInput(duration) {
                                     detectTapGestures(
                                         onPress = { offset -> if (duration > 0) { isDraggingSeekBar = true; seekWasPlaying = exoPlayer.isPlaying; dragStartPosition = exoPlayer.currentPosition; val target = (offset.x / sliderWidth).coerceIn(0f, 1f); currentPosition = (target * duration).toLong(); seekDeltaMillis = currentPosition - dragStartPosition } },
-                                        onTap = { offset -> if (duration > 0) { val target = (offset.x / sliderWidth).coerceIn(0f, 1f); val finalPos = (target * duration).toLong(); if (abs(finalPos - exoPlayer.currentPosition) > 1000L) { seekWasPlaying = exoPlayer.isPlaying; exoPlayer.seekTo(finalPos); if (partyState.active && partyState.isHost && WatchPartySession.peersNeedReady().isNotEmpty()) stagePartyPlayback() else pushLocalAction(pausedOverride = !seekWasPlaying) }; isDraggingSeekBar = false } }
+                                        onTap = { offset -> if (duration > 0) { val target = (offset.x / sliderWidth).coerceIn(0f, 1f); val finalPos = (target * duration).toLong(); if (abs(finalPos - exoPlayer.currentPosition) > 1000L) { seekWasPlaying = exoPlayer.isPlaying; exoPlayer.seekTo(finalPos); lastSeekAt = System.currentTimeMillis(); if (partyState.active && partyState.isHost && WatchPartySession.peersNeedReady(currentFile.fid).isNotEmpty()) stagePartyPlayback() else pushLocalAction(pausedOverride = !seekWasPlaying) }; isDraggingSeekBar = false } }
                                     )
                                 }.pointerInput(duration) {
                                     detectDragGestures(
                                         onDragStart = { offset -> if (duration > 0) { isDraggingSeekBar = true; seekWasPlaying = exoPlayer.isPlaying; dragStartPosition = exoPlayer.currentPosition; val target = (offset.x / sliderWidth).coerceIn(0f, 1f); currentPosition = (target * duration).toLong(); seekDeltaMillis = currentPosition - dragStartPosition } },
                                         onDrag = { change, _ -> change.consume(); if (duration > 0) { val target = (change.position.x / sliderWidth).coerceIn(0f, 1f); currentPosition = (target * duration).toLong(); seekDeltaMillis = currentPosition - dragStartPosition } },
-                                        onDragEnd = { isDraggingSeekBar = false; if (abs(currentPosition - dragStartPosition) > 1000L) { exoPlayer.seekTo(currentPosition); haptic.performHapticFeedback(HapticFeedbackType.LongPress); if (partyState.active && partyState.isHost && WatchPartySession.peersNeedReady().isNotEmpty()) stagePartyPlayback() else { if (seekWasPlaying) exoPlayer.play(); pushLocalAction(pausedOverride = !seekWasPlaying) } } else currentPosition = dragStartPosition },
+                                        onDragEnd = { isDraggingSeekBar = false; if (abs(currentPosition - dragStartPosition) > 1000L) { exoPlayer.seekTo(currentPosition); lastSeekAt = System.currentTimeMillis(); haptic.performHapticFeedback(HapticFeedbackType.LongPress); if (partyState.active && partyState.isHost && WatchPartySession.peersNeedReady(currentFile.fid).isNotEmpty()) stagePartyPlayback() else { if (seekWasPlaying) exoPlayer.play(); pushLocalAction(pausedOverride = !seekWasPlaying) } } else currentPosition = dragStartPosition },
                                         onDragCancel = { isDraggingSeekBar = false }
                                     )
                                 }, contentAlignment = Alignment.Center

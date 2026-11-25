@@ -15,6 +15,12 @@ import javax.crypto.Cipher
 import javax.crypto.spec.GCMParameterSpec
 import javax.crypto.spec.SecretKeySpec
 
+/** 记住「这个中继地址的 WebSocket 用不了」，进程内共享：
+ *  否则每次断线重连都先白等 6 秒握手超时再回落 HTTP，比不用 WS 还慢。 */
+private object WsProbe {
+    val unsupported = java.util.concurrent.atomic.AtomicReference<String?>(null)
+}
+
 /**
  * 一条「一起看」房间通道：走 ntfy 公共中继（纯 HTTP，不需要长连接握手）。
  *
@@ -87,6 +93,15 @@ class WatchPartyChannel(
         .build()
     private var readerCall: okhttp3.Call? = null
 
+    /** WebSocket 订阅句柄：优先用 WS 收，Cloudflare 不会缓冲 WS 隧道；失败自动回落到 HTTP 流 */
+    private var ws: okhttp3.WebSocket? = null
+
+    @Volatile
+    private var wsReconnectPending = false
+
+    /** WS 连续握手失败的次数：两次都失败就认定这个中继不支持 WS，本进程内不再尝试 */
+    private var wsFailStreak = 0
+
     @Volatile
     private var closed = false
 
@@ -108,7 +123,9 @@ class WatchPartyChannel(
     fun connect() {
         closed = false
         retries = 0
-        subscribe()
+        // 订阅必须在后台线程：subscribeViaWs 里要 await 握手，之前是在 UI 线程调 connect()，
+        // 中继不支持 WS 时会把「创建房间/加入房间」的界面卡住最多 6 秒
+        Thread { subscribe() }.also { it.isDaemon = true }.start()
         startWatchdog()
     }
 
@@ -129,6 +146,7 @@ class WatchPartyChannel(
                 if (connected && lastRxAt > 0 && now - lastRxAt > IDLE_RECONNECT_MS) {
                     LogUtils.d(TAG, "长流 ${IDLE_RECONNECT_MS}ms 无数据，主动重连")
                     runCatching { readerCall?.cancel() }
+                    runCatching { ws?.cancel() }
                 }
             }
         }.also { it.isDaemon = true }.start()
@@ -143,6 +161,8 @@ class WatchPartyChannel(
         connected = false
         runCatching { readerCall?.cancel() }
         readerCall = null
+        runCatching { ws?.close(1000, "bye") }
+        ws = null
         synchronized(members) { members.clear() }
     }
 
@@ -150,8 +170,11 @@ class WatchPartyChannel(
 
     fun announce() = publish("hello", selfJson())
 
-    /** 心跳：只报「我还在」，用来维持在线列表，不参与同步 */
-    fun sendBeat() = publish("beat", selfJson())
+    /** 心跳：报「我还在」+ 我正在看哪一集，用来维持在线列表，不参与进度同步。
+     *  带上 fid 是因为房主「等对方就位」时只等看同一集的人，不然没跟随的人在房间里会让房主白等。 */
+    fun sendBeat(fid: String = "") = publish("beat", selfJson().apply {
+        if (fid.isNotBlank()) addProperty("fid", fid)
+    })
 
     fun sendAdmit(targetUserId: String) =
         publish("admit", JsonObject().apply { addProperty("userId", targetUserId) })
@@ -237,6 +260,108 @@ class WatchPartyChannel(
     // ---------------- 收 ----------------
 
     private fun subscribe() {
+        if (closed) return
+        // 先试 WebSocket：HTTP 流经 Cloudflare 会被整段缓冲（实测连 open 事件都要 4 秒），
+        // WS 是 upgrade 后的隧道，不会被攒包，延迟基本等于网络往返
+        if (subscribeViaWs()) return
+        subscribeViaHttp()
+    }
+
+    private fun onChannelReady() {
+        connected = true
+        retries = 0
+        wsReconnectPending = false
+        lastRxAt = System.currentTimeMillis()
+        callbacks.onConnected()
+        // 房主直接打招呼；加入端先敲门，等房主同意后才 announce
+        if (amHost || approved) publish("hello", selfJson()) else publish("knock", selfJson())
+    }
+
+    private fun subscribeViaWs(): Boolean {
+        // 这个中继已确认不支持 WS：直接走 HTTP，不再每次白等 6 秒
+        if (WsProbe.unsupported.get() == baseUrl) return false
+        val raw = baseUrl.trimEnd('/')
+        val wsUrl = when {
+            raw.startsWith("https://") -> "wss://" + raw.removePrefix("https://")
+            raw.startsWith("http://") -> "ws://" + raw.removePrefix("http://")
+            else -> "wss://$raw"
+        } + "/$channel/ws"
+        val latch = java.util.concurrent.CountDownLatch(1)
+        val opened = java.util.concurrent.atomic.AtomicBoolean(false)
+        val socket = runCatching {
+            client.newWebSocket(
+                Request.Builder().url(wsUrl).build(),
+                object : okhttp3.WebSocketListener() {
+                    override fun onOpen(webSocket: okhttp3.WebSocket, response: okhttp3.Response) {
+                        opened.set(true)
+                        wsReconnectPending = false
+                        wsFailStreak = 0
+                        WsProbe.unsupported.set(null)
+                        onChannelReady()
+                        latch.countDown()
+                    }
+
+                    override fun onMessage(webSocket: okhttp3.WebSocket, text: String) {
+                        lastRxAt = System.currentTimeMillis()
+                        val obj = runCatching { JsonParser.parseString(text).asJsonObject }.getOrNull()
+                            ?: return
+                        // ntfy 的 WS 帧：event=open/keepalive 忽略；event=message 的业务包在 message 字段里
+                        if (obj.get("event")?.asString == "message") {
+                            obj.get("message")?.asString?.let { dispatchPayload(it) }
+                        }
+                    }
+
+                    override fun onFailure(
+                        webSocket: okhttp3.WebSocket,
+                        t: Throwable,
+                        response: okhttp3.Response?,
+                    ) {
+                        if (!closed) LogUtils.d(TAG, "WS 断开: ${t.localizedMessage}")
+                        // 4xx 说明这个地址根本没有 WS（404/405/401），直接记下来别再试
+                        val code = response?.code ?: 0
+                        if (code in 400..499) WsProbe.unsupported.set(baseUrl)
+                        connected = false
+                        latch.countDown()
+                        // 只有「握手成功之后掉线」才需要自己重连；握手阶段就失败，交给 subscribe() 回落 HTTP，
+                        // 否则会同时挂两条 HTTP 流，同样的消息收两遍
+                        if (opened.get()) wsLost()
+                    }
+
+                    override fun onClosed(webSocket: okhttp3.WebSocket, code: Int, reason: String) {
+                        connected = false
+                        latch.countDown()
+                        if (opened.get()) wsLost()
+                    }
+                },
+            )
+        }.getOrNull() ?: return false
+        ws = socket
+        val ok = try {
+            latch.await(6, TimeUnit.SECONDS) && opened.get()
+        } catch (_: InterruptedException) {
+            false
+        }
+        if (!ok) {
+            runCatching { socket.cancel() }
+            ws = null
+            wsFailStreak++
+            if (wsFailStreak >= 2) WsProbe.unsupported.set(baseUrl)
+        }
+        return ok
+    }
+
+    private fun wsLost() {
+        if (closed) return
+        synchronized(this) {
+            if (wsReconnectPending) return
+            wsReconnectPending = true
+        }
+        ws = null
+        callbacks.onDisconnected("通道已断开")
+        scheduleReconnect()
+    }
+
+    private fun subscribeViaHttp() {
         val request = Request.Builder()
             .url("$baseUrl/$channel/raw")
             .header("Accept", "text/plain")
@@ -252,12 +377,7 @@ class WatchPartyChannel(
                     scheduleReconnect()
                     return@Thread
                 }
-                connected = true
-                retries = 0
-                lastRxAt = System.currentTimeMillis()
-                callbacks.onConnected()
-                // 房主直接打招呼；加入端先敲门，等房主同意后才 announce
-                if (amHost || approved) publish("hello", selfJson()) else publish("knock", selfJson())
+                onChannelReady()
                 val source = resp.body?.source()
                 while (!closed && source != null) {
                     val line = source.readUtf8Line() ?: break
@@ -394,6 +514,7 @@ class WatchPartyChannel(
             "ready" -> {
                 val id = data.get("userId")?.asString ?: return
                 if (id == userId) return
+                notePeerFid(id, data.get("userName")?.asString ?: "", data.get("fid")?.asString ?: "")
                 if (amHost) callbacks.onReadyAck(id)
             }
 
@@ -450,6 +571,7 @@ class WatchPartyChannel(
             sentAt = data.get("sentAt")?.asLong ?: System.currentTimeMillis(),
         )
         if (state.userId.isBlank() || state.userId == userId) return
+        notePeerFid(state.userId, state.userName, state.fid)
         callbacks.onRemoteSync(state)
     }
 
@@ -458,9 +580,29 @@ class WatchPartyChannel(
         if (id == userId) return
         val now = System.currentTimeMillis()
         synchronized(members) {
-            members[id] = PartyMember(id, data.get("userName")?.asString ?: "有人", now, data.get("host")?.asBoolean ?: false)
+            members[id] = PartyMember(
+                userId = id,
+                userName = data.get("userName")?.asString ?: "有人",
+                lastSeen = now,
+                isHost = data.get("host")?.asBoolean ?: false,
+                fid = data.get("fid")?.asString ?: "",
+            )
         }
         emitMembers()
+    }
+
+    /** 从 sync / ready 里顺手记下对方正在看哪一集，不发成员变更（避免刷界面） */
+    private fun notePeerFid(id: String, userName: String, fid: String) {
+        if (id == userId || id.isBlank() || fid.isBlank()) return
+        val now = System.currentTimeMillis()
+        synchronized(members) {
+            val old = members[id]
+            members[id] = if (old == null) {
+                PartyMember(id, userName.ifBlank { "有人" }, now, false, fid)
+            } else {
+                old.copy(lastSeen = now, fid = fid)
+            }
+        }
     }
 
     private fun emitMembers() {

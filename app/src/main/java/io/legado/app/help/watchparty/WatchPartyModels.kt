@@ -57,6 +57,9 @@ data class PartyLink(
     val userName: String,
     val lastSeen: Long = 0L,
     val isHost: Boolean = false,
+    /** 这个成员当前正在看哪一集（fid）。房主「等对方就位」时只等同一集的人，
+     *  否则房间里有人没跟随（在看自己别的片子）会白等一轮 */
+    val fid: String = "",
 )
 
 /** 一起看会话对外的状态 */
@@ -83,6 +86,9 @@ data class WatchPartyState(
     val remoteSync: PartySyncState? = null,
     /** 房主最近一次广播的「当前节目」（加入端跟随用） */
     val show: PartyShowState? = null,
+    /** 房主最近一次「等你就位」的请求（加入端用）。
+     *  单独存一份，是因为它会被后续 10 秒心跳的普通 sync 覆盖掉，靠 remoteSync 判断会漏 */
+    val stageRequest: PartySyncState? = null,
     /** 房主已离开播放页：加入端暂停播放并等待房主继续 */
     val hostLeft: Boolean = false,
     /** 房主端：刚点过「同意」、还在等对方真正进房的申请人（按钮要变成等待态，避免连点） */
