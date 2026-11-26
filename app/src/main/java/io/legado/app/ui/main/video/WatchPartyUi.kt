@@ -270,7 +270,7 @@ private fun PartyPanelContent(
         } else if (!state.approved) {
             Text("已申请，等待房主同意（每 10 秒自动重试）…", color = Color(0xFFD32F2F), fontSize = 12.sp)
         } else if (state.hostLeft) {
-            Text("房主已离开播放页，等待房主继续…", color = partyHint, fontSize = 12.sp)
+            Text("房主已离开播放页，房间已结束", color = Color(0xFFD32F2F), fontSize = 12.sp)
         } else if (state.remoteSync == null && state.show == null) {
             Text("已加入房间，等待房主开始播放…", color = partyHint, fontSize = 12.sp)
         }

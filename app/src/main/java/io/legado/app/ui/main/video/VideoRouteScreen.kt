@@ -136,6 +136,9 @@ import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.media3.common.C
+import androidx.media3.common.audio.AudioProcessor
+import androidx.media3.common.audio.ChannelMixingAudioProcessor
+import androidx.media3.common.audio.ChannelMixingMatrix
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MediaMetadata
 import androidx.media3.common.MimeTypes
@@ -1159,6 +1162,11 @@ fun InternalVideoPlayer(url: String, title: String, cookie: String, series: Medi
     var entryTime by remember { mutableLongStateOf(0L) }
     var audioTracks by remember { mutableStateOf<List<Tracks.Group>>(emptyList()) }
     var textTracks by remember { mutableStateOf<List<Tracks.Group>>(emptyList()) }
+    // 用户手动点过音轨后，本集内不再自动改回（换集/换片才重新按设备能力判定）
+    var userPickedAudio by remember { mutableStateOf(false) }
+    var autoAudioFid by remember { mutableStateOf("") }
+    // 这台设备最终能出几个声道：≥6 才默认给环绕轨，否则默认给立体声轨
+    val outputChannelLimit = remember { resolveOutputChannelLimit(context) }
     var trackSelectionVersion by remember { mutableIntStateOf(0) }
     val episodeListState = rememberLazyListState()
 
@@ -1232,28 +1240,28 @@ fun InternalVideoPlayer(url: String, title: String, cookie: String, series: Medi
     var stageWaitPrompt by remember { mutableStateOf(false) }
     var stagePlayNow by remember { mutableStateOf(false) }
     var stageWaitingHint by remember { mutableStateOf(false) }
-    // 房主端「推送到观看端？」确认：房间里第一次、换另一部影视、退回影视库后又开播，这三种才问
-    var showPushConfirm by remember { mutableStateOf(false) }
-    var pendingPushFid by remember { mutableStateOf("") }
-    var pendingPushTitle by remember { mutableStateOf("") }
-    var pendingPushEpisode by remember { mutableStateOf("") }
-    var pendingPushEpisodeTitle by remember { mutableStateOf("") }
+    // stage 去重：一次拖动会触发两轮（进度条手势 + 全屏手势），1.5 秒内同位置只做一次
+    var lastStageAt by remember { mutableStateOf(0L) }
+    var lastStagePos by remember { mutableStateOf(-3000L) }
+    // 「推送给观看端」不再是弹窗询问，改成一起看面板里一个按钮（见 showPartyPanel 处的 WatchPartyDialog）
 
     fun stagePartyPlayback(filterFid: String = currentFile.fid) {
         if (!partyState.active || !partyState.connected || !partyState.isHost) return
-        // 房主选了「不推送」：观看端没在跟，不存在等它就位
-        if (WatchPartySession.isPushMuted()) return
         if (partyStaging) return
         val targetFid = currentFile.fid
         // filterFid 为空 = 等房间里所有在线成员（换集/换片时，对方还停在上一集，按集号筛会永远筛不到）
         if (WatchPartySession.peersNeedReady(filterFid).isEmpty()) return
-        lastLocalActionAt = System.currentTimeMillis()
         val targetPos = exoPlayer.currentPosition
+        // 一次拖动会先后走「进度条手势」和「全屏手势」两条 onDragEnd，位置几乎一样 → 1.5 秒内同位置不重复 stage
+        val nowTs = System.currentTimeMillis()
+        if (nowTs - lastStageAt < 1500L && abs(targetPos - lastStagePos) < 3000L) return
+        lastStageAt = nowTs
+        lastStagePos = targetPos
+        lastLocalActionAt = nowTs
         val wantPlay = exoPlayer.isPlaying
         partyStaging = true
         stageWaitingHint = true
         stagePlayNow = false
-        playerToastMessage = "等待对方缓冲…"
         WatchPartySession.clearReadyAcks()
         if (wantPlay) exoPlayer.pause()
         WatchPartySession.pushLocalSync(
@@ -1474,6 +1482,32 @@ fun InternalVideoPlayer(url: String, title: String, cookie: String, series: Medi
         }
     }
 
+    // 音轨默认选择：这台设备最终能出几个声道就挑哪条（能出 6 声道 → 默认环绕；只有两声道 → 默认立体声）
+    // 用户手动切过之后本集内不再自动改回去
+    LaunchedEffect(currentFile.fid) {
+        userPickedAudio = false
+        autoAudioFid = ""
+    }
+    LaunchedEffect(audioTracks, outputChannelLimit, currentFile.fid) {
+        if (userPickedAudio || autoAudioFid == currentFile.fid) return@LaunchedEffect
+        val groups = audioTracks
+        if (groups.isEmpty()) return@LaunchedEffect
+        autoAudioFid = currentFile.fid
+        if (groups.size <= 1) return@LaunchedEffect
+        fun channels(g: Tracks.Group): Int = g.getTrackFormat(0).channelCount
+        val target = if (outputChannelLimit >= 6) {
+            groups.filter { channels(it) >= 6 }.maxByOrNull { channels(it) }
+        } else {
+            groups.firstOrNull { channels(it) in 1..2 }
+        } ?: return@LaunchedEffect
+        if (!target.isTrackSelected(0)) {
+            exoPlayer.trackSelectionParameters = exoPlayer.trackSelectionParameters.buildUpon()
+                .setOverrideForType(TrackSelectionOverride(target.mediaTrackGroup, 0))
+                .build()
+            trackSelectionVersion++
+        }
+    }
+
     LaunchedEffect(isPlaying) {
         while (isPlaying) {
             if (!isDraggingSeekBar) { currentPosition = exoPlayer.currentPosition; bufferedPosition = exoPlayer.bufferedPosition }
@@ -1536,25 +1570,12 @@ fun InternalVideoPlayer(url: String, title: String, cookie: String, series: Medi
         prevPartySpeed = playbackSpeed
         prevPartyActive = partyState.active
         if (!partyState.active) return@LaunchedEffect
-        // 房主换集/换片（含刚进播放页、刚建房）：立刻发「当前节目」，加入端不用等真正开播就能先跳过去
+        // 房主换集（含刚进播放页、刚建房）：立刻发「当前节目」，观看端不用等真正开播就能先跳过去。
+        // 房间只绑一部影视，同剧换集一律自动跟随，不需要任何确认
         if (partyState.isHost && partyState.connected && (fidChanged || firstEnter || justActivated)) {
-            val series = latestSeries.title
-            if (WatchPartySession.shouldConfirmPush(series)) {
-                // 房间里第一次推送 / 换另一部影视 / 退回影视库后又开播：先问房主一句。
-                // 问的这段时间先停掉同步：否则 10 秒心跳会把新一集的 fid 带过去，
-                // 观看端在房主还没决定「推不推」时就已经弹跟随提示了
-                WatchPartySession.mutePush()
-                pendingPushFid = currentFile.fid
-                pendingPushTitle = series
-                pendingPushEpisode = partyEpisodeLabel
-                pendingPushEpisodeTitle = partyEpisodeTitle
-                showPushConfirm = true
-            } else {
-                // 同一部剧自动跳到下一集（或房间里第一次开播）：不问，直接推
-                WatchPartySession.notifyShow(currentFile.fid, partyEpisodeLabel, latestSeries.title, partyEpisodeTitle)
-                // 换集也等两端就位再一起开：对方这时还停在上一集，按集号筛会永远筛不到，所以不筛集号
-                if (fidChanged) stagePartyPlayback("")
-            }
+            WatchPartySession.notifyShow(currentFile.fid, partyEpisodeLabel, latestSeries.title, partyEpisodeTitle)
+            // 换集也等两端就位再一起开：对方这时还停在上一集，按集号筛会永远筛不到，所以不筛集号
+            if (fidChanged) stagePartyPlayback("")
         }
         if (!partyState.connected) return@LaunchedEffect
         if (!fidChanged && !playingChanged && !speedChanged) return@LaunchedEffect
@@ -1569,8 +1590,6 @@ fun InternalVideoPlayer(url: String, title: String, cookie: String, series: Medi
     LaunchedEffect(partyState.remoteSync, partyState.connected) {
         val sync = partyState.remoteSync ?: return@LaunchedEffect
         if (!partyState.active || !partyState.connected) return@LaunchedEffect
-        // 房主这次播放选了「不推送」：整段同步都停掉，既不打扰观看端，也不被观看端的操作带跑
-        if (partyState.isHost && WatchPartySession.isPushMuted()) return@LaunchedEffect
         val now = System.currentTimeMillis()
         // 本机 1.5 秒内刚操作过，以本机为准
         if (now - lastLocalActionAt < 1_500L) return@LaunchedEffect
@@ -1612,15 +1631,13 @@ fun InternalVideoPlayer(url: String, title: String, cookie: String, series: Medi
         }
     }
 
-    // 一起看：房主退出播放页 → 加入端暂停并等待；等太久给个「可以自己看/退出」的兜底提示
+    // 一起看：房主退出播放页 = 房间结束 → 观看端停止播放并退回影视库首页
     LaunchedEffect(partyState.hostLeft) {
         if (partyState.hostLeft && !partyState.isHost) {
             if (exoPlayer.isPlaying) exoPlayer.pause()
-            playerToastMessage = "房主已离开播放页，等待房主继续"
-            delay(30_000)
-            if (WatchPartySession.state.value.hostLeft) {
-                playerToastMessage = "房主已离开较久，可以自己选片看，或退出房间"
-            }
+            playerToastMessage = "房主已离开，房间结束"
+            delay(1_200)
+            if (!WatchPartySession.state.value.isHost) onBack()
         }
     }
     DisposableEffect(Unit) {
@@ -1647,7 +1664,11 @@ fun InternalVideoPlayer(url: String, title: String, cookie: String, series: Medi
     }
 
     // 一起看房间面板（播放页内的房间卡片：邀请码/成员/审批/退出）
-    WatchPartyDialog(show = showPartyPanel, onDismiss = { showPartyPanel = false })
+    // 房间只绑一部影视，同剧换集自动跟随，所以不需要「推送当前播放」按钮
+    WatchPartyDialog(
+        show = showPartyPanel,
+        onDismiss = { showPartyPanel = false },
+    )
 
     if (errorDialogMsg != null) {
         AlertDialog(
@@ -1668,44 +1689,6 @@ fun InternalVideoPlayer(url: String, title: String, cookie: String, series: Medi
                     TextButton(onClick = { errorDialogMsg = null }) { AppText("关闭", color = Color(0xFF333333)) }
                 }
             }
-        )
-    }
-
-    // 房主端：换另一部影视 / 退回影视库后又开播时，先问一句「推送到观看端？」
-    if (showPushConfirm) {
-        AlertDialog(
-            onDismissRequest = {
-                showPushConfirm = false
-                WatchPartySession.mutePush(pendingPushTitle)
-            },
-            title = { AppText("一起看 · 推送", fontWeight = FontWeight.Bold) },
-            text = {
-                AppText(buildString {
-                    append("推送到观看端？\n正在看")
-                    if (pendingPushTitle.isNotBlank()) append("《$pendingPushTitle》")
-                    if (pendingPushEpisode.isNotBlank()) append(pendingPushEpisode)
-                    append("\n推送后观看端会跟随房主；不推送各看各的，房间仍保持在线")
-                })
-            },
-            confirmButton = {
-                TextButton(onClick = {
-                    showPushConfirm = false
-                    WatchPartySession.notifyShow(
-                        pendingPushFid.ifBlank { currentFile.fid },
-                        pendingPushEpisode,
-                        pendingPushTitle,
-                        pendingPushEpisodeTitle,
-                    )
-                    // 推送之后也等对方就位再一起开播
-                    stagePartyPlayback("")
-                }) { AppText("推送") }
-            },
-            dismissButton = {
-                TextButton(onClick = {
-                    showPushConfirm = false
-                    WatchPartySession.mutePush(pendingPushTitle)
-                }) { AppText("不推送", color = Color.Gray) }
-            },
         )
     }
 
@@ -2014,8 +1997,8 @@ fun InternalVideoPlayer(url: String, title: String, cookie: String, series: Medi
                 modifier = Modifier
                     .statusBarsPadding()
                     .padding(top = 16.dp)
-                    .background(Color(0xE61A1A1A), RoundedCornerShape(14.dp))
-                    .padding(horizontal = 12.dp, vertical = 10.dp),
+                    .background(Color(0xE61A1A1A), RoundedCornerShape(12.dp))
+                    .padding(horizontal = 10.dp, vertical = 8.dp),
                 verticalArrangement = Arrangement.spacedBy(2.dp),
             ) {
                 partyPending.forEach { p ->
@@ -2024,17 +2007,19 @@ fun InternalVideoPlayer(url: String, title: String, cookie: String, series: Medi
                             text = "${p.userName} 申请加入一起看",
                             color = Color.White,
                             fontSize = 13.sp,
-                            modifier = Modifier.padding(end = 8.dp),
+                            modifier = Modifier.padding(end = 4.dp),
                         )
                         if (p.userId in partyState.approving) {
                             Text("已同意，等待对方进入…", color = Color(0xFFB8B8B8), fontSize = 12.sp)
                         } else {
-                            TextButton(onClick = { WatchPartySession.approve(p.userId) }) {
-                                Text("同意", color = Color(0xFF66BB6A), fontSize = 13.sp)
-                            }
-                            TextButton(onClick = { WatchPartySession.reject(p.userId) }) {
-                                Text("拒绝", color = Color(0xFFEF5350), fontSize = 13.sp)
-                            }
+                            // 用紧凑的 Text 代替 TextButton：TextButton 有 64dp 最小宽度 + 内边距，
+                            // 两个按钮会把整条横幅撑得比内容宽很多（用户反馈「太宽」）
+                            Text("同意", color = Color(0xFF66BB6A), fontSize = 13.sp,
+                                modifier = Modifier.clickable { WatchPartySession.approve(p.userId) }
+                                    .padding(horizontal = 6.dp, vertical = 4.dp))
+                            Text("拒绝", color = Color(0xFFEF5350), fontSize = 13.sp,
+                                modifier = Modifier.clickable { WatchPartySession.reject(p.userId) }
+                                    .padding(start = 6.dp, end = 2.dp, top = 4.dp, bottom = 4.dp))
                         }
                     }
                 }
@@ -2178,7 +2163,7 @@ fun InternalVideoPlayer(url: String, title: String, cookie: String, series: Medi
                         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) { AppText("播放设置", color = Color.White, fontSize = 18.sp, fontWeight = FontWeight.Bold); IconButton(onClick = { showSettingsPanel = false }) { Icon(Icons.Default.Close, null, tint = Color.White) } }
                         Spacer(modifier = Modifier.height(16.dp))
                         Spacer(modifier = Modifier.height(8.dp)); AppText("音频轨道", color = Color.Gray, fontSize = 14.sp)
-                        audioTracks.forEachIndexed { index, trackGroup -> val format = trackGroup.getTrackFormat(0); val label = format.label ?: format.language ?: "音轨 ${index + 1}"; val isSelected = remember(trackSelectionVersion, audioTracks) { trackGroup.isTrackSelected(0) }; Row(modifier = Modifier.fillMaxWidth().clickable { exoPlayer.trackSelectionParameters = exoPlayer.trackSelectionParameters.buildUpon().setOverrideForType(TrackSelectionOverride(trackGroup.mediaTrackGroup, 0)).build(); trackSelectionVersion++; playerToastMessage = "已切换至 $label" }.padding(vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) { AppText(label, color = if (isSelected) Color.White else Color.Gray, fontSize = 15.sp, modifier = Modifier.weight(1f)) } }
+                        audioTracks.forEachIndexed { index, trackGroup -> val format = trackGroup.getTrackFormat(0); val rawLabel = format.label ?: format.language ?: "音轨 ${index + 1}"; val ch = format.channelCount; val kind = when { ch >= 6 -> "环绕"; ch == 2 -> "立体声"; ch == 1 -> "单声道"; ch > 2 -> "${ch}声道"; else -> "" }; val label = if (kind.isBlank()) rawLabel else "$rawLabel · $kind"; val isSelected = remember(trackSelectionVersion, audioTracks) { trackGroup.isTrackSelected(0) }; Row(modifier = Modifier.fillMaxWidth().clickable { userPickedAudio = true; exoPlayer.trackSelectionParameters = exoPlayer.trackSelectionParameters.buildUpon().setOverrideForType(TrackSelectionOverride(trackGroup.mediaTrackGroup, 0)).build(); trackSelectionVersion++; playerToastMessage = "已切换至 $rawLabel" }.padding(vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) { AppText(label, color = if (isSelected) Color.White else Color.Gray, fontSize = 15.sp, modifier = Modifier.weight(1f)) } }
                         Spacer(modifier = Modifier.height(16.dp)); AppText("字幕轨道", color = Color.Gray, fontSize = 14.sp)
                         textTracks.forEachIndexed { index, trackGroup -> val format = trackGroup.getTrackFormat(0); val label = format.label ?: format.language ?: "字幕 ${index + 1}"; val isSelected = remember(trackSelectionVersion, textTracks) { trackGroup.isTrackSelected(0) }; Row(modifier = Modifier.fillMaxWidth().clickable { exoPlayer.trackSelectionParameters = exoPlayer.trackSelectionParameters.buildUpon().setOverrideForType(TrackSelectionOverride(trackGroup.mediaTrackGroup, 0)).build(); trackSelectionVersion++; playerToastMessage = "已切换至 $label" }.padding(vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) { AppText(label, color = if (isSelected) Color.White else Color.Gray, fontSize = 15.sp, modifier = Modifier.weight(1f)) } }
                     }
@@ -2481,31 +2466,104 @@ private fun hasCompressedAudioDecoder(): Boolean = try {
  */
 @androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
 private fun buildVideoRenderersFactory(context: Context): DefaultRenderersFactory {
+    // 声道上限按「这台设备最终能出几个声道」定，而不是 AudioCapabilities 宣称的能力：
+    // 小米 13 宣称 ≥6，但喇叭只有两个声道，5.1 会被 AudioFlinger 降混、电平被压掉 → 只开 2 声道，交给解码器按标准系数降混
+    val outputChannels = resolveOutputChannelLimit(context)
+    // 光把 AudioCapabilities 写成 2 是压不住声道的：AudioSink 建 AudioTrack 时只认输入 Format 的 channelCount，
+    // capabilities 里的声道数只影响「支持哪些编码 / 能否直通」。所以要真降混，必须在 sink 前挂一个混音处理器，
+    // 按 AC3 参考系数把 5.1/7.1 混成 2.0 再交给 AudioFlinger（这一步同时绕开了系统那层不可控的降混）。
+    val downmixProcessor = if (outputChannels < 6) {
+        // 降混系数加起来会超过 1，遇到响的场景会削顶爆音。按方案乙：整体压 3dB（0.7071）再混，
+        // 保证"不会破音"，代价是降混后音量回到正常水平、不会额外变大。要更响把 0.7071 调大，要更稳调小。
+        val downmixGain = 0.7071f
+        ChannelMixingAudioProcessor().apply {
+            // 注意：只要处理器挂上去，每一种输入声道数都必须有对应矩阵，否则 onConfigure 会抛 UnhandledAudioFormatException。
+            // 1~6 用 media3 内置系数（2->2 是单位矩阵，等于直通），7.1(8ch) 内置没有，按 AC3 规则自己配一份。
+            listOf(6, 5, 4, 3, 2, 1).forEach { src ->
+                runCatching {
+                    val matrix = ChannelMixingMatrix.createForConstantPower(src, 2)
+                    // 2.0 内容是单位矩阵（直通），不能再压，否则普通立体声会平白小 3dB
+                    putChannelMixingMatrix(if (src == 2) matrix else matrix.scaleBy(downmixGain))
+                }
+            }
+            runCatching {
+                // 7.1: FL, FR, FC, LFE, BL, BR, SL, SR
+                putChannelMixingMatrix(
+                    ChannelMixingMatrix(
+                        8, 2, floatArrayOf(
+                            /* left  */ 1f, 0f, 0.7071f, 0.5f, 0.7071f, 0f, 0.7071f, 0f,
+                            /* right */ 0f, 1f, 0.7071f, 0.5f, 0f, 0.7071f, 0f, 0.7071f
+                        ).map { it * downmixGain }.toFloatArray()
+                    )
+                )
+            }
+        }
+    } else {
+        null
+    }
     val factory = object : DefaultRenderersFactory(context) {
         override fun buildAudioSink(
             context: Context,
             enableFloatOutput: Boolean,
             enableAudioTrackPlaybackParams: Boolean
         ): AudioSink {
-            val deviceMax = AudioCapabilities.getCapabilities(context).maxChannelCount
-            val maxChannels = if (deviceMax >= 1) deviceMax else 2
             return DefaultAudioSink.Builder(context)
-                .setAudioCapabilities(AudioCapabilities(intArrayOf(C.ENCODING_PCM_16BIT), maxChannels))
+                .setAudioCapabilities(AudioCapabilities(intArrayOf(C.ENCODING_PCM_16BIT), outputChannels))
+                .apply { downmixProcessor?.let { setAudioProcessors(arrayOf<AudioProcessor>(it)) } }
                 .setEnableFloatOutput(enableFloatOutput)
                 .setEnableAudioTrackPlaybackParams(enableAudioTrackPlaybackParams)
                 .build()
         }
     }
-    factory.setEnableAudioFloatOutput(true)
+    // 只声明 PCM 16bit，就不再要浮点输出（原先「要浮点」和「只声明 16bit」两处说法不一致）
+    factory.setEnableAudioFloatOutput(false)
     return factory
 }
 
-/** 播放器音频属性：媒体/电影用途，并主动退出系统空间音频（避免多声道被 spatializer 接管后倍速失效） */
+/**
+ * 这台设备「最终能出几个声道」，决定 5.1 是「解码端降混」还是「原样输出」。
+ *
+ * 不能用 AudioCapabilities.maxChannelCount 判断：它只表示这个 AudioTrack 配置能被接受，
+ * 小米 13 会报 ≥6，但内置喇叭只有两声道，最后仍由 AudioFlinger 降混（音量就是在这一层掉的）。
+ * 这里只认当前媒体输出设备自己声明的 channelCounts：
+ *  - 内置喇叭 / 有线或蓝牙耳机 → 2（5.1 由解码器降混，电平正常）
+ *  - HDMI / USB / 线路输出（电视、功放、多声道声卡）→ 取其最大值（常见 6/8，可原样输出环绕）
+ */
+fun resolveOutputChannelLimit(context: Context): Int {
+    val am = context.getSystemService(Context.AUDIO_SERVICE) as? AudioManager ?: return 2
+    val devices = try {
+        am.getDevices(AudioManager.GET_DEVICES_OUTPUTS)
+    } catch (e: Exception) {
+        null
+    } ?: return 2
+    fun priority(d: android.media.AudioDeviceInfo): Int = when (d.type) {
+        android.media.AudioDeviceInfo.TYPE_HDMI,
+        android.media.AudioDeviceInfo.TYPE_HDMI_ARC,
+        android.media.AudioDeviceInfo.TYPE_USB_DEVICE,
+        android.media.AudioDeviceInfo.TYPE_USB_HEADSET,
+        android.media.AudioDeviceInfo.TYPE_LINE_ANALOG,
+        android.media.AudioDeviceInfo.TYPE_LINE_DIGITAL,
+        android.media.AudioDeviceInfo.TYPE_AUX_LINE -> 3
+        android.media.AudioDeviceInfo.TYPE_WIRED_HEADPHONES,
+        android.media.AudioDeviceInfo.TYPE_WIRED_HEADSET,
+        android.media.AudioDeviceInfo.TYPE_BLUETOOTH_A2DP -> 2
+        android.media.AudioDeviceInfo.TYPE_BUILTIN_SPEAKER -> 1
+        else -> 0
+    }
+    val best = devices.filter { it.isSink }.maxByOrNull { priority(it) } ?: return 2
+    val channels = best.channelCounts.maxOrNull() ?: 2
+    val capability = AudioCapabilities.getCapabilities(context).maxChannelCount.let { if (it >= 1) it else 2 }
+    return minOf(channels, capability).coerceAtLeast(2)
+}
+
+/** 播放器音频属性：媒体/电影用途，并主动退出系统空间音频（避免多声道被 spatializer 接管后倍速失效 / 音量被再压一层） */
 private fun buildVideoAudioAttributes(): androidx.media3.common.AudioAttributes {
     val builder = androidx.media3.common.AudioAttributes.Builder()
         .setUsage(C.USAGE_MEDIA)
         .setContentType(C.AUDIO_CONTENT_TYPE_MOVIE)
-        .setIsContentSpatialized(true)
+        // 原先这里写 true（「我这段内容是空间音频」），同时又要求「不要做空间处理」，自相矛盾；
+        // 现在统一成「不是空间音频内容 + 系统不要做空间化」
+        .setIsContentSpatialized(false)
     if (android.os.Build.VERSION.SDK_INT >= 32) {
         builder.setSpatializationBehavior(android.media.AudioAttributes.SPATIALIZATION_BEHAVIOR_NEVER)
     }

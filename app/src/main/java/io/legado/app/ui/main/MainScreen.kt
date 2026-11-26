@@ -323,14 +323,8 @@ fun MainScreen(
         followEpisodeTitle = show?.episodeTitle ?: ""
     }
 
-    // 一起看：加入端启动/回到前台时，静默回到上次的房间（房主复用邀请码，节目事件能直接送达，不用再手动进面板跟随）。
-    // 房间被房主关掉后还会等一会儿再试，避免「刚退出就被判定没房间」导致后面一直收不到节目。
-    LaunchedEffect(Unit) {
-        repeat(10) {
-            if (!WatchPartySession.state.value.active) WatchPartySession.tryAutoRejoin()
-            delay(30_000)
-        }
-    }
+    // 一起看：房间只活一次 —— 房主退出播放页房间就结束，下次重新建房、重新复制邀请码，
+    // 所以这里不再做「启动/回前台自动回上次房间」。
 
     // 加入端在房间卡片里手动点「跟随房主」：用户已经明确点了跟随，直接进，不再弹 3 秒倒计时
     LaunchedEffect(partyState.followRequest) {
@@ -779,6 +773,17 @@ fun MainScreen(
                         }
                     }
                     (context as? ComponentActivity)?.requestedOrientation = android.content.pm.ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
+                    // 一起看：房间只活一次，任何一端退出播放页就算退出房间。
+                    // 房主退出 = 房间结束（连带清掉邀请码记录，下次重新建房）；观看端退出 = 自己离开房间、回影视库首页
+                    val partyNow = WatchPartySession.state.value
+                    if (partyNow.active) {
+                        if (partyNow.isHost) {
+                            WatchPartySession.leaveAndForget()
+                        } else {
+                            WatchPartySession.leave()
+                            videoViewModel.selectSeries(null)
+                        }
+                    }
                     videoViewModel.stopPlaying()
                 }
             )

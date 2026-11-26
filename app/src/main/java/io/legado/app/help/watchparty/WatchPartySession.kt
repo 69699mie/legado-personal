@@ -74,22 +74,6 @@ object WatchPartySession {
     /** 房主端：各加入端回报「已就位」的时间戳（userId -> ackAt） */
     private val readyAcks = mutableMapOf<String, Long>()
 
-    // ---- 房主「推送到观看端」确认 ----
-    /** 本房间内已经推送过几次：0 表示还没推过，房间里第一次播放要问一次 */
-    @Volatile
-    private var pushCount = 0
-    /** 上一次推送的是哪部影视（剧名），用来判断「同一影视换集 → 不问，直接推」 */
-    @Volatile
-    private var lastPushSeries: String? = null
-    /** 本次播放「不推送」：房主不发进度同步，也不跟着加入端的操作走，直到下一次推送确认 */
-    @Volatile
-    private var pushMuted = false
-    /** 选了「不推送」的那部影视：同一部再换集时还是要问一次，不能默默改成推送 */
-    @Volatile
-    private var mutedSeries: String? = null
-
-    fun isPushMuted(): Boolean = pushMuted
-
     private fun pref() = appCtx.getSharedPreferences(PREF, Context.MODE_PRIVATE)
 
     fun myId(): String {
@@ -168,10 +152,6 @@ object WatchPartySession {
         linkReqAt.clear()
         linkSentCount = 0
         pendingLinkFid = null
-        // 推送确认按房间重新来过
-        pushCount = 0
-        lastPushSeries = null
-        pushMuted = false
         if (host) approvedIds.addAll(loadApproved(code))
         val uid = myId()
         val name = WatchPartyConfig.nameOrDefault()
@@ -366,8 +346,6 @@ object WatchPartySession {
     }
 
     private fun publishSnapshot(ch: WatchPartyChannel) {
-        // 「不推送」期间房主不发任何进度同步：否则加入了同一集时，观看端仍会被进度带着走
-        if (pushMuted) return
         val snap = localSnapshot ?: return
         val now = System.currentTimeMillis()
         val elapsed = now - snapshotAt
@@ -404,35 +382,8 @@ object WatchPartySession {
             sentAt = System.currentTimeMillis(),
         )
         lastShow = show
-        pushCount++
-        lastPushSeries = title
-        pushMuted = false
-        mutedSeries = null
         _state.update { it.copy(show = show, hostLeft = false) }
         ch.sendShow(fid, episode, title, episodeTitle)
-    }
-
-    /**
-     * 房主这次播放要不要先问一句「推送到观看端」。
-     * 房间里第一次播放不问，直接推（在房间里就是要一起看）。
-     * 只有这两种情况问：
-     *   1) 换成了另一部影视（同剧换集不算）；
-     *   2) 刚退回影视库首页又重新开播（hostLeft）。
-     */
-    fun shouldConfirmPush(series: String): Boolean {
-        if (!_state.value.isHost) return false
-        if (_state.value.hostLeft) return true
-        // 刚选过「不推送」：同一部再换集也要再问一次，不能默默改成推送
-        if (pushMuted && (mutedSeries.isNullOrBlank() || mutedSeries == series)) return true
-        val last = lastPushSeries ?: return false
-        return last != series
-    }
-
-    /** 房主点了「不推送」：本次播放不参与同步，也不打扰观看端 */
-    fun mutePush(series: String = "") {
-        pushMuted = true
-        if (series.isNotBlank()) mutedSeries = series
-        _state.update { it.copy(hostLeft = false) }
     }
 
     /** 房主端：还要等哪些成员回报「已就位」。
@@ -608,8 +559,6 @@ object WatchPartySession {
         )
         localSnapshot = snap
         snapshotAt = snap.sentAt
-        // 房主选了「不推送」：状态照存（恢复推送后心跳要用），但不发出去
-        if (_state.value.isHost && pushMuted) return
         val now = System.currentTimeMillis()
         if (!force && now - lastBroadcastAt < 2_500L) return
         lastBroadcastAt = now
