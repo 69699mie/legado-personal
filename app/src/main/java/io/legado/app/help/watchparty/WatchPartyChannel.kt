@@ -51,8 +51,12 @@ class WatchPartyChannel(
         fun onDecryptFailed()
         /** 房主换集 / 换片：加入端据此提前跟随 */
         fun onRemoteShow(show: PartyShowState)
-        /** 房主退出了播放页 */
+        /** 房主退出了播放页（旧事件，现在等价于「房间结束」） */
         fun onHostLeftPlayer()
+        /** 加入端：房主退出播放页 = 房间结束。只解除房间，不动播放器，当前集继续播 */
+        fun onRoomEnded()
+        /** 房主端：某个成员退出了房间（收到 bye，或心跳超时被清出） */
+        fun onMemberLeft(userId: String, userName: String)
         /** 房主端：某个加入端索要当前集的短时直链 */
         fun onLinkRequest(userId: String, fid: String)
         /** 加入端：收到房主返回的短时直链 */
@@ -231,6 +235,9 @@ class WatchPartyChannel(
     fun sendLeavePlayer() = publish("leaveplayer", JsonObject().apply {
         addProperty("userId", userId)
     })
+
+    /** 房主退出播放页 = 房间结束：加入端解除房间、继续播完当前这一集，只是不能再切集 */
+    fun sendRoomEnd() = publish("roomend", selfJson())
 
     /**
      * 加入端索要当前集直链。只带 fid 和 userId，不带任何本地路径/文件名，
@@ -525,6 +532,13 @@ class WatchPartyChannel(
                 callbacks.onHostLeftPlayer()
             }
 
+            "roomend" -> {
+                if (amHost || !approved) return
+                val id = data.get("userId")?.asString ?: return
+                if (id == userId) return
+                callbacks.onRoomEnded()
+            }
+
             "linkreq" -> {
                 // 只有房主处理；且不处理自己发的
                 if (!amHost) return
@@ -552,8 +566,18 @@ class WatchPartyChannel(
 
             "bye" -> {
                 val id = data.get("userId")?.asString ?: return
-                synchronized(members) { members.remove(id) }
+                val left = synchronized(members) { members.remove(id) }
                 emitMembers()
+                val name = left?.userName?.takeIf { it.isNotBlank() }
+                    ?: data.get("userName")?.asString?.takeIf { it.isNotBlank() }
+                    ?: "有人"
+                if (amHost) {
+                    // 房主端：告诉房主「谁退出了房间」（Session 里还有 5 秒去重 + 1.5 秒重连宽限）
+                    callbacks.onMemberLeft(id, name)
+                } else if (left?.isHost == true) {
+                    // 加入端：bye 里走的是房主本人 → 房间结束（roomend 丢包时的兜底）
+                    callbacks.onRoomEnded()
+                }
             }
         }
     }
@@ -607,11 +631,15 @@ class WatchPartyChannel(
 
     private fun emitMembers() {
         val now = System.currentTimeMillis()
+        val gone = mutableListOf<PartyMember>()
         val alive = synchronized(members) {
+            members.values.filter { now - it.lastSeen > MEMBER_TIMEOUT_MS }.forEach { gone += it }
             members.entries.removeAll { now - it.value.lastSeen > MEMBER_TIMEOUT_MS }
             members.values.toList()
         }
         callbacks.onMembersChanged(alive)
+        // 心跳超时被清出的人也要提示一次（cold 退出的客户端不会发 bye）
+        if (amHost) gone.forEach { callbacks.onMemberLeft(it.userId, it.userName) }
     }
 
     private fun selfJson(): JsonObject = JsonObject().apply {

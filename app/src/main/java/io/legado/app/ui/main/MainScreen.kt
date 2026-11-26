@@ -306,6 +306,18 @@ fun MainScreen(
         val inPlayerPage0 = videoPageIndex0 >= 0 && pagerState.currentPage == videoPageIndex0
         if (inPlayerPage0 && videoUiState.currentPlayFile?.fid == fid) return@LaunchedEffect
         if (fid == cancelledFollowFid || fid == followFid) return@LaunchedEffect
+        // 刚被房主同意：第一个节目直接进入播放页，不弹「一起看 · 跟随房主」3 秒倒计时
+        if (partyState.approvedAt > 0L && System.currentTimeMillis() - partyState.approvedAt < 300_000L) {
+            followFid = null
+            WatchPartySession.clearApprovedAutoEnter()
+            applyFollow(
+                fid,
+                show?.title.orEmpty(),
+                show?.episode ?: partyState.remoteSync?.episode.orEmpty(),
+                show?.episodeTitle.orEmpty(),
+            )
+            return@LaunchedEffect
+        }
         // 用户已经在播放页里看着：房主换集/换片直接切过去，不再弹 3 秒确认（点了跟随已经是明确意图）
         if (inPlayerPage0 && videoUiState.currentPlayFile != null) {
             followFid = null
@@ -325,6 +337,23 @@ fun MainScreen(
 
     // 一起看：房间只活一次 —— 房主退出播放页房间就结束，下次重新建房、重新复制邀请码，
     // 所以这里不再做「启动/回前台自动回上次房间」。
+
+    // 一起看两句提示的兜底：播放页里由 InternalVideoPlayer 用顶部浮条显示；
+    // 只有「不在播放页」时才在这里弹系统 Toast，避免同一句弹两次。
+    LaunchedEffect(partyState.noticeSeq, partyState.hostLeft, partyState.notice) {
+        val videoIdx0 = destinations.indexOfFirst { it == MainDestination.Video }
+        val inPlayerPage0 = videoIdx0 >= 0 && pagerState.currentPage == videoIdx0 &&
+            (videoUiState.playUrl != null || videoUiState.isDirectPlay)
+        if (inPlayerPage0) return@LaunchedEffect
+        partyState.notice?.let {
+            android.widget.Toast.makeText(context, it, android.widget.Toast.LENGTH_SHORT).show()
+            WatchPartySession.consumeNotice()
+        }
+        if (partyState.hostLeft && !partyState.isHost) {
+            android.widget.Toast.makeText(context, "房主已离开，房间已结束", android.widget.Toast.LENGTH_SHORT).show()
+            WatchPartySession.consumeHostLeft()
+        }
+    }
 
     // 加入端在房间卡片里手动点「跟随房主」：用户已经明确点了跟随，直接进，不再弹 3 秒倒计时
     LaunchedEffect(partyState.followRequest) {

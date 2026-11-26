@@ -1055,10 +1055,13 @@ fun InternalVideoPlayer(url: String, title: String, cookie: String, series: Medi
     var isLongPressing by remember { mutableStateOf(false) }
     var showLongPressText by remember { mutableStateOf(true) } // 🌟 控制长按提示短暂显示后自动淡出
     var playerToastMessage by remember { mutableStateOf<String?>(null) }
+    // 一起看的两句提示（「张三」已退出房间 / 房主已离开，房间已结束）：单独一份，固定 2 秒消失
+    var partyNoticeMessage by remember { mutableStateOf<String?>(null) }
 
     var lastCenterMessage by remember { mutableStateOf<String?>(null) }
     val currentCenterMessage = when {
         isLongPressing && showLongPressText -> "2.0x快进中"
+        partyNoticeMessage != null -> partyNoticeMessage
         playerToastMessage != null -> playerToastMessage
         else -> null
     }
@@ -1081,6 +1084,13 @@ fun InternalVideoPlayer(url: String, title: String, cookie: String, series: Medi
         if (playerToastMessage != null) {
             delay(2500)
             playerToastMessage = null
+        }
+    }
+
+    LaunchedEffect(partyNoticeMessage) {
+        if (partyNoticeMessage != null) {
+            delay(2000)
+            partyNoticeMessage = null
         }
     }
 
@@ -1108,7 +1118,10 @@ fun InternalVideoPlayer(url: String, title: String, cookie: String, series: Medi
         }
     }
 
-    var isPlaying by remember { mutableStateOf(true) }
+    // 界面的播放/暂停状态以 playWhenReady（用户的真实意图）为准，不用 isPlaying。
+    // 缓冲期 isPlaying 本来就是 false，旧版初值又写死 true，加载中点暂停会执行成 pause，
+    // 之后因为 isPlaying 仍为 false 永远只能走 pause → 图标不切回、双击/拖进度都救不回来。
+    var isPlaying by remember { mutableStateOf(false) }
     var isBuffering by remember { mutableStateOf(true) }
     // 一起看
     val partyState by WatchPartySession.state.collectAsState()
@@ -1230,6 +1243,16 @@ fun InternalVideoPlayer(url: String, title: String, cookie: String, series: Medi
     }
 
     /**
+     * 播放/暂停的唯一出口：只看 playWhenReady（用户意图），不看 isPlaying。
+     * 缓冲中 isPlaying 恒为 false，按它判断会把「点暂停」执行成 pause，之后又因为 isPlaying 还是 false
+     * 永远只能走 pause —— 这就是「加载中点暂停后永久卡在暂停」的根因。
+     */
+    fun togglePlayPause() {
+        if (exoPlayer.playWhenReady) exoPlayer.pause() else exoPlayer.play()
+        isPlaying = exoPlayer.playWhenReady
+    }
+
+    /**
      * 房主主动拖动 / 换集之后的「两端就位再一起播」：
      * 先广播「暂停在 X 秒」，等「正在看同一集」的加入端回报已就位（真缓冲到能播 + 进度对上），
      * 再统一点播放。对方网慢时不再 8 秒强行开播——等满 30 秒弹窗问房主「继续播放 / 再等一会」。
@@ -1333,7 +1356,7 @@ fun InternalVideoPlayer(url: String, title: String, cookie: String, series: Medi
                 when (intent?.getIntExtra(EXTRA_CONTROL, -1)) {
                     CONTROL_PREV -> { val idx = sortedVideos.indexOfFirst { it.fid == currentFile.fid }; if (idx > 0) viewModel.playVideo(ctx ?: return, latestSeriesForReceiver, sortedVideos[idx - 1]) else Toast.makeText(ctx, "已经是第一集了", Toast.LENGTH_SHORT).show() }
                     CONTROL_NEXT -> { val idx = sortedVideos.indexOfFirst { it.fid == currentFile.fid }; if (idx != -1 && idx < sortedVideos.size - 1) viewModel.playVideo(ctx ?: return, latestSeriesForReceiver, sortedVideos[idx + 1]) else Toast.makeText(ctx, "已经是最新集了", Toast.LENGTH_SHORT).show() }
-                    CONTROL_PLAY_PAUSE -> { if (exoPlayer.isPlaying) exoPlayer.pause() else exoPlayer.play() }
+                    CONTROL_PLAY_PAUSE -> { if (exoPlayer.playWhenReady) exoPlayer.pause() else exoPlayer.play() }
                 }
             }
         }
@@ -1412,6 +1435,8 @@ fun InternalVideoPlayer(url: String, title: String, cookie: String, series: Medi
         // 🌟 每次重新 prepare（切集/重新加载）后重申一次倍速，防止速度被 prepare 重置回 1.0x
         exoPlayer.setPlaybackParameters(PlaybackParameters(playbackSpeed, 1.0f))
         exoPlayer.playWhenReady = true
+        // 刚 prepare 时 onPlayWhenReadyChanged 不一定回调（值本来就可能是 true），这里同步一次
+        isPlaying = true
     }
 
     LaunchedEffect(currentFile.fid, isPlaying) {
@@ -1420,9 +1445,14 @@ fun InternalVideoPlayer(url: String, title: String, cookie: String, series: Medi
 
     DisposableEffect(exoPlayer) {
         val listener = object : Player.Listener {
-            override fun onIsPlayingChanged(playing: Boolean) { isPlaying = playing; if (isInPip.value) isInPip.value = activity?.isInPictureInPictureMode == true }
+            override fun onPlayWhenReadyChanged(playWhenReady: Boolean, reason: Int) { isPlaying = playWhenReady }
+            override fun onIsPlayingChanged(playing: Boolean) {
+                // 只刷新画中画按钮和状态栏，不用它驱动播放/暂停图标（缓冲中它会 false、和用户意图不一致）
+                if (isInPip.value) isInPip.value = activity?.isInPictureInPictureMode == true
+            }
             override fun onPlaybackStateChanged(state: Int) {
                 isBuffering = state == Player.STATE_BUFFERING || state == Player.STATE_IDLE
+                if (state == Player.STATE_ENDED) isPlaying = false
                 if (state == Player.STATE_READY) {
                     duration = exoPlayer.duration.coerceAtLeast(0L)
                     if (introSeconds > 0 && !hasAutoSkippedIntro && exoPlayer.currentPosition < introSeconds * 1000L) {
@@ -1631,14 +1661,20 @@ fun InternalVideoPlayer(url: String, title: String, cookie: String, series: Medi
         }
     }
 
-    // 一起看：房主退出播放页 = 房间结束 → 观看端停止播放并退回影视库首页
+    // 一起看：房主退出播放页 = 房间结束。只弹 2 秒提示，不暂停、不换集、不退回影视库：
+    // 观看端继续把当前这一集播完；切集依赖房主的节目广播，房间断了自然就切不了
     LaunchedEffect(partyState.hostLeft) {
         if (partyState.hostLeft && !partyState.isHost) {
-            if (exoPlayer.isPlaying) exoPlayer.pause()
-            playerToastMessage = "房主已离开，房间结束"
-            delay(1_200)
-            if (!WatchPartySession.state.value.isHost) onBack()
+            partyNoticeMessage = "房主已离开，房间已结束"
+            WatchPartySession.consumeHostLeft()
         }
+    }
+
+    // 房主端：谁退出了房间（Session 收到 bye 或心跳超时后推过来）
+    LaunchedEffect(partyState.noticeSeq) {
+        val notice = partyState.notice ?: return@LaunchedEffect
+        partyNoticeMessage = notice
+        WatchPartySession.consumeNotice()
     }
     DisposableEffect(Unit) {
         onDispose {
@@ -1820,7 +1856,7 @@ fun InternalVideoPlayer(url: String, title: String, cookie: String, series: Medi
                     }
                     else -> {
                         seekMsgAccumSec = 0L; seekMsgDir = 0
-                        if (isPlaying) exoPlayer.pause() else exoPlayer.play(); pushLocalAction()
+                        togglePlayPause(); pushLocalAction()
                     }
                 }
             },
@@ -2116,7 +2152,7 @@ fun InternalVideoPlayer(url: String, title: String, cookie: String, series: Medi
                                     onLongClick = { introSeconds = 0; viewModel.saveIntroOutro(latestSeries.title, season, introSeconds, outroSeconds) }
                                 ).padding(horizontal = 8.dp, vertical = 4.dp))
                                 IconButton(onClick = { val videos = sortedVideos; val idx = videos.indexOfFirst { it.fid == currentFile.fid }; if (idx > 0) viewModel.playVideo(context, latestSeries, videos[idx - 1]) }, modifier = Modifier.size(36.dp)) { Icon(Icons.Default.SkipPrevious, null, tint = Color.White, modifier = Modifier.size(24.dp)) }
-                                IconButton(onClick = { if (isPlaying) exoPlayer.pause() else exoPlayer.play(); pushLocalAction() }, modifier = Modifier.size(40.dp)) { Icon(if (isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow, null, tint = Color.White, modifier = Modifier.size(28.dp)) }
+                                IconButton(onClick = { togglePlayPause(); pushLocalAction() }, modifier = Modifier.size(40.dp)) { Icon(if (isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow, null, tint = Color.White, modifier = Modifier.size(28.dp)) }
                                 IconButton(onClick = { val videos = sortedVideos; val idx = videos.indexOfFirst { it.fid == currentFile.fid }; if (idx != -1 && idx < videos.size - 1) viewModel.playVideo(context, latestSeries, videos[idx + 1]) }, modifier = Modifier.size(36.dp)) { Icon(Icons.Default.SkipNext, null, tint = Color.White, modifier = Modifier.size(24.dp)) }
                                 if (isLandscape) AppText(text = if (outroSeconds > 0) formatIntroOutro(outroSeconds) else "片尾", color = Color.White, fontSize = 12.sp, modifier = Modifier.combinedClickable(
                                     onClick = { val remain = duration - currentPosition; if (remain > 0) { outroSeconds = (remain / 1000).toInt(); viewModel.saveIntroOutro(latestSeries.title, season, introSeconds, outroSeconds); outroWarningTriggered = false } },

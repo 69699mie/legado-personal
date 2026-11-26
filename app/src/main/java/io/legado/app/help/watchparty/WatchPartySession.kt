@@ -74,6 +74,12 @@ object WatchPartySession {
     /** 房主端：各加入端回报「已就位」的时间戳（userId -> ackAt） */
     private val readyAcks = mutableMapOf<String, Long>()
 
+    /** 成员退出提示：先等 1.5 秒（瞬时断流的人多半会马上回来），同一个人 5 秒内只提示一次 */
+    private const val LEFT_NOTICE_GRACE_MS = 1_500L
+    private const val LEFT_NOTICE_DEDUPE_MS = 5_000L
+    private val leftNoticeJobs = java.util.concurrent.ConcurrentHashMap<String, Job>()
+    private val lastLeftNoticeAt = java.util.concurrent.ConcurrentHashMap<String, Long>()
+
     private fun pref() = appCtx.getSharedPreferences(PREF, Context.MODE_PRIVATE)
 
     fun myId(): String {
@@ -223,6 +229,33 @@ object WatchPartySession {
                     }
                 }
 
+                override fun onMemberLeft(userId: String, userName: String) {
+                    if (!_state.value.isHost) return
+                    if (userId == _state.value.myId) return
+                    val now = System.currentTimeMillis()
+                    // 网络抖动会连发 bye / 超时清人两条，同一个人 5 秒内只提示一次
+                    if (now - (lastLeftNoticeAt[userId] ?: 0L) < LEFT_NOTICE_DEDUPE_MS) return
+                    leftNoticeJobs.remove(userId)?.cancel()
+                    leftNoticeJobs[userId] = scope.launch {
+                        delay(LEFT_NOTICE_GRACE_MS)
+                        val cur = _state.value
+                        // 房间已经结束 / 自己不是房主 / 人又回来了 → 不提示
+                        if (!cur.active || !cur.isHost) return@launch
+                        if (cur.members.any { it.userId == userId }) return@launch
+                        lastLeftNoticeAt[userId] = System.currentTimeMillis()
+                        _state.update { s ->
+                            s.copy(
+                                notice = "「${userName.ifBlank { "有人" }}」已退出房间",
+                                noticeSeq = s.noticeSeq + 1,
+                            )
+                        }
+                    }
+                }
+
+                override fun onRoomEnded() {
+                    endRoomForGuest()
+                }
+
                 override fun onKnock(userId: String, userName: String) {
                     // 房主侧准入控制：老熟人直接放行；邀请码过期直接拒；否则排队等房主点同意
                     if (_state.value.isHost) {
@@ -249,7 +282,13 @@ object WatchPartySession {
                 override fun onAdmitted() {
                     channel?.announce()
                     _state.update {
-                        it.copy(approved = true, error = null, pending = emptyList())
+                        it.copy(
+                            approved = true,
+                            error = null,
+                            pending = emptyList(),
+                            // 记住被同意的时间：之后第一个节目直接进入，不再弹 3 秒跟随倒计时
+                            approvedAt = System.currentTimeMillis(),
+                        )
                     }
                 }
 
@@ -258,7 +297,8 @@ object WatchPartySession {
                 }
 
                 override fun onHostLeftPlayer() {
-                    _state.update { it.copy(hostLeft = true) }
+                    // 房主退出播放页 = 房间结束：只解除房间，不动播放器，当前这一集继续播
+                    endRoomForGuest()
                 }
 
                 override fun onReadyAck(userId: String) {
@@ -515,13 +555,57 @@ object WatchPartySession {
     }
 
     fun leave() {
+        val cur = _state.value
+        val ch = channel
+        // 房主退出播放页 = 房间结束：必须先发出去再关通道。
+        // MainScreen 的 onBack 里 leave() 先于播放页 dispose 执行，dispose 那边此时已经拿不到
+        // channel 和 active 了，所以只靠 notifyHostLeftPlayer() 永远发不出去（加入端要干等 90 秒超时）。
+        if (cur.active && cur.isHost && ch != null) {
+            runCatching { ch.sendLeavePlayer() }
+            runCatching { ch.sendRoomEnd() }
+        }
+        leftNoticeJobs.values.forEach { runCatching { it.cancel() } }
+        leftNoticeJobs.clear()
+        stopHeartbeat()
+        WatchPartyService.stop(appCtx)
+        localSnapshot = null
+        channel = null
+        runCatching { ch?.close() }
+        _state.value = WatchPartyState()
+    }
+
+    /**
+     * 加入端：房主退场 → 房间结束。
+     * 只解绑房间，不碰播放器：当前这一集继续播，切集本来就依赖房主的节目广播，房间断了自然切不了。
+     */
+    fun endRoomForGuest() {
+        val cur = _state.value
+        if (cur.isHost || !cur.active) return
+        leftNoticeJobs.values.forEach { runCatching { it.cancel() } }
+        leftNoticeJobs.clear()
         stopHeartbeat()
         WatchPartyService.stop(appCtx)
         localSnapshot = null
         val ch = channel
         channel = null
         runCatching { ch?.close() }
-        _state.value = WatchPartyState()
+        // 保留 hostLeft 供界面弹「房主已离开，房间已结束」，其余房间状态（成员/邀请码/卡片）全部清掉
+        _state.value = WatchPartyState(hostLeft = true)
+    }
+
+    /** 界面显示完「谁退出了房间」后调用 */
+    fun consumeNotice() {
+        _state.update { it.copy(notice = null) }
+    }
+
+    /** 界面显示完「房主已离开，房间已结束」后调用 */
+    fun consumeHostLeft() {
+        _state.update { it.copy(hostLeft = false) }
+    }
+
+    /** 被同意后的第一个节目已经直接进入播放页，之后房主再换集照常走跟随提示 */
+    fun clearApprovedAutoEnter() {
+        _state.update { it.copy(approvedAt = 0L) }
     }
 
     /** 用户主动「退出房间」：连上次房间记录一起清掉，避免下次启动又自己回去 */

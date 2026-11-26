@@ -99,4 +99,10 @@ data class WatchPartyState(
     val linkRequest: PartyLinkRequest? = null,
     /** 加入端：收到房主返回的短时直链（主页面消费后清空） */
     val incomingLink: PartyLink? = null,
+    /** 短提示（房主端「谁退出了房间」等）：界面消费后置空 */
+    val notice: String? = null,
+    /** 提示序号：同一条文案重复出现也要能再弹一次（notice 本身会被消费掉） */
+    val noticeSeq: Long = 0L,
+    /** 加入端被房主同意的时间（毫秒）：被同意后的第一个节目直接进入，不再弹 3 秒跟随倒计时 */
+    val approvedAt: Long = 0L,
 )
