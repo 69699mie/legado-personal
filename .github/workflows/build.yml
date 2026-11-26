@@ -105,7 +105,7 @@ jobs:
         if: github.ref == 'refs/heads/main'
         with:
           tag_name: v${{ steps.version.outputs.VERSION_NAME }}
-          name: 阅读专属版 v${{ steps.version.outputs.VERSION_NAME }}
+          name: v${{ steps.version.outputs.VERSION_NAME }}
           files: app/build/outputs/apk/**/*.apk
           generate_release_notes: true
           # ➕ 修复：如果同名 tag 已存在，强制覆盖它并更新 Release 内容
