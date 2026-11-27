@@ -10,6 +10,7 @@ import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import java.security.MessageDigest
 import java.security.SecureRandom
+import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.TimeUnit
 import javax.crypto.Cipher
 import javax.crypto.spec.GCMParameterSpec
@@ -72,10 +73,15 @@ class WatchPartyChannel(
         const val MEMBER_TIMEOUT_MS = 90_000L
         /** 45 秒收不到任何消息（含房主 10 秒一次的同步包）就认为长流已死，主动重连 */
         const val IDLE_RECONNECT_MS = 45_000L
+        /** 兜底轮询间隔：WS 不通时每隔这么久拉一次增量消息 */
+        const val POLL_INTERVAL_MS = 5_000L
     }
 
     /** 中继地址在会话创建时定下来，避免中途切换导致收发不同源 */
     private val baseUrl = WatchPartyConfig.relayUrl
+
+    /** 已接受过的 sync 的 sentAt（按 userId）：轮询重放的旧消息直接丢掉，否则倍速/暂停会被来回改 */
+    private val syncFreshness = SyncFreshness()
 
     private val channel = "legado-" + MessageDigest.getInstance("SHA-256")
         .digest("wp|$roomCode|$password".toByteArray(Charsets.UTF_8))
@@ -148,7 +154,7 @@ class WatchPartyChannel(
                 if (closed) return@Thread
                 val now = System.currentTimeMillis()
                 if (connected && lastRxAt > 0 && now - lastRxAt > IDLE_RECONNECT_MS) {
-                    LogUtils.d(TAG, "长流 ${IDLE_RECONNECT_MS}ms 无数据，主动重连")
+                    android.util.Log.d(TAG, "长流 ${IDLE_RECONNECT_MS}ms 无数据，主动重连")
                     runCatching { readerCall?.cancel() }
                     runCatching { ws?.cancel() }
                 }
@@ -323,7 +329,7 @@ class WatchPartyChannel(
                         t: Throwable,
                         response: okhttp3.Response?,
                     ) {
-                        if (!closed) LogUtils.d(TAG, "WS 断开: ${t.localizedMessage}")
+                        if (!closed) android.util.Log.d(TAG, "WS 断开: ${t.localizedMessage}")
                         // 4xx 说明这个地址根本没有 WS（404/405/401），直接记下来别再试
                         val code = response?.code ?: 0
                         if (code in 400..499) WsProbe.unsupported.set(baseUrl)
@@ -368,41 +374,63 @@ class WatchPartyChannel(
         scheduleReconnect()
     }
 
+    /**
+     * 兜底接收：WS 不通时不再挂 /raw 长流——那条流经 Cloudflare 会被整段缓冲，
+     * 实测连 45 秒一条都收不到，房间就成了「只能发、听不见」的半聋状态。
+     * 改用 poll=1 增量轮询：每次带上一轮最后一条消息 id，拿完立刻返回，稳定且流量很小。
+     */
     private fun subscribeViaHttp() {
-        val request = Request.Builder()
-            .url("$baseUrl/$channel/raw")
-            .header("Accept", "text/plain")
-            .build()
-        readerCall = client.newCall(request)
         Thread {
-            var response: okhttp3.Response? = null
-            try {
-                val resp = readerCall?.execute() ?: return@Thread
-                response = resp
-                if (!resp.isSuccessful) {
-                    callbacks.onDisconnected("中继返回 ${resp.code}")
-                    scheduleReconnect()
-                    return@Thread
+            var since = "none"
+            var ready = false
+            var failures = 0
+            while (!closed) {
+                val ok = runCatching {
+                    val request = Request.Builder()
+                        .url("$baseUrl/$channel/json?poll=1&since=$since")
+                        .build()
+                    client.newCall(request).execute().use { resp ->
+                        if (resp.code == 429) {
+                            // 中继限流：歇 30 秒再来，别当成断线（重连会再打一轮请求、限流更久）
+                            runCatching { Thread.sleep(30_000L) }
+                            return@use true
+                        }
+                        if (!resp.isSuccessful) {
+                            callbacks.onDisconnected("中继返回 ${resp.code}")
+                            return@use false
+                        }
+                        if (!ready) {
+                            ready = true
+                            failures = 0
+                            onChannelReady()
+                        }
+                        val body = resp.body?.string().orEmpty()
+                        body.lineSequence().forEach { line ->
+                            if (line.isBlank()) return@forEach
+                            val obj = runCatching { JsonParser.parseString(line).asJsonObject }.getOrNull()
+                                ?: return@forEach
+                            if (obj.get("event")?.asString != "message") return@forEach
+                            obj.get("id")?.asString?.let { since = it }
+                            lastRxAt = System.currentTimeMillis()
+                            obj.get("message")?.asString?.let { dispatchPayload(it) }
+                        }
+                        true
+                    }
+                }.getOrDefault(false)
+                if (!ok) {
+                    failures++
+                    connected = false
+                    if (failures >= 3) {
+                        scheduleReconnect()
+                        return@Thread
+                    }
+                    // 偶发失败（限流/抖动）不重开整条通道，隔久一点再拉
+                    runCatching { Thread.sleep(4_000L) }
+                    continue
                 }
-                onChannelReady()
-                val source = resp.body?.source()
-                while (!closed && source != null) {
-                    val line = source.readUtf8Line() ?: break
-                    if (line.isBlank()) continue
-                    lastRxAt = System.currentTimeMillis()
-                    dispatchPayload(line)
-                }
-            } catch (e: Exception) {
-                if (!closed) {
-                    LogUtils.d(TAG, "订阅中断: ${e.localizedMessage}")
-                }
-            } finally {
-                runCatching { response?.close() }
-            }
-            if (!closed) {
-                connected = false
-                callbacks.onDisconnected("通道已断开")
-                scheduleReconnect()
+                // 轮询成功也算“活着”，别让看门狗把正常轮询当成长流卡死
+                lastRxAt = System.currentTimeMillis()
+                runCatching { Thread.sleep(POLL_INTERVAL_MS) }
             }
         }.also { it.isDaemon = true }.start()
     }
@@ -423,7 +451,7 @@ class WatchPartyChannel(
             client.newCall(request).enqueue(object : okhttp3.Callback {
                 override fun onFailure(call: okhttp3.Call, e: java.io.IOException) {
                     // 之前这里只写日志，真机上是「静默失败」：界面看不到、logcat 也抓不到
-                    LogUtils.d(TAG, "发送失败($event): ${e.localizedMessage}")
+                    android.util.Log.d(TAG, "发送失败($event): ${e.localizedMessage}")
                     callbacks.onPublishResult(event, -1, e.localizedMessage)
                 }
 
@@ -595,6 +623,9 @@ class WatchPartyChannel(
             sentAt = data.get("sentAt")?.asLong ?: System.currentTimeMillis(),
         )
         if (state.userId.isBlank() || state.userId == userId) return
+        // 只接受比上次更新的一条：中继/轮询重放旧包时（sentAt 更早），丢掉，
+        // 不然两端会互相把倍速和暂停改回去，看起来就是「倍速不同步」
+        if (!syncFreshness.accept(state.userId, state.sentAt)) return
         notePeerFid(state.userId, state.userName, state.fid)
         callbacks.onRemoteSync(state)
     }

@@ -26,6 +26,8 @@ class VideoDownloadManager(private val client: OkHttpClient) {
     )
 
     private val tasks = ConcurrentHashMap<String, DownloadTask>()
+    // 最近一次 HTTP 状态码，排障用
+    private val lastCode = java.util.concurrent.atomic.AtomicInteger(0)
     // 线程池大小可以动态调整，但基础给 16 个足够了
     private val executor = Executors.newFixedThreadPool(16) { r ->
         Thread(r, "proxy-range-dl").apply { isDaemon = true }
@@ -82,16 +84,23 @@ class VideoDownloadManager(private val client: OkHttpClient) {
 
             executor.execute {
                 try {
+                    val t0 = System.currentTimeMillis()
                     var success = downloadRange(id, task, chunkStart, chunkEnd)
                     if (!success) {
                         // 直链过期刷新机制
+                        android.util.Log.d("VideoDL", "chunk fail id=$id start=$start chunk=$chunkStart cost=${System.currentTimeMillis() - t0}ms url=${task.url.take(90)}")
                         task.refreshUrl?.let { refresh ->
+                            val tr = System.currentTimeMillis()
                             val newUrl = kotlinx.coroutines.runBlocking { refresh() }
+                            android.util.Log.d("VideoDL", "refresh id=$id chunk=$chunkStart got=${newUrl?.take(60)} cost=${System.currentTimeMillis() - tr}ms")
                             if (newUrl != null) {
                                 task.url = newUrl
                                 success = downloadRange(id, task, chunkStart, chunkEnd)
+                                android.util.Log.d("VideoDL", "retry after refresh id=$id chunk=$chunkStart success=$success code=${lastCode.get()}")
                             }
-                        }
+                        } ?: android.util.Log.d("VideoDL", "refresh 不可用（无 refreshUrl 闭包） id=$id")
+                    } else if (System.currentTimeMillis() - t0 > 8_000L) {
+                        android.util.Log.d("VideoDL", "slow chunk id=$id chunk=$chunkStart cost=${System.currentTimeMillis() - t0}ms")
                     }
                 } finally {
                     task.downloadingRanges.remove(chunkStart)
@@ -114,8 +123,16 @@ class VideoDownloadManager(private val client: OkHttpClient) {
                 .build()
 
             client.newCall(req).execute().use { res ->
-                if (!res.isSuccessful) return false
-                val body = res.body ?: return false
+                lastCode.set(res.code)
+                if (!res.isSuccessful) {
+                    val bodyHead = runCatching { res.body?.string()?.take(160) }.getOrNull()
+                    android.util.Log.d("VideoDL", "http fail code=${res.code} start=$start end=$end body=$bodyHead url=${task.url.take(90)}")
+                    return false
+                }
+                val body = res.body ?: run {
+                    android.util.Log.d("VideoDL", "http ok 但 body 为空 start=$start code=${res.code}")
+                    return false
+                }
 
                 RandomAccessFile(task.file, "rw").use { raf ->
                     raf.seek(start)
@@ -140,10 +157,14 @@ class VideoDownloadManager(private val client: OkHttpClient) {
                             task.condition.signalAll()
                         }
                         true
-                    } else false
+                    } else {
+                        android.util.Log.d("VideoDL", "short read start=$start end=$end read=$totalRead need=${end - start + 1} code=${res.code} 停下原因=${if (!task.running.get()) "task已停止" else "流提前结束"}")
+                        false
+                    }
                 }
             }
         } catch (e: Exception) {
+            android.util.Log.d("VideoDL", "exception start=$start end=$end ${e.javaClass.simpleName}: ${e.message}")
             false
         }
     }

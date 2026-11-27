@@ -215,6 +215,8 @@ fun MainScreen(
     var followSeconds by remember { mutableIntStateOf(3) }
     var followUrgent by remember { mutableStateOf(false) }
     var cancelledFollowFid by remember { mutableStateOf<String?>(null) }
+    // 这一次播放页是不是「一起看」来的：从房间出来的播放页，退出要回影视库首页，而不是停在详情页
+    var watchPartyUsed by remember { mutableStateOf(false) }
 
     suspend fun enterFollowedVideo(fid: String) {
         val targetIndex = destinations.indexOfFirst { it == MainDestination.Video }
@@ -334,6 +336,8 @@ fun MainScreen(
         followEpisode = show?.episode ?: partyState.remoteSync?.episode ?: ""
         followEpisodeTitle = show?.episodeTitle ?: ""
     }
+
+    LaunchedEffect(partyState.active) { if (partyState.active) watchPartyUsed = true }
 
     // 一起看：房间只活一次 —— 房主退出播放页房间就结束，下次重新建房、重新复制邀请码，
     // 所以这里不再做「启动/回前台自动回上次房间」。
@@ -805,15 +809,15 @@ fun MainScreen(
                     // 一起看：房间只活一次，任何一端退出播放页就算退出房间。
                     // 房主退出 = 房间结束（连带清掉邀请码记录，下次重新建房）；观看端退出 = 自己离开房间、回影视库首页
                     val partyNow = WatchPartySession.state.value
+                    // 房间还在 / 这次本来就在房间里（房主已先走）都算「一起看来的」
+                    val fromRoom = partyNow.active || watchPartyUsed
+                    watchPartyUsed = false
                     if (partyNow.active) {
-                        if (partyNow.isHost) {
-                            WatchPartySession.leaveAndForget()
-                        } else {
-                            WatchPartySession.leave()
-                            videoViewModel.selectSeries(null)
-                        }
+                        if (partyNow.isHost) WatchPartySession.leaveAndForget() else WatchPartySession.leave()
                     }
                     videoViewModel.stopPlaying()
+                    // 一起看进的播放页，退出直接回影视库首页；普通单机播放仍然回本剧详情页
+                    if (fromRoom) videoViewModel.selectSeries(null)
                 }
             )
         }

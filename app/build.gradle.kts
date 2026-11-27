@@ -66,6 +66,12 @@ android {
             "\"${project.findProperty("CronetMainVersion")}\""
         )
 
+        // 一起看的测试钩子：只有打包时加 -PpartyTestHooks=true 才启用（BuildConfig.TEST_HOOKS + 清单里的接收器）
+        // 平时与云端 CI 构建都不带这个属性 → 是 "false"，正式包里这个广播入口不存在
+        val partyTestHooks = providers.gradleProperty("partyTestHooks").getOrElse("false")
+        buildConfigField("boolean", "TEST_HOOKS", partyTestHooks)
+        manifestPlaceholders["partyTestHooks"] = partyTestHooks
+
         javaCompileOptions {
             annotationProcessorOptions {
                 arguments += mapOf(
@@ -92,7 +98,15 @@ android {
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro",
-                "cronet-proguard-rules.pro"
+                "cronet-proguard-rules.pro",
+                *(
+                    // 验证包（-PpartyTestHooks=true）保留日志，正式包才剥掉 Log 调用
+                    if (providers.gradleProperty("partyTestHooks").getOrElse("false").toBoolean()) {
+                        arrayOf<String>()
+                    } else {
+                        arrayOf("proguard-log-strip.pro")
+                    }
+                )
             )
         }
         create("noR8") {

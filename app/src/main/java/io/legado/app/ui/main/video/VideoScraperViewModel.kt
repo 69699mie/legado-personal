@@ -8,6 +8,8 @@ import androidx.lifecycle.viewModelScope
 import io.legado.app.data.dao.VideoScrapedDao
 import io.legado.app.data.entities.VideoScrapedEntity
 import io.legado.app.data.repository.VideoSettingsRepository
+import io.legado.app.help.video.introoutro.EpisodeIntroOutro
+import io.legado.app.help.video.introoutro.EpisodeIntroOutroStore
 import io.legado.app.help.watchparty.WatchPartySession
 import io.legado.app.utils.ParsedVideoName
 import io.legado.app.utils.VideoFileNameParser
@@ -43,6 +45,7 @@ data class QuarkFile(
     val parsedInfo: ParsedVideoName? = null,
     val size: Long = 0L
 )
+
 
 @Immutable
 data class SeasonDetail(
@@ -184,7 +187,8 @@ class VideoScraperViewModel(
                 isLibraryMode = true,
                 downloadThreads = videoSettingsRepository.proxyThreads,
                 bannerLogic = videoSettingsRepository.bannerLogic,
-                categoryOrder = videoSettingsRepository.categoryOrder
+                categoryOrder = videoSettingsRepository.categoryOrder,
+                autoIntroOutro = videoSettingsRepository.autoIntroOutroEnabled
             )
         }
 
@@ -410,6 +414,10 @@ class VideoScraperViewModel(
             val removeKeys = json.keys().asSequence().filter { it.startsWith("${seriesTitle}_S") }.toList()
             removeKeys.forEach { json.remove(it) }
             videoSettingsRepository.introOutroData = json.toString()
+        }
+        // 集级片头片尾：fid 是主键，用 ep 字段（标题|S季|E集）反查，避免删剧后留脏数据
+        runCatching {
+            EpisodeIntroOutroStore.purgeSeries(videoSettingsRepository, seriesTitle, fids)
         }
         // 最近观看
         runCatching {
@@ -1734,6 +1742,7 @@ class VideoScraperViewModel(
     }
 
     fun playVideo(context: Context, series: MediaSeries, file: QuarkFile) {
+        peerLinkFid = null
         val realSeries = if (series.id.startsWith("temp_")) {
             _uiState.value.seriesList.find { s -> s.videos.any { it.fid == file.fid } } ?: series
         } else series
@@ -1822,6 +1831,31 @@ class VideoScraperViewModel(
      * 2) 房主给的剧名 + 集号 → 本机同剧里反查同集（两边勾的资源不同也能对上）
      * 找不到返回 null，由上层走"房主点对点直链"兜底。
      */
+    /** 正在播的这一集是不是「房主下发的直链」：跨账号链接不能带本机 Cookie，否则会被网盘判成越权 */
+    @Volatile
+    private var peerLinkFid: String? = null
+
+    fun isPeerLink(fid: String): Boolean = peerLinkFid != null && peerLinkFid == fid
+
+    /** 加入端：直链过期或被拒时，再向房主索要一次新直链（会话层自带冷却，拿不到返回 null） */
+    suspend fun requestFreshPeerLink(fid: String, timeoutMs: Long = 12_000L): String? {
+        if (fid.isBlank()) return null
+        val st = io.legado.app.help.watchparty.WatchPartySession.state.value
+        if (!st.active || st.isHost || !st.approved) return null
+        io.legado.app.help.watchparty.WatchPartySession.requestLink(fid)
+        val deadline = System.currentTimeMillis() + timeoutMs
+        while (System.currentTimeMillis() < deadline) {
+            val cur = io.legado.app.help.watchparty.WatchPartySession.state.value
+            val inc = cur.incomingLink
+            if (inc != null && inc.fid == fid && inc.expiresAt > System.currentTimeMillis()) {
+                io.legado.app.help.watchparty.WatchPartySession.consumeIncomingLink()
+                return inc.url
+            }
+            kotlinx.coroutines.delay(300)
+        }
+        return null
+    }
+
     fun resolveFollowFid(remoteFid: String, seriesTitle: String, episodeText: String): String? {
         if (remoteFid.isBlank()) return null
         val list = _uiState.value.seriesList
@@ -1862,6 +1896,7 @@ class VideoScraperViewModel(
         fileSize: Long = 0L,
     ) {
         if (url.isBlank() || fid.isBlank()) return
+        peerLinkFid = fid
         val existingSeries = _uiState.value.seriesList.find { s -> s.videos.any { it.fid == fid } }
         val existingFile = existingSeries?.videos?.find { it.fid == fid }
         if (existingSeries != null && existingFile != null) {
@@ -2070,6 +2105,39 @@ class VideoScraperViewModel(
         } catch (e: Exception) {}
     }
 
+    fun setAutoIntroOutro(enabled: Boolean) {
+        videoSettingsRepository.autoIntroOutroEnabled = enabled
+        _uiState.update { it.copy(autoIntroOutro = enabled) }
+    }
+
+    /** 读该集自己的片头/片尾（绝对毫秒）。没有集级记录返回 null，由调用方回退到季级设置。 */
+    fun getEpisodeIntroOutro(fid: String): EpisodeIntroOutro? =
+        EpisodeIntroOutroStore.read(videoSettingsRepository, fid)
+
+    /** 写该集的片头/片尾（绝对毫秒）。两项都 <=0 时删除该集记录。 */
+    fun saveEpisodeIntroOutro(
+        fid: String,
+        episodeKey: String,
+        introEndMs: Long,
+        outroStartMs: Long,
+        source: String = EpisodeIntroOutroStore.SOURCE_MANUAL,
+        confidence: Double = 1.0,
+        introSource: String = source,
+        outroSource: String = source,
+    ) {
+        EpisodeIntroOutroStore.write(
+            repo = videoSettingsRepository,
+            fid = fid,
+            episodeKey = episodeKey,
+            introEndMs = introEndMs,
+            outroStartMs = outroStartMs,
+            source = source,
+            confidence = confidence,
+            introSource = introSource,
+            outroSource = outroSource,
+        )
+    }
+
     fun getPlayUrl(fid: String): String? {
         val cookie = _uiState.value.cookie
         return fetchDirectDownloadUrl(fid, cookie)
@@ -2188,5 +2256,6 @@ data class VideoUiState(
     val downloadThreads: Int = 6,
     val isDirectPlay: Boolean = false,
     val bannerLogic: String = "智能推荐",
-    val categoryOrder: String = "最近观看,剧集,电影,动漫,综艺"
+    val categoryOrder: String = "最近观看,剧集,电影,动漫,综艺",
+    val autoIntroOutro: Boolean = false
 )

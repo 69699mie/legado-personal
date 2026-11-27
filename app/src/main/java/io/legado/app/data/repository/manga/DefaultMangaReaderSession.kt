@@ -22,17 +22,21 @@ import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import splitties.init.appCtx
 
 class DefaultMangaReaderSession(
     private val dataGateway: MangaReaderDataGateway,
     private val stateDispatcher: CoroutineDispatcher,
     private val ioDispatcher: CoroutineDispatcher,
+    /** 章节加载超时；<=0 表示不设超时（单测用虚拟时钟时须关闭） */
+    private val chapterLoadTimeoutMs: Long = 45_000L,
 ) : MangaReaderSession {
 
     private companion object {
         const val ADJACENT_LOAD_DISTANCE = 5
         const val PROGRESS_PERSIST_INTERVAL_MS = 3_000L
+        const val PREFETCH_DELAY_MS = 800L
     }
 
     private val sessionJob = SupervisorJob()
@@ -48,6 +52,8 @@ class DefaultMangaReaderSession(
     private val _events = MutableSharedFlow<MangaSessionEvent>(extraBufferCapacity = 16)
     override val events = _events.asSharedFlow()
     private var prefetchCount = 0
+    private var prefetchJob: Job? = null
+    private val prefetchKeys = mutableSetOf<String>()
 
     init {
         sessionScope.launch {
@@ -93,6 +99,7 @@ class DefaultMangaReaderSession(
             )
             is MangaSessionCommand.PromoteVisibleChapter -> promoteVisibleChapter(command)
             is MangaSessionCommand.VisiblePageChanged -> visiblePageChanged(command)
+            is MangaSessionCommand.PrefetchNextChapter -> prefetchNextChapter(command.chapterIndex)
             MangaSessionCommand.PersistVisibleProgress -> {
                 scheduledProgressPersistJob = null
                 persistProgress()
@@ -244,6 +251,29 @@ class DefaultMangaReaderSession(
         return
     }
 
+    /**
+     * A′：条漫首屏可见后，去抖 800ms 再预取下一章正文。
+     * 只对非本地书、且下一章还空着、同一章只发一次，避免和当前章首图抢带宽。
+     */
+    private fun prefetchNextChapter(chapterIndex: Int) {
+        val state = _state.value
+        val book = state.book ?: return
+        if (book.isLocal) return
+        val target = chapterIndex + 1
+        if (target !in 0 until state.chapterCount) return
+        if (state.chapterStateAt(target) != MangaChapterState.Empty) return
+        val key = book.bookUrl + "#" + target
+        if (!prefetchKeys.add(key)) return
+        prefetchJob?.cancel()
+        prefetchJob = sessionScope.launch {
+            delay(PREFETCH_DELAY_MS)
+            if (_state.value.chapterStateAt(target) == MangaChapterState.Empty) {
+                loadChapter(target)
+            }
+        }
+        android.util.Log.d("Manga", "prefetch next chapter=$target")
+    }
+
     private fun loadChapter(chapterIndex: Int) {
         val state = _state.value
         if (chapterIndex !in 0 until state.chapterCount) return
@@ -258,7 +288,13 @@ class DefaultMangaReaderSession(
         setChapterState(chapterIndex, MangaChapterState.Loading(token))
         loadScope.launch {
             val result = runCatching {
-                dataGateway.loadChapter(token.bookUrl, token.chapterIndex)
+                if (chapterLoadTimeoutMs > 0L) {
+                    withTimeoutOrNull(chapterLoadTimeoutMs) {
+                        dataGateway.loadChapter(token.bookUrl, token.chapterIndex)
+                    } ?: throw java.util.concurrent.TimeoutException("章节加载超时")
+                } else {
+                    dataGateway.loadChapter(token.bookUrl, token.chapterIndex)
+                }
             }
             commands.send(MangaSessionCommand.ChapterLoaded(token, result))
         }
@@ -304,7 +340,10 @@ class DefaultMangaReaderSession(
             1 -> state.nextChapter
             else -> return
         }
-        if (existing is MangaChapterState.Loading) return
+        if (existing is MangaChapterState.Loading) {
+            // 卡在 Loading 时点重试：先退回 Empty 再重启，否则永远转圈
+            setChapterState(chapterIndex, MangaChapterState.Empty)
+        }
         loadChapter(chapterIndex)
     }
 

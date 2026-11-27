@@ -150,6 +150,7 @@ import androidx.media3.common.TrackSelectionOverride
 import androidx.media3.common.Tracks
 import androidx.media3.common.VideoSize
 import androidx.media3.datasource.DefaultDataSource
+import androidx.media3.datasource.DefaultHttpDataSource
 import androidx.media3.datasource.HttpDataSource
 import androidx.media3.exoplayer.DefaultLoadControl
 import androidx.media3.exoplayer.DefaultRenderersFactory
@@ -157,11 +158,13 @@ import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.audio.AudioCapabilities
 import androidx.media3.exoplayer.audio.AudioSink
 import androidx.media3.exoplayer.audio.DefaultAudioSink
+import androidx.media3.exoplayer.audio.TeeAudioProcessor
 import androidx.media3.exoplayer.source.ProgressiveMediaSource
 import androidx.media3.session.MediaSession
 import androidx.media3.ui.PlayerView
 import coil3.compose.AsyncImage
 import io.legado.app.data.repository.VideoSettingsRepository
+import io.legado.app.help.video.introoutro.EpisodeAudioCapture
 import io.legado.app.help.BackupToastGate
 import io.legado.app.help.storage.Backup
 import io.legado.app.help.watchparty.WatchPartyConfig
@@ -203,6 +206,9 @@ const val EXTRA_CONTROL = "control"
 const val CONTROL_PREV = 1
 const val CONTROL_PLAY_PAUSE = 2
 const val CONTROL_NEXT = 3
+
+/** 自动识别的片头最晚只能结束在 5 分半（180s 起点 + 150s 上限），超过按脏数据丢弃 */
+private const val MAX_AUTO_INTRO_END_MS = 330_000L
 
 val pinyinCollator = Collator.getInstance(Locale.CHINA)
 
@@ -615,6 +621,13 @@ private fun SettingsDialog(uiState: VideoUiState, viewModel: VideoScraperViewMod
                 Row(modifier = Modifier.fillMaxWidth().clickable { showThreadSelection = true }.padding(vertical = 8.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) { AppText("极速播放线程数", color = Color.Black); Row(verticalAlignment = Alignment.CenterVertically) { AppText("${uiState.downloadThreads} ", color = Color.Gray); Icon(Icons.Default.KeyboardArrowRight, null, tint = Color.Gray) } }
                 Row(modifier = Modifier.fillMaxWidth().clickable { showBannerLogicSelection = true }.padding(vertical = 8.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) { AppText("首页轮播海报显示逻辑", color = Color.Black); Row(verticalAlignment = Alignment.CenterVertically) { AppText(uiState.bannerLogic, color = Color.Gray); Icon(Icons.Default.KeyboardArrowRight, null, tint = Color.Gray) } }
                 Row(modifier = Modifier.fillMaxWidth().clickable { showCategoryOrderDialog = true }.padding(vertical = 8.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) { AppText("分类排序", color = Color.Black); Row(verticalAlignment = Alignment.CenterVertically) { Icon(Icons.Default.KeyboardArrowRight, null, tint = Color.Gray) } }
+                Row(modifier = Modifier.fillMaxWidth().clickable { viewModel.setAutoIntroOutro(!uiState.autoIntroOutro) }.padding(vertical = 8.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        AppText("自动识别片头片尾", color = Color.Black)
+                        AppText("每集单独认，要播过这一集才认得出来；关掉就完全按手动", fontSize = 12.sp, color = Color.Gray)
+                    }
+                    AppText(if (uiState.autoIntroOutro) "开" else "关", color = Color.Gray)
+                }
                 HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
                 if (onPartyClick != null) {
                     Row(modifier = Modifier.fillMaxWidth().clickable { onPartyClick() }.padding(vertical = 8.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
@@ -1002,7 +1015,9 @@ fun InternalVideoPlayer(url: String, title: String, cookie: String, series: Medi
         val req = partyStateForLink.linkRequest ?: return@LaunchedEffect
         if (!partyStateForLink.isHost) return@LaunchedEffect
         if (req.fid != currentFile.fid || url.isBlank()) return@LaunchedEffect
-        io.legado.app.help.watchparty.WatchPartySession.respondLink(req.userId, req.fid, url, currentFile.size)
+        val sizeForPeer = if (currentFile.size > 0L) currentFile.size
+        else (probedSizes[currentFile.fid] ?: 0L)
+        io.legado.app.help.watchparty.WatchPartySession.respondLink(req.userId, req.fid, url, sizeForPeer)
     }
 
     val dynamicTitle = remember(latestSeries, currentFile) {
@@ -1163,9 +1178,61 @@ fun InternalVideoPlayer(url: String, title: String, cookie: String, series: Medi
     var seekMsgAt by remember { mutableLongStateOf(0L) }
 
     val season = currentFile.parsedInfo?.season ?: 1
-    var introSeconds by remember { mutableIntStateOf(0) }
-    var outroSeconds by remember { mutableIntStateOf(0) }
-    LaunchedEffect(latestSeries.title, season) { val pair = viewModel.getIntroOutro(latestSeries.title, season); introSeconds = pair.first; outroSeconds = pair.second }
+    val episodeNumber = remember(currentFile.name, currentFile.parsedInfo) {
+        viewModel.extractEpisodeNumber(currentFile.name, currentFile.parsedInfo?.episode).takeIf { it > 0 }
+    }
+    // 集级记录用 fid 做主键；ep 字段只用于“删剧/同步”时反查
+    val episodeKey = remember(latestSeries.title, season, episodeNumber, currentFile.fid) {
+        "${latestSeries.title}|S$season|E${episodeNumber ?: 0}|${currentFile.fid}"
+    }
+    // 片头终点 / 片尾起点统一用绝对毫秒：集级记录优先，没有则回退旧的季级设置（距结尾 N 秒换算成绝对时间）
+    var introEndMs by remember(currentFile.fid) { mutableLongStateOf(0L) }
+    var outroStartMs by remember(currentFile.fid) { mutableLongStateOf(0L) }
+    // 两个字段各自的来源（manual/auto），手动设过的那一项自动永远不覆盖
+    var introSrc by remember(currentFile.fid) { mutableStateOf("") }
+    var outroSrc by remember(currentFile.fid) { mutableStateOf("") }
+    fun reloadIntroOutro() {
+        val episode = viewModel.getEpisodeIntroOutro(currentFile.fid)
+        // 优先级：本集手动 > 本集自动(够稳) > 旧的季级手动 > 不跳。逐字段判断，互不牵连
+        var pickedIntro = 0L
+        var pickedOutro = 0L
+        var pickedIntroSrc = ""
+        var pickedOutroSrc = ""
+        if (episode != null) {
+            val introOk = episode.introEndMs > 0L && (
+                episode.introSource == "manual" ||
+                    (episode.confidence >= 0.6 && episode.introEndMs <= MAX_AUTO_INTRO_END_MS)
+                )
+            if (introOk) {
+                pickedIntro = episode.introEndMs; pickedIntroSrc = episode.introSource
+            }
+            val outroOk = episode.outroStartMs > 0L && (
+                episode.outroSource == "manual" || episode.confidence >= 0.6
+                )
+            if (outroOk) {
+                pickedOutro = episode.outroStartMs; pickedOutroSrc = episode.outroSource
+            }
+        }
+        val seasonPair = viewModel.getIntroOutro(latestSeries.title, season)
+        if (pickedIntro <= 0L && seasonPair.first > 0) {
+            pickedIntro = seasonPair.first * 1000L
+            pickedIntroSrc = "manual"
+        }
+        if (pickedOutro <= 0L && seasonPair.second > 0 && duration > 0L) {
+            pickedOutro = (duration - seasonPair.second * 1000L).coerceAtLeast(0L)
+            pickedOutroSrc = "manual"
+        }
+        introEndMs = pickedIntro
+        outroStartMs = pickedOutro
+        introSrc = pickedIntroSrc
+        outroSrc = pickedOutroSrc
+    }
+    LaunchedEffect(currentFile.fid, latestSeries.title, season) { reloadIntroOutro() }
+    LaunchedEffect(duration, currentFile.fid) { if (duration > 0L) reloadIntroOutro() }
+    // 自动片头片尾：只在开关打开时采集；切集时先把上一集结算掉
+    LaunchedEffect(currentFile.fid) {
+        EpisodeAudioCapture.begin(currentFile.fid, latestSeries.title, season, episodeNumber ?: 0)
+    }
 
     var hasTriggeredAutoPlay by remember { mutableStateOf(false) }
     var hasAutoSkippedIntro by remember { mutableStateOf(false) }
@@ -1195,7 +1262,7 @@ fun InternalVideoPlayer(url: String, title: String, cookie: String, series: Medi
     }
 
     val exoPlayer = remember {
-        val renderersFactory = buildVideoRenderersFactory(context)
+        val renderersFactory = buildVideoRenderersFactory(context, videoSettingsRepository.autoIntroOutroEnabled)
 
         // 🌟 修复 OOM：强制限制缓冲区上限为 96MB，防止高码率视频撑爆内存（时间优先）
         val loadControl = DefaultLoadControl.Builder()
@@ -1225,6 +1292,7 @@ fun InternalVideoPlayer(url: String, title: String, cookie: String, series: Medi
     // 一起看：把本机当前播放状态立即广播出去（房主、加入端都能推）
     fun pushPartyNow(pausedOverride: Boolean? = null) {
         if (!partyState.active || !partyState.connected) return
+        android.util.Log.d("WatchParty", "push sync speed=$playbackSpeed pos=${exoPlayer.currentPosition}")
         WatchPartySession.pushLocalSync(
             fid = currentFile.fid,
             episode = partyEpisodeLabel,
@@ -1388,23 +1456,46 @@ fun InternalVideoPlayer(url: String, title: String, cookie: String, series: Medi
         val savedPos = viewModel.getVideoProgress(currentFile.fid)
         val startPositionMs = if (savedPos > 0L) savedPos else 0L
 
-        val totalLength = currentFile.size
-        if (totalLength <= 0L) {
-            errorDialogMsg = "无法获取视频文件大小，请重试"
-            return@LaunchedEffect
-        }
+        var totalLength = currentFile.size
 
         val cacheFile = File(context.cacheDir, "proxy_${currentFile.fid}.mp4")
 
-        val headers = mapOf(
-            "Cookie" to cookie,
-            "Referer" to "https://drive.quark.cn/"
+        // 跟着房主播的直链是「房主账号」解析出来的，本机 Cookie 对它是多余的凭据，
+        // 带上反而会被网盘判成越权（403/跳转 → Source error）。所以这条路径只留 Referer。
+        val isPeerLink = viewModel.isPeerLink(currentFile.fid)
+        val headers = if (isPeerLink) {
+            mapOf("Referer" to "https://drive.quark.cn/")
+        } else {
+            mapOf(
+                "Cookie" to cookie,
+                "Referer" to "https://drive.quark.cn/"
+            )
+        }
+        if (isPeerLink) android.util.Log.d("Video", "peer link 模式：不带本机 Cookie")
+        android.util.Log.d(
+            "Video",
+            "起播 fid=${currentFile.fid} peer=$isPeerLink size=${totalLength} headers=${headers.keys} start=${startPositionMs} url=${url.take(70)}"
         )
+        // 网盘/直链条目入库时常常没写文件大小，先实测一次 Content-Length，别再直接弹错
+        if (totalLength <= 0L) {
+            totalLength = withContext(Dispatchers.IO) { probeContentLength(url, headers) }
+            android.util.Log.d("Video", "size 探测=${totalLength} url=${url.take(60)}")
+        }
+        probedSizes[currentFile.fid] = totalLength
+        if (totalLength <= 0L) {
+            errorDialogMsg = "无法获取视频文件大小（链接可能需重新解析），请重试"
+            return@LaunchedEffect
+        }
         val refreshUrl: (suspend () -> String?) = {
             withContext(Dispatchers.IO) {
                 try {
-                    viewModel.getPlayUrl(currentFile.fid)
+                    // 房主给的直链本机解析不出来，过期了就让房主再给一条新的
+                    val u = if (isPeerLink) viewModel.requestFreshPeerLink(currentFile.fid)
+                    else viewModel.getPlayUrl(currentFile.fid)
+                    android.util.Log.d("Video", "refreshUrl peer=$isPeerLink fid=${currentFile.fid} got=${u?.take(70)}")
+                    u
                 } catch (e: Exception) {
+                    android.util.Log.d("Video", "refreshUrl 异常 ${e.javaClass.simpleName}: ${e.message}")
                     null
                 }
             }
@@ -1425,8 +1516,14 @@ fun InternalVideoPlayer(url: String, title: String, cookie: String, series: Medi
             .setUri(proxyUrl)
             .setMediaMetadata(MediaMetadata.Builder().setTitle(title).build())
             .build()
+        // 播放器读的是本机代理（localhost）。慢网下代理要等分片补上来，默认读超时 8s 会把"慢"判成"错"，
+        // 这里放宽到 90s（比代理侧 60s 的等待更久），让慢网表现为缓冲而不是报错。
+        val httpFactory = DefaultHttpDataSource.Factory()
+            .setConnectTimeoutMs(15_000)
+            .setReadTimeoutMs(90_000)
+            .setAllowCrossProtocolRedirects(true)
         val mediaSource = ProgressiveMediaSource
-            .Factory(DefaultDataSource.Factory(context))
+            .Factory(DefaultDataSource.Factory(context, httpFactory))
             .createMediaSource(mediaItem)
 
         exoPlayer.setMediaSource(mediaSource)
@@ -1444,6 +1541,10 @@ fun InternalVideoPlayer(url: String, title: String, cookie: String, series: Medi
     }
 
     DisposableEffect(exoPlayer) {
+        // 慢网/限速下分片补不上来会让 ExoPlayer 直接报错中断，这里自动重试几次，
+        // 把"一断就崩"变成"卡一会儿"；真正网络不通时才弹提示
+        var autoRetry = 0
+        val maxAutoRetry = 5
         val listener = object : Player.Listener {
             override fun onPlayWhenReadyChanged(playWhenReady: Boolean, reason: Int) { isPlaying = playWhenReady }
             override fun onIsPlayingChanged(playing: Boolean) {
@@ -1455,8 +1556,12 @@ fun InternalVideoPlayer(url: String, title: String, cookie: String, series: Medi
                 if (state == Player.STATE_ENDED) isPlaying = false
                 if (state == Player.STATE_READY) {
                     duration = exoPlayer.duration.coerceAtLeast(0L)
-                    if (introSeconds > 0 && !hasAutoSkippedIntro && exoPlayer.currentPosition < introSeconds * 1000L) {
-                        exoPlayer.seekTo(introSeconds * 1000L); currentPosition = introSeconds * 1000L; hasAutoSkippedIntro = true
+                    EpisodeAudioCapture.setDuration(duration)
+                    // 一起看房间里一律不自动跳片头：两端标记不一致会把位置同步来回拽
+                    if (introEndMs > 0 && !hasAutoSkippedIntro && !partyState.active &&
+                        exoPlayer.currentPosition < introEndMs
+                    ) {
+                        exoPlayer.seekTo(introEndMs); currentPosition = introEndMs; hasAutoSkippedIntro = true
                     }
                     // 一起看（加入端）：被动卡顿（缓冲空了/网速抖动）恢复后立刻对齐一次，
                     // 不等下一次 10 秒心跳，否则会一直差十几秒
@@ -1493,6 +1598,11 @@ fun InternalVideoPlayer(url: String, title: String, cookie: String, series: Medi
             }
             override fun onVideoSizeChanged(videoSize: VideoSize) { if (videoSize.width > 0 && videoSize.height > 0) resolution = "${videoSize.width}×${videoSize.height}" }
             override fun onPlayerError(error: PlaybackException) {
+                android.util.Log.d(
+                    "Video",
+                    "onPlayerError ${error.errorCodeName} pos=${exoPlayer.currentPosition} dur=${exoPlayer.duration} " +
+                        "buffered=${exoPlayer.bufferedPosition} msg=${error.message}"
+                )
                 val sb = StringBuilder().append("错误码: ${error.errorCodeName}\n")
                 var cause: Throwable? = error; var depth = 0
                 while (cause != null) {
@@ -1500,11 +1610,40 @@ fun InternalVideoPlayer(url: String, title: String, cookie: String, series: Medi
                     if (cause is HttpDataSource.InvalidResponseCodeException) { sb.append("HTTP状态码: ${cause.responseCode}\n"); cause.responseBody?.let { sb.append("响应体: ${String(it)}\n") } }
                     sb.append("信息: ${cause.message ?: "无"}\n"); cause = cause.cause; depth++
                 }
-                errorDialogMsg = sb.toString()
+                // 网络类错误（分片补不上来/连接抖）先自动重试，别当场把用户踹出播放页
+                val isNetworkish = error.errorCode in intArrayOf(
+                    PlaybackException.ERROR_CODE_IO_UNSPECIFIED,
+                    PlaybackException.ERROR_CODE_IO_NETWORK_CONNECTION_FAILED,
+                    PlaybackException.ERROR_CODE_IO_NETWORK_CONNECTION_TIMEOUT,
+                    PlaybackException.ERROR_CODE_IO_BAD_HTTP_STATUS,
+                )
+                if (isNetworkish && autoRetry < maxAutoRetry) {
+                    autoRetry++
+                    playerToastMessage = "正在重试…"
+                    val pos = exoPlayer.currentPosition.coerceAtLeast(0L)
+                    android.util.Log.d("Video", "网络类错误，自动重试 $autoRetry/$maxAutoRetry pos=$pos")
+                    android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
+                        runCatching {
+                            // 同一个 MediaItem 重新 prepare：代理任务还在，缺的分片会重新排队补
+                            exoPlayer.prepare()
+                            exoPlayer.seekTo(pos)
+                            exoPlayer.setPlaybackParameters(PlaybackParameters(playbackSpeed, 1.0f))
+                            exoPlayer.playWhenReady = true
+                        }
+                    }, 3000L)
+                } else if (isNetworkish) {
+                    errorDialogMsg = "网络速度跟不上，无法继续播放。\n\n" +
+                        "常见原因：网盘对当前账号限速、或当前网络带宽不足（4K 片源需要稳定 15Mbps 以上）。\n" +
+                        "可以稍后重试，或换更低码率的片源。\n\n详细错误：\n$sb"
+                } else {
+                    errorDialogMsg = sb.toString()
+                }
             }
         }
         exoPlayer.addListener(listener)
         onDispose {
+            // 先结算这一集的音频特征，再放掉解码器
+            EpisodeAudioCapture.finish()
             exoPlayer.removeListener(listener)
             exoPlayer.stop()
             exoPlayer.release()
@@ -1538,13 +1677,17 @@ fun InternalVideoPlayer(url: String, title: String, cookie: String, series: Medi
         }
     }
 
-    LaunchedEffect(isPlaying) {
-        while (isPlaying) {
+    // 这个循环不跟 isPlaying 走：起播落在片尾/暂停时界面认为“没在播”，
+    // 以前会把位置同步一起停掉，导致音频帧被记到错误的时间上（片头学到离谱的值）。
+    LaunchedEffect(Unit) {
+        while (true) {
             if (!isDraggingSeekBar) { currentPosition = exoPlayer.currentPosition; bufferedPosition = exoPlayer.bufferedPosition }
+            EpisodeAudioCapture.onPosition(exoPlayer.currentPosition)
 
-            if (outroSeconds > 0 && duration > 0 && outroSeconds * 1000L < duration) {
-                val outroTriggerPos = duration - outroSeconds * 1000L
-                val warningPos = outroTriggerPos - 6000L
+            // 一起看房间里一律不自动跳片尾（同上，避免两端互相拽）
+            if (outroStartMs > 0 && duration > 0 && outroStartMs < duration && !partyState.active) {
+                val outroTriggerPos = outroStartMs
+                val warningPos = (outroTriggerPos - 6000L).coerceAtLeast(0L)
 
                 if (currentPosition >= warningPos && !outroWarningTriggered) {
                     outroWarningTriggered = true
@@ -1616,6 +1759,18 @@ fun InternalVideoPlayer(url: String, title: String, cookie: String, series: Medi
         pushPartyNow()
     }
 
+    // 仅测试包：adb 广播改倍速，等价于点倍速按钮（正式包 TEST_HOOKS=false，这段不生效）
+    if (io.legado.app.BuildConfig.TEST_HOOKS) {
+        val testSpeed by io.legado.app.help.watchparty.PartyTestBus.speed.collectAsStateWithLifecycle()
+        LaunchedEffect(testSpeed) {
+            val target = testSpeed ?: return@LaunchedEffect
+            playbackSpeed = target.coerceIn(0.5f, 3.0f)
+            exoPlayer.setPlaybackParameters(PlaybackParameters(playbackSpeed, 1.0f))
+            android.util.Log.d("WatchParty", "test speed applied=$playbackSpeed")
+            io.legado.app.help.watchparty.PartyTestBus.speed.value = null
+        }
+    }
+
     // 一起看：任意一端的最新操作都同步过来（最后操作生效）
     LaunchedEffect(partyState.remoteSync, partyState.connected) {
         val sync = partyState.remoteSync ?: return@LaunchedEffect
@@ -1629,6 +1784,10 @@ fun InternalVideoPlayer(url: String, title: String, cookie: String, series: Medi
             return@LaunchedEffect
         }
         lastAppliedRemoteAt = now
+        android.util.Log.d(
+            "WatchParty",
+            "receive sync speed=${sync.speed} local=$playbackSpeed paused=${sync.paused}"
+        )
         val drift = sync.positionMs - exoPlayer.currentPosition
         if (abs(drift) > 2_000L) exoPlayer.seekTo(sync.positionMs)
         if (sync.paused && exoPlayer.isPlaying) exoPlayer.pause()
@@ -1636,6 +1795,7 @@ fun InternalVideoPlayer(url: String, title: String, cookie: String, series: Medi
         if (abs(playbackSpeed - sync.speed) > 0.01f) {
             playbackSpeed = sync.speed.coerceIn(0.5f, 3.0f)
             exoPlayer.setPlaybackParameters(PlaybackParameters(playbackSpeed, 1.0f))
+            android.util.Log.d("WatchParty", "apply speed=$playbackSpeed")
         }
     }
 
@@ -1661,12 +1821,15 @@ fun InternalVideoPlayer(url: String, title: String, cookie: String, series: Medi
         }
     }
 
-    // 一起看：房主退出播放页 = 房间结束。只弹 2 秒提示，不暂停、不换集、不退回影视库：
-    // 观看端继续把当前这一集播完；切集依赖房主的节目广播，房间断了自然就切不了
+    // 一起看：房主退出播放页 = 房间结束 → 观看端立刻停下、退回影视库首页。
+    // 以前这里只弹一句提示、继续播当前集：房主走了另一端还在看，像没人管一样。
     LaunchedEffect(partyState.hostLeft) {
         if (partyState.hostLeft && !partyState.isHost) {
-            partyNoticeMessage = "房主已离开，房间已结束"
-            WatchPartySession.consumeHostLeft()
+            exoPlayer.pause()
+            isPlaying = false
+            // hostLeft 留给主页面弹提示并消费，播放页只负责退出
+            onBack()
+            viewModel.selectSeries(null)
         }
     }
 
@@ -2147,16 +2310,16 @@ fun InternalVideoPlayer(url: String, title: String, cookie: String, series: Medi
                                 pushLocalAction()
                             }.padding(8.dp))
                             Row(modifier = Modifier.weight(1f), horizontalArrangement = Arrangement.Center, verticalAlignment = Alignment.CenterVertically) {
-                                if (isLandscape) AppText(text = if (introSeconds > 0) formatIntroOutro(introSeconds) else "片头", color = Color.White, fontSize = 12.sp, modifier = Modifier.combinedClickable(
-                                    onClick = { introSeconds = (currentPosition / 1000).toInt(); viewModel.saveIntroOutro(latestSeries.title, season, introSeconds, outroSeconds) },
-                                    onLongClick = { introSeconds = 0; viewModel.saveIntroOutro(latestSeries.title, season, introSeconds, outroSeconds) }
+                                if (isLandscape) AppText(text = if (introEndMs > 0) formatIntroOutro((introEndMs / 1000L).toInt()) else "片头", color = Color.White, fontSize = 12.sp, modifier = Modifier.combinedClickable(
+                                    onClick = { if (currentPosition > 0L) { introEndMs = currentPosition; introSrc = "manual"; viewModel.saveEpisodeIntroOutro(currentFile.fid, episodeKey, introEndMs, outroStartMs, introSource = "manual", outroSource = outroSrc.ifBlank { "manual" }) } },
+                                    onLongClick = { introEndMs = 0L; viewModel.saveEpisodeIntroOutro(currentFile.fid, episodeKey, 0L, outroStartMs, introSource = "manual", outroSource = outroSrc.ifBlank { "manual" }) }
                                 ).padding(horizontal = 8.dp, vertical = 4.dp))
                                 IconButton(onClick = { val videos = sortedVideos; val idx = videos.indexOfFirst { it.fid == currentFile.fid }; if (idx > 0) viewModel.playVideo(context, latestSeries, videos[idx - 1]) }, modifier = Modifier.size(36.dp)) { Icon(Icons.Default.SkipPrevious, null, tint = Color.White, modifier = Modifier.size(24.dp)) }
                                 IconButton(onClick = { togglePlayPause(); pushLocalAction() }, modifier = Modifier.size(40.dp)) { Icon(if (isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow, null, tint = Color.White, modifier = Modifier.size(28.dp)) }
                                 IconButton(onClick = { val videos = sortedVideos; val idx = videos.indexOfFirst { it.fid == currentFile.fid }; if (idx != -1 && idx < videos.size - 1) viewModel.playVideo(context, latestSeries, videos[idx + 1]) }, modifier = Modifier.size(36.dp)) { Icon(Icons.Default.SkipNext, null, tint = Color.White, modifier = Modifier.size(24.dp)) }
-                                if (isLandscape) AppText(text = if (outroSeconds > 0) formatIntroOutro(outroSeconds) else "片尾", color = Color.White, fontSize = 12.sp, modifier = Modifier.combinedClickable(
-                                    onClick = { val remain = duration - currentPosition; if (remain > 0) { outroSeconds = (remain / 1000).toInt(); viewModel.saveIntroOutro(latestSeries.title, season, introSeconds, outroSeconds); outroWarningTriggered = false } },
-                                    onLongClick = { outroSeconds = 0; viewModel.saveIntroOutro(latestSeries.title, season, introSeconds, outroSeconds); outroWarningTriggered = false }
+                                if (isLandscape) AppText(text = if (outroStartMs > 0 && duration > outroStartMs) formatIntroOutro(((duration - outroStartMs) / 1000L).toInt()) else "片尾", color = Color.White, fontSize = 12.sp, modifier = Modifier.combinedClickable(
+                                    onClick = { if (duration > 0 && currentPosition in 1 until duration) { outroStartMs = currentPosition; outroSrc = "manual"; viewModel.saveEpisodeIntroOutro(currentFile.fid, episodeKey, introEndMs, outroStartMs, introSource = introSrc.ifBlank { "manual" }, outroSource = "manual"); outroWarningTriggered = false } },
+                                    onLongClick = { outroStartMs = 0L; viewModel.saveEpisodeIntroOutro(currentFile.fid, episodeKey, introEndMs, 0L, introSource = introSrc.ifBlank { "manual" }, outroSource = "manual"); outroWarningTriggered = false }
                                 ).padding(horizontal = 8.dp, vertical = 4.dp))
                             }
                             if (isLandscape) AppText(text = "选集", color = Color.White, modifier = Modifier.clickable { showEpisodeDrawer = true }.padding(8.dp)) else Spacer(modifier = Modifier.width(32.dp))
@@ -2501,7 +2664,7 @@ private fun hasCompressedAudioDecoder(): Boolean = try {
  * 3) 打开 AudioTrack 的 playbackParams，硬解出的 PCM 才能被倍速。
  */
 @androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
-private fun buildVideoRenderersFactory(context: Context): DefaultRenderersFactory {
+private fun buildVideoRenderersFactory(context: Context, enableAudioTap: Boolean): DefaultRenderersFactory {
     // 声道上限按「这台设备最终能出几个声道」定，而不是 AudioCapabilities 宣称的能力：
     // 小米 13 宣称 ≥6，但喇叭只有两个声道，5.1 会被 AudioFlinger 降混、电平被压掉 → 只开 2 声道，交给解码器按标准系数降混
     val outputChannels = resolveOutputChannelLimit(context)
@@ -2543,9 +2706,12 @@ private fun buildVideoRenderersFactory(context: Context): DefaultRenderersFactor
             enableFloatOutput: Boolean,
             enableAudioTrackPlaybackParams: Boolean
         ): AudioSink {
+            // 采集器放在降混之后：拿到的就是最终 2.0 PCM，片头片尾比对只需要声道一致的信号
+            val audioTap = if (enableAudioTap) TeeAudioProcessor(EpisodeAudioCapture) else null
+            val processors = listOfNotNull(downmixProcessor, audioTap)
             return DefaultAudioSink.Builder(context)
                 .setAudioCapabilities(AudioCapabilities(intArrayOf(C.ENCODING_PCM_16BIT), outputChannels))
-                .apply { downmixProcessor?.let { setAudioProcessors(arrayOf<AudioProcessor>(it)) } }
+                .apply { if (processors.isNotEmpty()) setAudioProcessors(processors.toTypedArray()) }
                 .setEnableFloatOutput(enableFloatOutput)
                 .setEnableAudioTrackPlaybackParams(enableAudioTrackPlaybackParams)
                 .build()
@@ -2688,4 +2854,48 @@ private fun BrightnessLevelIcon(value: Float, size: androidx.compose.ui.unit.Dp)
             )
         }
     }
+}
+
+/** 用 HEAD / Range 实测远端文件大小；网盘直链常缺 size，播放前补一次，失败返回 0 */
+/** 播放前实测到的文件大小，供“给加入端回直链”时复用（fid -> size） */
+private val probedSizes = java.util.concurrent.ConcurrentHashMap<String, Long>()
+
+private fun probeContentLength(url: String, headers: Map<String, String>): Long {
+    fun open(method: String, range: String?): java.net.HttpURLConnection? = runCatching {
+        val c = java.net.URL(url).openConnection() as java.net.HttpURLConnection
+        c.requestMethod = method
+        c.connectTimeout = 8000
+        c.readTimeout = 8000
+        c.instanceFollowRedirects = true
+        headers.forEach { (k, v) -> if (v.isNotBlank()) c.setRequestProperty(k, v) }
+        if (range != null) c.setRequestProperty("Range", range)
+        c
+    }.getOrNull()
+
+    open("HEAD", null)?.let { c ->
+        runCatching {
+            if (c.responseCode in 200..299) {
+                val len = c.getHeaderField("Content-Length")?.toLongOrNull() ?: 0L
+                if (len > 0L) {
+                    c.disconnect()
+                    return len
+                }
+            }
+        }
+        c.disconnect()
+    }
+    open("GET", "bytes=0-0")?.let { c ->
+        runCatching {
+            if (c.responseCode in 200..299) {
+                val total = c.getHeaderField("Content-Range")?.substringAfterLast('/')?.toLongOrNull() ?: 0L
+                val len = if (total > 0L) total else (c.getHeaderField("Content-Length")?.toLongOrNull() ?: 0L)
+                if (len > 0L) {
+                    c.disconnect()
+                    return len
+                }
+            }
+        }
+        c.disconnect()
+    }
+    return 0L
 }

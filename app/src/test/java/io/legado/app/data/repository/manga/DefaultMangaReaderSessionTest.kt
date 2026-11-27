@@ -13,6 +13,7 @@ import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.test.StandardTestDispatcher
+import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
@@ -27,7 +28,7 @@ class DefaultMangaReaderSessionTest {
         runTest {
             val gateway = FakeGateway()
             val dispatcher = StandardTestDispatcher(testScheduler)
-            val session = DefaultMangaReaderSession(gateway, dispatcher, dispatcher)
+            val session = DefaultMangaReaderSession(gateway, dispatcher, dispatcher, chapterLoadTimeoutMs = 0L)
 
             session.execute(MangaSessionCommand.Open("book-a", true, false))
             advanceUntilIdle()
@@ -48,7 +49,7 @@ class DefaultMangaReaderSessionTest {
     fun `opening a new book cancels and rejects old chapter results`() = runTest {
         val gateway = FakeGateway()
         val dispatcher = StandardTestDispatcher(testScheduler)
-        val session = DefaultMangaReaderSession(gateway, dispatcher, dispatcher)
+        val session = DefaultMangaReaderSession(gateway, dispatcher, dispatcher, chapterLoadTimeoutMs = 0L)
 
         session.execute(MangaSessionCommand.Open("book-a", true, false))
         advanceUntilIdle()
@@ -71,7 +72,7 @@ class DefaultMangaReaderSessionTest {
     fun `failed chapter can be retried without a leaked loading marker`() = runTest {
         val gateway = FakeGateway()
         val dispatcher = StandardTestDispatcher(testScheduler)
-        val session = DefaultMangaReaderSession(gateway, dispatcher, dispatcher)
+        val session = DefaultMangaReaderSession(gateway, dispatcher, dispatcher, chapterLoadTimeoutMs = 0L)
 
         session.execute(MangaSessionCommand.Open("book-a", true, false))
         advanceUntilIdle()
@@ -89,10 +90,26 @@ class DefaultMangaReaderSessionTest {
     }
 
     @Test
+    fun `chapter load times out into failed state`() = runTest {
+        val gateway = FakeGateway()
+        val dispatcher = StandardTestDispatcher(testScheduler)
+        val session = DefaultMangaReaderSession(
+            gateway, dispatcher, dispatcher, chapterLoadTimeoutMs = 1_000L,
+        )
+
+        session.execute(MangaSessionCommand.Open("book-a", true, false))
+        // 虚拟时钟会把 1 秒超时一并推进，加载必然落在 Failed
+        advanceUntilIdle()
+        val failed = session.state.value.currentChapter as MangaChapterState.Failed
+        assertTrue(failed.message.contains("超时"))
+        session.close()
+    }
+
+    @Test
     fun `closing session persists progress and ends reading lifecycle`() = runTest {
         val gateway = FakeGateway()
         val dispatcher = StandardTestDispatcher(testScheduler)
-        val session = DefaultMangaReaderSession(gateway, dispatcher, dispatcher)
+        val session = DefaultMangaReaderSession(gateway, dispatcher, dispatcher, chapterLoadTimeoutMs = 0L)
 
         session.execute(MangaSessionCommand.Open("book-a", true, false))
         advanceUntilIdle()
@@ -108,16 +125,29 @@ class DefaultMangaReaderSessionTest {
     }
 
     @Test
-    fun `prefetch is bounded to the active session window`() = runTest {
+    fun `prefetch next chapter loads body once per chapter`() = runTest {
         val gateway = FakeGateway()
         val dispatcher = StandardTestDispatcher(testScheduler)
-        val session = DefaultMangaReaderSession(gateway, dispatcher, dispatcher)
+        val session = DefaultMangaReaderSession(gateway, dispatcher, dispatcher, chapterLoadTimeoutMs = 0L)
 
-        session.execute(MangaSessionCommand.PrefetchCountChanged(2))
         session.execute(MangaSessionCommand.Open("book-a", true, false))
         advanceUntilIdle()
+        gateway.complete("book-a", 0)
+        advanceUntilIdle()
 
-        assertEquals(listOf("book-a" to 1, "book-a" to 2), gateway.prefetched)
+        // A′：首屏可见后预取下一章正文
+        session.execute(MangaSessionCommand.PrefetchNextChapter(0))
+        advanceUntilIdle()
+        assertTrue(gateway.loadedRequests.contains("book-a" to 1))
+
+        // 同章只预取一次
+        session.execute(MangaSessionCommand.PrefetchNextChapter(0))
+        advanceUntilIdle()
+        assertEquals(1, gateway.loadedRequests.count { it == "book-a" to 1 })
+
+        gateway.complete("book-a", 1)
+        advanceUntilIdle()
+        assertTrue(session.state.value.nextChapter is MangaChapterState.Ready)
         session.close()
     }
 
@@ -125,7 +155,7 @@ class DefaultMangaReaderSessionTest {
     fun `book presentation changes survive later chapter state updates`() = runTest {
         val gateway = FakeGateway()
         val dispatcher = StandardTestDispatcher(testScheduler)
-        val session = DefaultMangaReaderSession(gateway, dispatcher, dispatcher)
+        val session = DefaultMangaReaderSession(gateway, dispatcher, dispatcher, chapterLoadTimeoutMs = 0L)
 
         session.execute(MangaSessionCommand.Open("book-a", true, false))
         advanceUntilIdle()
@@ -141,7 +171,7 @@ class DefaultMangaReaderSessionTest {
     fun `promoting to a visible next chapter keeps current chapter data without reload`() = runTest {
         val gateway = FakeGateway()
         val dispatcher = StandardTestDispatcher(testScheduler)
-        val session = DefaultMangaReaderSession(gateway, dispatcher, dispatcher)
+        val session = DefaultMangaReaderSession(gateway, dispatcher, dispatcher, chapterLoadTimeoutMs = 0L)
 
         session.execute(MangaSessionCommand.Open("book-a", true, false))
         advanceUntilIdle()
@@ -174,7 +204,7 @@ class DefaultMangaReaderSessionTest {
     fun `promoting to a visible previous chapter keeps current chapter data without reload`() = runTest {
         val gateway = FakeGateway()
         val dispatcher = StandardTestDispatcher(testScheduler)
-        val session = DefaultMangaReaderSession(gateway, dispatcher, dispatcher)
+        val session = DefaultMangaReaderSession(gateway, dispatcher, dispatcher, chapterLoadTimeoutMs = 0L)
 
         session.execute(MangaSessionCommand.Open("book-a", true, false))
         advanceUntilIdle()
@@ -205,7 +235,7 @@ class DefaultMangaReaderSessionTest {
     fun `promoting outside the chapter range is ignored`() = runTest {
         val gateway = FakeGateway()
         val dispatcher = StandardTestDispatcher(testScheduler)
-        val session = DefaultMangaReaderSession(gateway, dispatcher, dispatcher)
+        val session = DefaultMangaReaderSession(gateway, dispatcher, dispatcher, chapterLoadTimeoutMs = 0L)
 
         session.execute(MangaSessionCommand.Open("book-a", true, false))
         advanceUntilIdle()
@@ -306,3 +336,4 @@ class DefaultMangaReaderSessionTest {
         override suspend fun syncProgress(bookUrl: String): MangaProgressState? = null
     }
 }
+

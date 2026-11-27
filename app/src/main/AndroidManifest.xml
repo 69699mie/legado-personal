@@ -182,6 +182,26 @@
             </intent-filter>
         </receiver>
 
+        <!-- 仅测试用：adb 广播驱动「一起看」流程。partyTestHooks 不为 true 时整个接收器禁用 -->
+        <receiver
+            android:name=".help.watchparty.PartyTestReceiver"
+            android:enabled="${partyTestHooks}"
+            android:exported="true"
+            tools:ignore="ExportedReceiver">
+            <intent-filter>
+                <action android:name="com.mie.reading.PARTY_TEST" />
+            </intent-filter>
+        </receiver>
+
+        <!-- 仅测试用：adb am startservice 驱动同一套命令。Service 没有界面，不会把播放页顶到后台（Activity 会暂停播放）。
+             partyTestHooks 不为 true 时禁用；结果写到 files/party_test.txt，adb 直接 cat 读取 -->
+        <service
+            android:name=".help.watchparty.PartyTestService"
+            android:enabled="${partyTestHooks}"
+            android:exported="true"
+            android:stopWithTask="true"
+            tools:ignore="ExportedService" />
+
         <provider android:name=".api.ReaderProvider" android:authorities="${applicationId}.readerProvider" android:enabled="true" android:exported="true" tools:ignore="ExportedContentProvider" />
         <provider android:name="androidx.core.content.FileProvider" android:authorities="${applicationId}.fileProvider" android:exported="false" android:grantUriPermissions="true">
             <meta-data android:name="android.support.FILE_PROVIDER_PATHS" android:resource="@xml/file_paths" />

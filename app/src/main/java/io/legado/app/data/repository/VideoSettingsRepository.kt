@@ -35,6 +35,20 @@ class VideoSettingsRepository(context: Context) {
         get() = prefs.getString("video_progress_data", "{}") ?: "{}"
         set(value) { prefs.edit().putString("video_progress_data", value).apply() }
 
+    /**
+     * 每集片头片尾（绝对毫秒），键为 fid：
+     * {"fid": {"introEndMs":150000,"outroStartMs":2400000,"ep":"标题|S1|E3","src":"manual|auto","conf":0.9,"t":123}}
+     * 老数据仍留在 introOutroData（按“标题_S季”），作为没有集级记录时的回退。
+     */
+    var introOutroEpisodeData: String
+        get() = prefs.getString("intro_outro_episode", "{}") ?: "{}"
+        set(value) { prefs.edit().putString("intro_outro_episode", value).apply() }
+
+    /** 自动识别片头片尾（默认关）。关掉时完全走手动/旧季级设置。 */
+    var autoIntroOutroEnabled: Boolean
+        get() = prefs.getBoolean("auto_intro_outro", false)
+        set(value) { prefs.edit().putBoolean("auto_intro_outro", value).apply() }
+
     var proxyThreads: Int
         get() = prefs.getInt("proxy_threads", 6)
         set(value) { prefs.edit().putInt("proxy_threads", value).apply() }

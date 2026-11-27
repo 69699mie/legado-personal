@@ -94,6 +94,7 @@ sealed interface MangaSessionCommand {
     data object NextChapter : MangaSessionCommand
     data class PromoteVisibleChapter(val chapterIndex: Int, val pageIndex: Int) : MangaSessionCommand
     data class VisiblePageChanged(val chapterIndex: Int, val pageIndex: Int) : MangaSessionCommand
+    data class PrefetchNextChapter(val chapterIndex: Int) : MangaSessionCommand
     data object PersistVisibleProgress : MangaSessionCommand
     data class RetryChapter(val chapterIndex: Int) : MangaSessionCommand
     data class PrefetchCountChanged(val count: Int) : MangaSessionCommand

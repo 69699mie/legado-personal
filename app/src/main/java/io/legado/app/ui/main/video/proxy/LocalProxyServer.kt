@@ -58,11 +58,18 @@ class LocalProxyServer(
         )
 
         // 发起按需下载及多线程预读
+        val tReq = System.currentTimeMillis()
         downloadManager.downloadRangeAsync(id, start, info.downloadThreads)
 
-        if (!downloadManager.awaitData(id, start)) {
+        if (!downloadManager.awaitData(id, start, 60_000L)) {
+            android.util.Log.d(
+                "Proxy",
+                "not ready id=$id start=$start wait=${System.currentTimeMillis() - tReq}ms range=${rangeHeader ?: "-"}"
+            )
             return newFixedLengthResponse(Response.Status.RANGE_NOT_SATISFIABLE, "text/plain", "Range Not Ready")
         }
+        val waitMs = System.currentTimeMillis() - tReq
+        android.util.Log.d("Proxy", "serve id=$id start=$start end=$end wait=${waitMs}ms range=${rangeHeader ?: "-"}")
 
         val availableEnd = downloadManager.getDownloadedRange(id, start)
         if (availableEnd == -1L || availableEnd < start) {

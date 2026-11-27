@@ -111,7 +111,13 @@ class WatchPartyService : BaseService() {
             .setShowWhen(false)
             .setVisibility(NotificationCompat.VISIBILITY_SECRET)
             .build()
-        startForeground(NOTIFICATION_ID, notification)
+        // Android 12+ 在应用处于后台时启动前台服务会抛 ForegroundServiceStartNotAllowedException，
+        // 原来没接住就是 FATAL（真机上「后台被拉起自动重连」时必崩）。接住后安静退出，房间逻辑继续跑。
+        runCatching { startForeground(NOTIFICATION_ID, notification) }
+            .onFailure {
+                LogUtils.d(TAG, "startForeground 被拒（应用在后台），保活服务退出: ${it.message}")
+                stopSelf()
+            }
     }
 
     override fun onDestroy() {

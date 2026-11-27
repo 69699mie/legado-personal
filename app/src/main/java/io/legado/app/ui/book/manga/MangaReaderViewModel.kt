@@ -61,6 +61,7 @@ class MangaReaderViewModel(
     private val readerSession = sessionFactory.create()
 
     private var refreshContentJob: Job? = null
+    private var lastRefreshSignature: MangaRefreshSignature? = null
     private var latestMangaSettings = mangaSettingsGateway.currentSettings
     private val bookConfigWriteMutex = Mutex()
     private var pendingExplicitChapterIndex: Int? = null
@@ -238,9 +239,13 @@ class MangaReaderViewModel(
             MangaReaderIntent.ToggleMenu -> setMenuVisible(!_uiState.value.menuVisible)
             MangaReaderIntent.HideMenu -> setMenuVisible(false)
             MangaReaderIntent.Retry -> launchAction {
-                showLoading()
+                val sessionNow = readerSession.state.value
+                val stuckLoading = sessionNow.currentChapter is MangaChapterState.Loading
+                if (!stuckLoading) {
+                    showLoading()
+                }
                 invalidateCurrentChapter()
-                executeSession(MangaSessionCommand.RetryChapter(readerSession.state.value.chapterIndex))
+                executeSession(MangaSessionCommand.RetryChapter(sessionNow.chapterIndex))
             }
             MangaReaderIntent.PreviousChapter -> openRelativeChapter(-1)
             MangaReaderIntent.NextChapter -> openRelativeChapter(1)
@@ -460,6 +465,22 @@ class MangaReaderViewModel(
         }
 
         recordAndCleanChapterCache(session.chapterIndex, current.chapter)
+
+        // A0：章节对象、页码、标题显隐都没变时直接返回，别再重建 prev+current+next 三段列表
+        val signature = MangaRefreshSignature(
+            bookUrl = book.bookUrl,
+            chapterIndex = session.chapterIndex,
+            pageIndex = session.pageIndex,
+            hideEdgePrompts = latestMangaSettings.hideTitle,
+            previous = session.previousChapter,
+            current = session.currentChapter,
+            next = session.nextChapter,
+        )
+        if (signature == lastRefreshSignature &&
+            _uiState.value.pages.isNotEmpty() &&
+            deferredReadySession == null
+        ) return
+        lastRefreshSignature = signature
 
         if (pagerScrollInProgress &&
             (_uiState.value.chapterIndex != session.chapterIndex ||
@@ -1318,6 +1339,13 @@ class MangaReaderViewModel(
             MangaChapterSwitch.NONE -> Unit
         }
         executeSession(MangaSessionCommand.VisiblePageChanged(item.chapterIndex, item.pageIndex))
+        // A′：条漫模式首屏可见后预取下一章（会话层还会校验非本地书、只发一次）
+        val scrollModeNow = state.settings.scrollMode
+        if (scrollModeNow == io.legado.app.ui.book.manga.config.MangaScrollMode.WEBTOON ||
+            scrollModeNow == io.legado.app.ui.book.manga.config.MangaScrollMode.WEBTOON_WITH_GAP
+        ) {
+            executeSession(MangaSessionCommand.PrefetchNextChapter(item.chapterIndex))
+        }
         val completedExplicitNavigation = pendingExplicitChapterIndex == item.chapterIndex
         _uiState.update {
             it.copy(
@@ -1534,3 +1562,14 @@ class MangaReaderViewModel(
         durChapterTitle = chapterTitle,
     )
 }
+
+/** A0 短路用的快照：三者全等且页码/显隐未变时不重建列表 */
+private data class MangaRefreshSignature(
+    val bookUrl: String,
+    val chapterIndex: Int,
+    val pageIndex: Int,
+    val hideEdgePrompts: Boolean,
+    val previous: MangaChapterState,
+    val current: MangaChapterState,
+    val next: MangaChapterState,
+)
