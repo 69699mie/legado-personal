@@ -213,6 +213,9 @@ const val CONTROL_NEXT = 3
 /** 自动识别的片头最晚只能结束在 5 分半（180s 起点 + 150s 上限），超过按脏数据丢弃 */
 private const val MAX_AUTO_INTRO_END_MS = 330_000L
 
+/** 播放进度落库间隔；不在播放中时靠暂停/退出/切集/播放结束/拖动松手补写 */
+private const val PROGRESS_SAVE_INTERVAL_MS = 10_000L
+
 val pinyinCollator = Collator.getInstance(Locale.CHINA)
 
 /**
@@ -1335,6 +1338,31 @@ fun InternalVideoPlayer(url: String, title: String, cookie: String, series: Medi
     val mediaSession = remember { MediaSession.Builder(context, exoPlayer).build() }
     DisposableEffect(mediaSession) { onDispose { mediaSession.release() } }
 
+    // 进度落库：10 秒一次 + 关键时刻补写（暂停/退出/切集/播完/拖完松手），避免每秒写库。
+    // 记住"上次写进去的是哪一集、什么位置"，同一秒的重复值直接跳过。
+    var lastWrittenFid by remember { mutableStateOf("") }
+    var lastWrittenPos by remember { mutableLongStateOf(0L) }
+    fun saveProgressPoint(fid: String, pos: Long, force: Boolean = false) {
+        if (fid.isBlank() || pos <= 0L) return
+        if (!force && fid == lastWrittenFid && abs(pos - lastWrittenPos) < 1_000L) return
+        lastWrittenFid = fid
+        lastWrittenPos = pos
+        // 验证包里打一行，正式包会被 R8 剥掉（build.gradle.kts 的假设里有配置）
+        if (io.legado.app.BuildConfig.TEST_HOOKS) {
+            android.util.Log.d("ProgressSave", "save fid=${fid.take(8)} pos=$pos force=$force")
+        }
+        viewModel.saveVideoProgress(fid, pos)
+    }
+
+    // 切集/离开播放页时补写：这里必须用"进入时快照下来的 fid"，不能等 onDispose 再读当前集
+    DisposableEffect(currentFile.fid) {
+        val fidAtEntry = currentFile.fid
+        onDispose {
+            val pos = runCatching { exoPlayer.currentPosition }.getOrDefault(0L)
+            saveProgressPoint(fidAtEntry, pos)
+        }
+    }
+
     // 一起看：把本机当前播放状态立即广播出去（房主、加入端都能推）
     fun pushPartyNow(pausedOverride: Boolean? = null) {
         if (!partyState.active || !partyState.connected) return
@@ -1583,7 +1611,11 @@ fun InternalVideoPlayer(url: String, title: String, cookie: String, series: Medi
     }
 
     LaunchedEffect(currentFile.fid, isPlaying) {
-        while (isPlaying) { delay(1000); val pos = exoPlayer.currentPosition; if (pos > 0) viewModel.saveVideoProgress(currentFile.fid, pos) }
+        // 播放中每 10 秒写一次；暂停/退出/切集/播完/拖完松手另有补写点
+        while (isPlaying) {
+            delay(PROGRESS_SAVE_INTERVAL_MS)
+            saveProgressPoint(currentFile.fid, exoPlayer.currentPosition)
+        }
     }
 
     DisposableEffect(exoPlayer) {
@@ -1592,7 +1624,13 @@ fun InternalVideoPlayer(url: String, title: String, cookie: String, series: Medi
         var autoRetry = 0
         val maxAutoRetry = 5
         val listener = object : Player.Listener {
-            override fun onPlayWhenReadyChanged(playWhenReady: Boolean, reason: Int) { isPlaying = playWhenReady }
+            override fun onPlayWhenReadyChanged(playWhenReady: Boolean, reason: Int) {
+                isPlaying = playWhenReady
+                // 暂停即补写：锁屏、切后台、手点暂停都走这里，别等 10 秒一跳
+                if (!playWhenReady) {
+                    currentFileState.value?.let { saveProgressPoint(it.fid, exoPlayer.currentPosition) }
+                }
+            }
             override fun onIsPlayingChanged(playing: Boolean) {
                 // 只刷新画中画按钮和状态栏，不用它驱动播放/暂停图标（缓冲中它会 false、和用户意图不一致）
                 if (isInPip.value) isInPip.value = activity?.isInPictureInPictureMode == true
@@ -1600,6 +1638,10 @@ fun InternalVideoPlayer(url: String, title: String, cookie: String, series: Medi
             override fun onPlaybackStateChanged(state: Int) {
                 isBuffering = state == Player.STATE_BUFFERING || state == Player.STATE_IDLE
                 if (state == Player.STATE_ENDED) isPlaying = false
+                if (state == Player.STATE_ENDED) {
+                    // 播完补写一次完整时长，别让后面的收尾逻辑读到最后一次 10 秒前的旧位置
+                    currentFileState.value?.let { saveProgressPoint(it.fid, exoPlayer.duration) }
+                }
                 if (state == Player.STATE_READY) {
                     duration = exoPlayer.duration.coerceAtLeast(0L)
                     EpisodeAudioCapture.setDuration(duration)
@@ -1688,6 +1730,10 @@ fun InternalVideoPlayer(url: String, title: String, cookie: String, series: Medi
         }
         exoPlayer.addListener(listener)
         onDispose {
+            // 退出播放页前先补写一次进度，再结算音频特征、放掉解码器
+            currentFileState.value?.let { f ->
+                runCatching { saveProgressPoint(f.fid, exoPlayer.currentPosition) }
+            }
             // 先结算这一集的音频特征，再放掉解码器
             EpisodeAudioCapture.finish()
             exoPlayer.removeListener(listener)
@@ -2024,6 +2070,7 @@ fun InternalVideoPlayer(url: String, title: String, cookie: String, series: Medi
                     if (abs(currentPosition - dragStartPosition) > 1000L) {
                         exoPlayer.seekTo(currentPosition)
                         lastSeekAt = System.currentTimeMillis()
+                        saveProgressPoint(currentFile.fid, currentPosition)
                         haptic.performHapticFeedback(HapticFeedbackType.LongPress)
                         if (partyState.active && partyState.isHost && WatchPartySession.peersNeedReady(currentFile.fid).isNotEmpty()) {
                             stagePartyPlayback()
@@ -2348,7 +2395,7 @@ fun InternalVideoPlayer(url: String, title: String, cookie: String, series: Medi
                                     detectDragGestures(
                                         onDragStart = { offset -> if (duration > 0) { isDraggingSeekBar = true; seekWasPlaying = exoPlayer.isPlaying; dragStartPosition = exoPlayer.currentPosition; val target = (offset.x / sliderWidth).coerceIn(0f, 1f); currentPosition = (target * duration).toLong(); seekDeltaMillis = currentPosition - dragStartPosition } },
                                         onDrag = { change, _ -> change.consume(); if (duration > 0) { val target = (change.position.x / sliderWidth).coerceIn(0f, 1f); currentPosition = (target * duration).toLong(); seekDeltaMillis = currentPosition - dragStartPosition } },
-                                        onDragEnd = { isDraggingSeekBar = false; if (abs(currentPosition - dragStartPosition) > 1000L) { exoPlayer.seekTo(currentPosition); lastSeekAt = System.currentTimeMillis(); haptic.performHapticFeedback(HapticFeedbackType.LongPress); if (partyState.active && partyState.isHost && WatchPartySession.peersNeedReady(currentFile.fid).isNotEmpty()) stagePartyPlayback() else { if (seekWasPlaying) exoPlayer.play(); pushLocalAction(pausedOverride = !seekWasPlaying) } } else currentPosition = dragStartPosition },
+                                        onDragEnd = { isDraggingSeekBar = false; if (abs(currentPosition - dragStartPosition) > 1000L) { exoPlayer.seekTo(currentPosition); lastSeekAt = System.currentTimeMillis(); saveProgressPoint(currentFile.fid, currentPosition); haptic.performHapticFeedback(HapticFeedbackType.LongPress); if (partyState.active && partyState.isHost && WatchPartySession.peersNeedReady(currentFile.fid).isNotEmpty()) stagePartyPlayback() else { if (seekWasPlaying) exoPlayer.play(); pushLocalAction(pausedOverride = !seekWasPlaying) } } else currentPosition = dragStartPosition },
                                         onDragCancel = { isDraggingSeekBar = false }
                                     )
                                 }, contentAlignment = Alignment.Center
