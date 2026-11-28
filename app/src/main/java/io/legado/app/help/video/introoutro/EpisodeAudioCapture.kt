@@ -20,14 +20,14 @@ import kotlin.math.roundToInt
  * 边看边采：挂在 AudioSink 上把正在播放的 PCM 顺手算成 chroma 特征。
  *
  * - 不额外下流量、不额外解码：声音本来就要解，这里只多算一点 FFT（约 11 帧/秒）。
- * - 只记“开头 8 分钟”和“结尾 8 分钟”，中间正片不存，省内存。
+ * - 只记“开头 4 分钟”和“结尾 5 分钟”，中间正片不存，省内存。
  * - 看完一集（或切集/退出）时落盘并跑一次同季比对；不稳就什么都不写。
  */
 @androidx.annotation.OptIn(UnstableApi::class)
 object EpisodeAudioCapture : TeeAudioProcessor.AudioBufferSink, KoinComponent {
 
-    private const val HEAD_WINDOW_MS = 480_000L
-    private const val TAIL_WINDOW_MS = 480_000L
+    private const val HEAD_WINDOW_MS = 240_000L
+    private const val TAIL_WINDOW_MS = 300_000L
     private const val MIN_STORED_FRAMES = 500    // 约 1.5 分钟音频才值得算
     private const val STORE_EVERY = 2            // 每两帧存一帧（约 0.19 秒一帧）
     private const val MIN_PROFILE_FRAMES = 60

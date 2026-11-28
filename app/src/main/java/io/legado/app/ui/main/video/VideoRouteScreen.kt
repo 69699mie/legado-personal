@@ -26,6 +26,7 @@ import android.os.Handler
 import android.os.Looper
 import android.os.Process
 import android.util.Rational
+import android.util.TypedValue
 import android.view.View
 import android.view.ViewGroup
 import android.view.WindowManager
@@ -161,7 +162,9 @@ import androidx.media3.exoplayer.audio.DefaultAudioSink
 import androidx.media3.exoplayer.audio.TeeAudioProcessor
 import androidx.media3.exoplayer.source.ProgressiveMediaSource
 import androidx.media3.session.MediaSession
+import androidx.media3.ui.CaptionStyleCompat
 import androidx.media3.ui.PlayerView
+import androidx.media3.ui.SubtitleView
 import coil3.compose.AsyncImage
 import io.legado.app.data.repository.VideoSettingsRepository
 import io.legado.app.help.video.introoutro.EpisodeAudioCapture
@@ -211,6 +214,49 @@ const val CONTROL_NEXT = 3
 private const val MAX_AUTO_INTRO_END_MS = 330_000L
 
 val pinyinCollator = Collator.getInstance(Locale.CHINA)
+
+/**
+ * 普通文本字幕：统一基础样式——白字、不描边、18sp，且**不指定 typeface**（传 null）：
+ * 不指定字体时系统会按当前主题字体渲染，跟着手机换主题走，也不用读任何系统文件、不要额外权限。
+ */
+private fun stylePlainSubtitle(view: SubtitleView) {
+    view.setApplyEmbeddedStyles(false)
+    view.setApplyEmbeddedFontSizes(false)
+    view.setStyle(
+        CaptionStyleCompat(
+            android.graphics.Color.WHITE,
+            android.graphics.Color.TRANSPARENT,
+            android.graphics.Color.TRANSPARENT,
+            CaptionStyleCompat.EDGE_TYPE_NONE,
+            android.graphics.Color.BLACK,
+            null
+        )
+    )
+    view.setFixedTextSize(TypedValue.COMPLEX_UNIT_SP, 18f)
+    view.setBottomPaddingFraction(0.08f)
+}
+
+/**
+ * ASS/SSA 这类自带完整样式的字幕轨：不覆盖它写好的颜色、字体、字号、描边和位置，
+ * 只留一点底部留白，其余全部交给字幕文件自己。
+ */
+private fun styleEmbeddedSubtitle(view: SubtitleView) {
+    view.setApplyEmbeddedStyles(true)
+    view.setApplyEmbeddedFontSizes(true)
+    view.setBottomPaddingFraction(0.08f)
+}
+
+/** 当前选中的字幕轨是否为 ASS/SSA（mime 为 text/ssa 或 text/x-ssa） */
+internal fun isAssSubtitleSelected(tracks: Tracks): Boolean = try {
+    tracks.groups.any { group ->
+        group.type == C.TRACK_TYPE_TEXT && group.isSelected && (0 until group.length).any { i ->
+            group.isTrackSelected(i) &&
+                MimeTypes.TEXT_SSA == group.getTrackFormat(i).sampleMimeType
+        }
+    }
+} catch (t: Throwable) {
+    false
+}
 
 fun createPipIcon(type: String, context: Context): Bitmap {
     val size = 96
@@ -2044,7 +2090,24 @@ fun InternalVideoPlayer(url: String, title: String, cookie: String, series: Medi
             }
         )
     }) {
-        AndroidView(factory = { ctx -> PlayerView(ctx).apply { player = exoPlayer; useController = false; layoutParams = FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT) } }, modifier = Modifier.fillMaxSize(), update = { view -> view.useController = false })
+        AndroidView(factory = { ctx ->
+            PlayerView(ctx).apply {
+                player = exoPlayer
+                useController = false
+                layoutParams = FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
+                // 字幕：普通文本轨用统一基础样式（不指定字体，跟随系统主题字体）；
+                // ASS/SSA 轨自带完整样式，整条放行、不改它的颜色/字体/字号。切换字幕轨时重新判断。
+                val subtitleSwitcher = object : Player.Listener {
+                    override fun onEvents(player: Player, events: Player.Events) {
+                        val v = subtitleView ?: return
+                        if (isAssSubtitleSelected(player.currentTracks)) styleEmbeddedSubtitle(v) else stylePlainSubtitle(v)
+                    }
+                }
+                subtitleView?.let { stylePlainSubtitle(it) }
+                exoPlayer.addListener(subtitleSwitcher)
+            }
+        }, modifier = Modifier.fillMaxSize(), update = { view -> view.useController = false })
+
 
         // 一起看入口已收进「播放设置」面板，不再在播放页浮层上跟播放器控件抢位置
 
